@@ -1,24 +1,26 @@
-#define WLR_USE_UNSTABLE
-
+#include <hyprland/src/includes.hpp>
+#include <hyprland/src/Compositor.hpp>
+#include <hyprland/src/desktop/Window.hpp>
 #include <hyprland/src/plugins/PluginAPI.hpp>
-#include <fstream>
-#include <chrono>
-#include <iomanip>
-#include <sstream>
 
 inline HANDLE PHANDLE = nullptr;
 
-void logToFile(const std::string& message) {
-    std::ofstream logFile("/tmp/hyprland-plugin-window-actions", std::ios::app);
-    if (logFile.is_open()) {
-        auto now = std::chrono::system_clock::now();
-        auto time_t = std::chrono::system_clock::to_time_t(now);
-        std::stringstream timestamp;
-        timestamp << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S");
+static void onNewWindow(void* self, std::any data) {
+    const auto PWINDOW = std::any_cast<PHLWINDOW>(data);
 
-        logFile << "[" << timestamp.str() << "] " << message << std::endl;
-        logFile.close();
-    }
+    HyprlandAPI::addNotification(PHANDLE, "[window-actions] Window opened: " + PWINDOW->m_title,
+                                CHyprColor{0.2, 1.0, 0.2, 1.0}, 3000);
+
+    // TODO: Implement window actions for new window
+}
+
+static void onCloseWindow(void* self, std::any data) {
+    const auto PWINDOW = std::any_cast<PHLWINDOW>(data);
+
+    HyprlandAPI::addNotification(PHANDLE, "[window-actions] Window closed: " + PWINDOW->m_title,
+                                CHyprColor{1.0, 0.2, 0.2, 1.0}, 3000);
+
+    // TODO: Clean up window actions for closed window
 }
 
 APICALL EXPORT std::string PLUGIN_API_VERSION() {
@@ -28,13 +30,26 @@ APICALL EXPORT std::string PLUGIN_API_VERSION() {
 APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     PHANDLE = handle;
 
-    logToFile("Plugin window-actions loading...");
-    logToFile("Plugin window-actions loaded successfully");
+    HyprlandAPI::addNotification(PHANDLE, "[window-actions] Plugin loading...",
+                                CHyprColor{0.2, 0.2, 1.0, 1.0}, 3000);
+
+    static auto P1 = HyprlandAPI::registerCallbackDynamic(PHANDLE, "openWindow",
+                                                         [&](void* self, SCallbackInfo& info, std::any data) {
+                                                             onNewWindow(self, data);
+                                                         });
+
+    static auto P2 = HyprlandAPI::registerCallbackDynamic(PHANDLE, "closeWindow",
+                                                         [&](void* self, SCallbackInfo& info, std::any data) {
+                                                             onCloseWindow(self, data);
+                                                         });
+
+    HyprlandAPI::addNotification(PHANDLE, "[window-actions] Plugin loaded successfully",
+                                CHyprColor{0.2, 1.0, 0.2, 1.0}, 3000);
 
     return {"window-actions", "Window actions plugin for Hyprland", "cmihail", "1.0"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
-    logToFile("Plugin window-actions unloading...");
-    logToFile("Plugin window-actions unloaded successfully");
+    HyprlandAPI::addNotification(PHANDLE, "[window-actions] Plugin unloading...",
+                                CHyprColor{1.0, 1.0, 0.2, 1.0}, 3000);
 }
