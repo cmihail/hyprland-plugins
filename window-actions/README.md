@@ -7,7 +7,13 @@ A minimal Hyprland plugin for window actions.
 On Fedora 42, install the required development packages:
 
 ```bash
-sudo dnf install hyprland-devel hyprland-protocols-devel gcc-c++ make pkgconf-devel
+sudo dnf install hyprland-devel hyprland-protocols-devel gcc-c++ make pkgconf-devel pango-devel
+```
+
+For testing, also install:
+
+```bash
+sudo dnf install gtest-devel
 ```
 
 ## Building
@@ -50,6 +56,23 @@ plugin = /path/to/window-actions/window-actions.so
 ```bash
 hyprctl reload
 ```
+
+## Testing
+
+Run the test suite to verify plugin functionality:
+
+```bash
+make test
+```
+
+This will compile and run all unit tests using Google Test framework. The tests focus on core logic validation including:
+
+- Button position detection algorithms
+- State management logic
+- Pass element functionality
+- Boundary condition testing
+
+Note: Tests are designed as standalone unit tests that don't require the full Hyprland runtime environment.
 
 ## Development
 

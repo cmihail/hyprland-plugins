@@ -24,8 +24,11 @@ $(PLUGIN_NAME).so: $(SOURCE_FILES)
 clean:
 	rm -f $(PLUGIN_NAME).so
 
+test:
+	$(MAKE) -C tests test
+
 install: $(PLUGIN_NAME).so
 	mkdir -p ~/.local/share/hyprload/plugins/$(PLUGIN_NAME)
 	cp $(PLUGIN_NAME).so ~/.local/share/hyprload/plugins/$(PLUGIN_NAME)/
 
-.PHONY: all clean install check_env
+.PHONY: all clean install check_env test
