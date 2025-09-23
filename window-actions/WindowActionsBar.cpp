@@ -252,22 +252,33 @@ void CWindowActionsBar::renderText(SP<CTexture> out, const std::string& text, co
 
 void CWindowActionsBar::renderButtonTexts(const Vector2D& bufferSize, const float scale) {
     const CHyprColor color = CHyprColor(0.9, 0.9, 0.9, 1.0);
+    const auto PWINDOW = m_pWindow.lock();
 
+    if (!PWINDOW)
+        return;
+
+    // Always render close button - state doesn't change
     if (m_pCloseButtonTex->m_texID == 0) {
-        renderText(m_pCloseButtonTex, "X", color, bufferSize, scale, BUTTON_SIZE * 0.6);
+        renderText(m_pCloseButtonTex, "✘", color, bufferSize, scale, BUTTON_SIZE * 0.6);
     }
 
-    if (m_pFullscreenButtonTex->m_texID == 0) {
-        renderText(m_pFullscreenButtonTex, "⛶", color, bufferSize, scale, BUTTON_SIZE * 0.6);
-    }
+    // Fullscreen button - show different icons based on fullscreen state
+    bool isFullscreen = PWINDOW->isFullscreen();
+    std::string fullscreenIcon = isFullscreen ? "⬋" : "⬈";
+    m_pFullscreenButtonTex->destroyTexture(); // Clear existing texture to force re-render
+    renderText(m_pFullscreenButtonTex, fullscreenIcon, color, bufferSize, scale, BUTTON_SIZE * 0.6);
 
-    if (m_pGroupButtonTex->m_texID == 0) {
-        renderText(m_pGroupButtonTex, "⧉", color, bufferSize, scale, BUTTON_SIZE * 0.6);
-    }
+    // Group button - show different icons based on group state
+    bool isInGroup = PWINDOW->m_groupData.pNextWindow != nullptr;
+    std::string groupIcon = isInGroup ? "◫" : "◧";
+    m_pGroupButtonTex->destroyTexture(); // Clear existing texture to force re-render
+    renderText(m_pGroupButtonTex, groupIcon, color, bufferSize, scale, BUTTON_SIZE * 0.6);
 
-    if (m_pFloatingButtonTex->m_texID == 0) {
-        renderText(m_pFloatingButtonTex, "⚏", color, bufferSize, scale, BUTTON_SIZE * 0.6);
-    }
+    // Floating button - show different icons based on floating state
+    bool isFloating = PWINDOW->m_isFloating;
+    std::string floatingIcon = isFloating ? "⠶" : "•";
+    m_pFloatingButtonTex->destroyTexture(); // Clear existing texture to force re-render
+    renderText(m_pFloatingButtonTex, floatingIcon, color, bufferSize, scale, BUTTON_SIZE * 0.6);
 }
 
 void CWindowActionsBar::draw(PHLMONITOR pMonitor, const float& a) {
