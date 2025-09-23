@@ -28,7 +28,10 @@ CWindowActionsBar::CWindowActionsBar(PHLWINDOW pWindow) : IHyprWindowDecoration(
     m_pTouchUpCallback = HyprlandAPI::registerCallbackDynamic(
         PHANDLE, "touchUp", [&](void* self, SCallbackInfo& info, std::any param) { handleUpEvent(info); });
 
-    m_pButtonTex = makeShared<CTexture>();
+    m_pCloseButtonTex = makeShared<CTexture>();
+    m_pFullscreenButtonTex = makeShared<CTexture>();
+    m_pGroupButtonTex = makeShared<CTexture>();
+    m_pFloatingButtonTex = makeShared<CTexture>();
 }
 
 CWindowActionsBar::~CWindowActionsBar() {
@@ -95,9 +98,30 @@ void CWindowActionsBar::onMouseButton(SCallbackInfo& info, IPointer::SButtonEven
     const auto COORDS = cursorRelativeToButton();
 
     if (e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
-        if (isOnCloseButton(COORDS)) {
+        int buttonIndex = getButtonIndex(COORDS);
+        if (buttonIndex >= 0) {
             if (e.button == BTN_RIGHT) {
-                g_pCompositor->closeWindow(PWINDOW);
+                switch (buttonIndex) {
+                    case 0: // Close button
+                        g_pCompositor->closeWindow(PWINDOW);
+                        break;
+                    case 1: // Fullscreen button
+                        g_pCompositor->setWindowFullscreenState(PWINDOW, {.internal = PWINDOW->isFullscreen() ? FSMODE_NONE : FSMODE_MAXIMIZED});
+                        break;
+                    case 2: // Group button
+                        if (PWINDOW->m_groupData.pNextWindow) {
+                            PWINDOW->destroyGroup();
+                        } else {
+                            PWINDOW->createGroup();
+                        }
+                        break;
+                    case 3: // Floating button
+                        PWINDOW->m_isFloating = !PWINDOW->m_isFloating;
+                        g_pLayoutManager->getCurrentLayout()->changeWindowFloatingMode(PWINDOW);
+                        // Focus the window to bring it to front
+                        g_pCompositor->focusWindow(PWINDOW);
+                        break;
+                }
                 info.cancelled = true;
                 return;
             }
@@ -137,7 +161,7 @@ void CWindowActionsBar::handleDownEvent(SCallbackInfo& info, std::optional<ITouc
     if (!validMapped(PWINDOW))
         return;
 
-    if (isOnCloseButton(COORDS)) {
+    if (getButtonIndex(COORDS) >= 0) {
         info.cancelled = true;
         m_bCancelledDown = true;
         return;
@@ -156,6 +180,29 @@ void CWindowActionsBar::handleUpEvent(SCallbackInfo& info) {
 
 bool CWindowActionsBar::isOnCloseButton(Vector2D coords) {
     return coords.x >= 0 && coords.x <= BUTTON_SIZE && coords.y >= 0 && coords.y <= BUTTON_SIZE;
+}
+
+bool CWindowActionsBar::isOnFullscreenButton(Vector2D coords) {
+    float startX = BUTTON_SIZE + BUTTON_SPACING;
+    return coords.x >= startX && coords.x <= startX + BUTTON_SIZE && coords.y >= 0 && coords.y <= BUTTON_SIZE;
+}
+
+bool CWindowActionsBar::isOnGroupButton(Vector2D coords) {
+    float startX = 2 * (BUTTON_SIZE + BUTTON_SPACING);
+    return coords.x >= startX && coords.x <= startX + BUTTON_SIZE && coords.y >= 0 && coords.y <= BUTTON_SIZE;
+}
+
+bool CWindowActionsBar::isOnFloatingButton(Vector2D coords) {
+    float startX = 3 * (BUTTON_SIZE + BUTTON_SPACING);
+    return coords.x >= startX && coords.x <= startX + BUTTON_SIZE && coords.y >= 0 && coords.y <= BUTTON_SIZE;
+}
+
+int CWindowActionsBar::getButtonIndex(Vector2D coords) {
+    if (isOnCloseButton(coords)) return 0;
+    if (isOnFullscreenButton(coords)) return 1;
+    if (isOnGroupButton(coords)) return 2;
+    if (isOnFloatingButton(coords)) return 3;
+    return -1;
 }
 
 void CWindowActionsBar::renderText(SP<CTexture> out, const std::string& text, const CHyprColor& color, const Vector2D& bufferSize, const float scale, const int fontSize) {
@@ -203,10 +250,23 @@ void CWindowActionsBar::renderText(SP<CTexture> out, const std::string& text, co
     cairo_surface_destroy(CAIROSURFACE);
 }
 
-void CWindowActionsBar::renderButtonText(const Vector2D& bufferSize, const float scale) {
-    if (m_pButtonTex->m_texID == 0) {
-        const CHyprColor color = CHyprColor(0.9, 0.9, 0.9, 1.0);
-        renderText(m_pButtonTex, "X", color, bufferSize, scale, BUTTON_SIZE * 0.6);
+void CWindowActionsBar::renderButtonTexts(const Vector2D& bufferSize, const float scale) {
+    const CHyprColor color = CHyprColor(0.9, 0.9, 0.9, 1.0);
+
+    if (m_pCloseButtonTex->m_texID == 0) {
+        renderText(m_pCloseButtonTex, "X", color, bufferSize, scale, BUTTON_SIZE * 0.6);
+    }
+
+    if (m_pFullscreenButtonTex->m_texID == 0) {
+        renderText(m_pFullscreenButtonTex, "⛶", color, bufferSize, scale, BUTTON_SIZE * 0.6);
+    }
+
+    if (m_pGroupButtonTex->m_texID == 0) {
+        renderText(m_pGroupButtonTex, "⧉", color, bufferSize, scale, BUTTON_SIZE * 0.6);
+    }
+
+    if (m_pFloatingButtonTex->m_texID == 0) {
+        renderText(m_pFloatingButtonTex, "⚏", color, bufferSize, scale, BUTTON_SIZE * 0.6);
     }
 }
 
@@ -232,25 +292,30 @@ void CWindowActionsBar::renderPass(PHLMONITOR pMonitor, const float& a) {
     const auto PWORKSPACE      = PWINDOW->m_workspace;
     const auto WORKSPACEOFFSET = PWORKSPACE && !PWINDOW->m_pinned ? PWORKSPACE->m_renderOffset->value() : Vector2D();
 
-    CBox buttonBox = {PWINDOW->m_realPosition->value().x - pMonitor->m_position.x,
-                      PWINDOW->m_realPosition->value().y - pMonitor->m_position.y,
-                      BUTTON_SIZE, BUTTON_SIZE};
-
-    buttonBox.translate(PWINDOW->m_floatingOffset).translate(WORKSPACEOFFSET).scale(pMonitor->m_scale).round();
-
-    if (buttonBox.w < 1 || buttonBox.h < 1)
-        return;
+    const Vector2D bufferSize = {BUTTON_SIZE * pMonitor->m_scale, BUTTON_SIZE * pMonitor->m_scale};
+    renderButtonTexts(bufferSize, pMonitor->m_scale);
 
     CHyprColor bgColor = CHyprColor(0.2, 0.2, 0.2, 0.8);
     bgColor.a *= a;
 
-    g_pHyprOpenGL->renderRect(buttonBox, bgColor, {.round = 3.0f * pMonitor->m_scale});
+    // Render all buttons
+    SP<CTexture> buttonTextures[] = {m_pCloseButtonTex, m_pFullscreenButtonTex, m_pGroupButtonTex, m_pFloatingButtonTex};
 
-    const Vector2D bufferSize = {BUTTON_SIZE * pMonitor->m_scale, BUTTON_SIZE * pMonitor->m_scale};
-    renderButtonText(bufferSize, pMonitor->m_scale);
+    for (int i = 0; i < NUM_BUTTONS; i++) {
+        CBox buttonBox = {PWINDOW->m_realPosition->value().x - pMonitor->m_position.x + i * (BUTTON_SIZE + BUTTON_SPACING),
+                          PWINDOW->m_realPosition->value().y - pMonitor->m_position.y,
+                          BUTTON_SIZE, BUTTON_SIZE};
 
-    if (m_pButtonTex->m_texID != 0)
-        g_pHyprOpenGL->renderTexture(m_pButtonTex, buttonBox, {.a = a});
+        buttonBox.translate(PWINDOW->m_floatingOffset).translate(WORKSPACEOFFSET).scale(pMonitor->m_scale).round();
+
+        if (buttonBox.w < 1 || buttonBox.h < 1)
+            continue;
+
+        g_pHyprOpenGL->renderRect(buttonBox, bgColor, {.round = 3.0f * pMonitor->m_scale});
+
+        if (buttonTextures[i]->m_texID != 0)
+            g_pHyprOpenGL->renderTexture(buttonTextures[i], buttonBox, {.a = a});
+    }
 
     m_bWindowSizeChanged = false;
 }
@@ -270,7 +335,7 @@ void CWindowActionsBar::damageEntire() {
 
     CBox damageBox = {PWINDOW->m_realPosition->value().x,
                       PWINDOW->m_realPosition->value().y,
-                      BUTTON_SIZE, BUTTON_SIZE};
+                      NUM_BUTTONS * BUTTON_SIZE + (NUM_BUTTONS - 1) * BUTTON_SPACING, BUTTON_SIZE};
     g_pHyprRenderer->damageBox(damageBox);
 }
 
@@ -293,5 +358,5 @@ CBox CWindowActionsBar::assignedBoxGlobal() {
 
     return CBox{PWINDOW->m_realPosition->value().x,
                 PWINDOW->m_realPosition->value().y,
-                BUTTON_SIZE, BUTTON_SIZE};
+                NUM_BUTTONS * BUTTON_SIZE + (NUM_BUTTONS - 1) * BUTTON_SPACING, BUTTON_SIZE};
 }

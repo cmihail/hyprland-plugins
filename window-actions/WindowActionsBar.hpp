@@ -40,14 +40,19 @@ class CWindowActionsBar : public IHyprWindowDecoration {
     SBoxExtents               m_seExtents;
     PHLWINDOWREF              m_pWindow;
     CBox                      m_bAssignedBox;
-    SP<CTexture>              m_pButtonTex;
+    SP<CTexture>              m_pCloseButtonTex;
+    SP<CTexture>              m_pFullscreenButtonTex;
+    SP<CTexture>              m_pGroupButtonTex;
+    SP<CTexture>              m_pFloatingButtonTex;
     bool                      m_bWindowSizeChanged = false;
     bool                      m_hidden             = false;
 
     const float               BUTTON_SIZE = 15.0f;
+    const float               BUTTON_SPACING = 2.0f;
+    const int                 NUM_BUTTONS = 4;
 
     Vector2D                  cursorRelativeToButton();
-    void                      renderButtonText(const Vector2D& bufferSize, const float scale);
+    void                      renderButtonTexts(const Vector2D& bufferSize, const float scale);
     void                      renderText(SP<CTexture> out, const std::string& text, const CHyprColor& color, const Vector2D& bufferSize, const float scale, const int fontSize);
 
     bool                      inputIsValid();
@@ -57,6 +62,10 @@ class CWindowActionsBar : public IHyprWindowDecoration {
     void                      handleDownEvent(SCallbackInfo& info, std::optional<ITouch::SDownEvent> touchEvent);
     void                      handleUpEvent(SCallbackInfo& info);
     bool                      isOnCloseButton(Vector2D coords);
+    bool                      isOnFullscreenButton(Vector2D coords);
+    bool                      isOnGroupButton(Vector2D coords);
+    bool                      isOnFloatingButton(Vector2D coords);
+    int                       getButtonIndex(Vector2D coords);
 
     SP<HOOK_CALLBACK_FN>      m_pMouseButtonCallback;
     SP<HOOK_CALLBACK_FN>      m_pTouchDownCallback;

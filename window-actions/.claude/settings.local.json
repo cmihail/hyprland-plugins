@@ -4,7 +4,11 @@
       "WebSearch",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:wiki.hypr.land)",
-      "Read(//home/cmihail/hyprland-plugins/bar.old/**)"
+      "Read(//home/cmihail/hyprland-plugins/bar.old/**)",
+      "Read(//usr/include/**)",
+      "Read(//home/cmihail/hyprland-plugins/**)",
+      "Read(//usr/share/icons/Adwaita/symbolic/ui/**)",
+      "Bash(pkg-config:*)"
     ],
     "deny": [],
     "ask": []
