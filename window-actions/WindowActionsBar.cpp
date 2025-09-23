@@ -270,7 +270,7 @@ void CWindowActionsBar::renderButtonTexts(const Vector2D& bufferSize, const floa
 
     // Group button - show different icons based on group state
     bool isInGroup = PWINDOW->m_groupData.pNextWindow != nullptr;
-    std::string groupIcon = isInGroup ? "◫" : "◧";
+    std::string groupIcon = isInGroup ? "⊞" : "⊟";
     m_pGroupButtonTex->destroyTexture(); // Clear existing texture to force re-render
     renderText(m_pGroupButtonTex, groupIcon, color, bufferSize, scale, BUTTON_SIZE * 0.6);
 
