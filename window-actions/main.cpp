@@ -1,26 +1,41 @@
-#include <hyprland/src/includes.hpp>
+#define WLR_USE_UNSTABLE
+
+#include <unistd.h>
+
+#include <any>
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/desktop/Window.hpp>
-#include <hyprland/src/plugins/PluginAPI.hpp>
+#include <hyprland/src/config/ConfigManager.hpp>
+#include <hyprland/src/render/Renderer.hpp>
 
-inline HANDLE PHANDLE = nullptr;
+#include <algorithm>
+
+#include "WindowActionsBar.hpp"
+#include "globals.hpp"
 
 static void onNewWindow(void* self, std::any data) {
     const auto PWINDOW = std::any_cast<PHLWINDOW>(data);
 
-    HyprlandAPI::addNotification(PHANDLE, "[window-actions] Window opened: " + PWINDOW->m_title,
-                                CHyprColor{0.2, 1.0, 0.2, 1.0}, 3000);
+    if (!PWINDOW->m_X11DoesntWantBorders) {
+        if (std::ranges::any_of(PWINDOW->m_windowDecorations, [](const auto& d) { return d->getDisplayName() == "WindowActionsBar"; }))
+            return;
 
-    // TODO: Implement window actions for new window
+        auto bar = makeUnique<CWindowActionsBar>(PWINDOW);
+        g_pGlobalState->bars.emplace_back(bar);
+        bar->m_self = bar;
+        HyprlandAPI::addWindowDecoration(PHANDLE, PWINDOW, std::move(bar));
+    }
 }
 
 static void onCloseWindow(void* self, std::any data) {
     const auto PWINDOW = std::any_cast<PHLWINDOW>(data);
 
-    HyprlandAPI::addNotification(PHANDLE, "[window-actions] Window closed: " + PWINDOW->m_title,
-                                CHyprColor{1.0, 0.2, 0.2, 1.0}, 3000);
+    const auto BARIT = std::find_if(g_pGlobalState->bars.begin(), g_pGlobalState->bars.end(), [PWINDOW](const auto& bar) { return bar->getOwner() == PWINDOW; });
 
-    // TODO: Clean up window actions for closed window
+    if (BARIT == g_pGlobalState->bars.end())
+        return;
+
+    PWINDOW->removeWindowDeco(BARIT->get());
 }
 
 APICALL EXPORT std::string PLUGIN_API_VERSION() {
@@ -30,26 +45,32 @@ APICALL EXPORT std::string PLUGIN_API_VERSION() {
 APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     PHANDLE = handle;
 
-    HyprlandAPI::addNotification(PHANDLE, "[window-actions] Plugin loading...",
-                                CHyprColor{0.2, 0.2, 1.0, 1.0}, 3000);
+    const std::string HASH = __hyprland_api_get_hash();
 
-    static auto P1 = HyprlandAPI::registerCallbackDynamic(PHANDLE, "openWindow",
-                                                         [&](void* self, SCallbackInfo& info, std::any data) {
-                                                             onNewWindow(self, data);
-                                                         });
+    if (HASH != GIT_COMMIT_HASH) {
+        HyprlandAPI::addNotification(PHANDLE, "[window-actions] Failure in initialization: Version mismatch (headers ver is not equal to running hyprland ver)",
+                                     CHyprColor{1.0, 0.2, 0.2, 1.0}, 5000);
+        throw std::runtime_error("[window-actions] Version mismatch");
+    }
 
-    static auto P2 = HyprlandAPI::registerCallbackDynamic(PHANDLE, "closeWindow",
-                                                         [&](void* self, SCallbackInfo& info, std::any data) {
-                                                             onCloseWindow(self, data);
-                                                         });
+    g_pGlobalState = makeUnique<SGlobalState>();
 
-    HyprlandAPI::addNotification(PHANDLE, "[window-actions] Plugin loaded successfully",
-                                CHyprColor{0.2, 1.0, 0.2, 1.0}, 3000);
+    static auto P1 = HyprlandAPI::registerCallbackDynamic(PHANDLE, "openWindow", [&](void* self, SCallbackInfo& info, std::any data) { onNewWindow(self, data); });
+    static auto P2 = HyprlandAPI::registerCallbackDynamic(PHANDLE, "closeWindow", [&](void* self, SCallbackInfo& info, std::any data) { onCloseWindow(self, data); });
+
+    for (auto& w : g_pCompositor->m_windows) {
+        if (w->isHidden() || !w->m_isMapped)
+            continue;
+
+        onNewWindow(nullptr, std::any(w));
+    }
 
     return {"window-actions", "Window actions plugin for Hyprland", "cmihail", "1.0"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
-    HyprlandAPI::addNotification(PHANDLE, "[window-actions] Plugin unloading...",
-                                CHyprColor{1.0, 1.0, 0.2, 1.0}, 3000);
+    for (auto& m : g_pCompositor->m_monitors)
+        m->m_scheduledRecalc = true;
+
+    g_pHyprRenderer->m_renderPass.removeAllOfType("CWindowActionsPassElement");
 }
