@@ -47,9 +47,11 @@ class CWindowActionsBar : public IHyprWindowDecoration {
     bool                      m_bWindowSizeChanged = false;
     bool                      m_hidden             = false;
 
-    const float               BUTTON_SIZE = 15.0f;
     const float               BUTTON_SPACING = 2.0f;
     const int                 NUM_BUTTONS = 4;
+
+    float                     getButtonSize() const;
+    uint32_t                  getActionButton() const;
 
     Vector2D                  cursorRelativeToButton();
     void                      renderButtonTexts(const Vector2D& bufferSize, const float scale);

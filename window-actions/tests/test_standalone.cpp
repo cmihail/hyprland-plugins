@@ -13,17 +13,23 @@ protected:
 
 class WindowActionsButtonLogic {
 public:
-    static constexpr float BUTTON_SIZE = 15.0f;
+    static constexpr float DEFAULT_BUTTON_SIZE = 15.0f;
     static constexpr float BUTTON_SPACING = 2.0f;
     static constexpr int NUM_BUTTONS = 4;
 
-    static bool isOnButton(float x, float y, int buttonIndex) {
-        float buttonX = buttonIndex * (BUTTON_SIZE + BUTTON_SPACING);
-        return x >= buttonX && x < buttonX + BUTTON_SIZE && y >= 0 && y < BUTTON_SIZE;
+private:
+    float m_buttonSize;
+
+public:
+    explicit WindowActionsButtonLogic(float buttonSize = DEFAULT_BUTTON_SIZE) : m_buttonSize(buttonSize) {}
+
+    bool isOnButton(float x, float y, int buttonIndex) const {
+        float buttonX = buttonIndex * (m_buttonSize + BUTTON_SPACING);
+        return x >= buttonX && x < buttonX + m_buttonSize && y >= 0 && y < m_buttonSize;
     }
 
-    static int getButtonIndex(float x, float y) {
-        if (y < 0 || y >= BUTTON_SIZE) return -1;
+    int getButtonIndex(float x, float y) const {
+        if (y < 0 || y >= m_buttonSize) return -1;
 
         for (int i = 0; i < NUM_BUTTONS; i++) {
             if (isOnButton(x, y, i)) {
@@ -33,77 +39,110 @@ public:
         return -1;
     }
 
-    static bool isOnCloseButton(float x, float y) {
+    bool isOnCloseButton(float x, float y) const {
         return isOnButton(x, y, 0);
     }
 
-    static bool isOnFullscreenButton(float x, float y) {
+    bool isOnFullscreenButton(float x, float y) const {
         return isOnButton(x, y, 1);
     }
 
-    static bool isOnGroupButton(float x, float y) {
+    bool isOnGroupButton(float x, float y) const {
         return isOnButton(x, y, 2);
     }
 
-    static bool isOnFloatingButton(float x, float y) {
+    bool isOnFloatingButton(float x, float y) const {
         return isOnButton(x, y, 3);
+    }
+
+    float getButtonSize() const {
+        return m_buttonSize;
     }
 };
 
 TEST_F(StandaloneTest, ButtonConstants) {
-    EXPECT_EQ(WindowActionsButtonLogic::BUTTON_SIZE, 15.0f);
+    WindowActionsButtonLogic logic;
+    EXPECT_EQ(logic.getButtonSize(), 15.0f);
     EXPECT_EQ(WindowActionsButtonLogic::BUTTON_SPACING, 2.0f);
     EXPECT_EQ(WindowActionsButtonLogic::NUM_BUTTONS, 4);
 }
 
 TEST_F(StandaloneTest, CloseButtonDetection) {
-    EXPECT_TRUE(WindowActionsButtonLogic::isOnCloseButton(5, 5));
-    EXPECT_TRUE(WindowActionsButtonLogic::isOnCloseButton(10, 10));
-    EXPECT_FALSE(WindowActionsButtonLogic::isOnCloseButton(20, 5));
-    EXPECT_FALSE(WindowActionsButtonLogic::isOnCloseButton(5, 25));
-    EXPECT_FALSE(WindowActionsButtonLogic::isOnCloseButton(-5, 5));
+    WindowActionsButtonLogic logic;
+    EXPECT_TRUE(logic.isOnCloseButton(5, 5));
+    EXPECT_TRUE(logic.isOnCloseButton(10, 10));
+    EXPECT_FALSE(logic.isOnCloseButton(20, 5));
+    EXPECT_FALSE(logic.isOnCloseButton(5, 25));
+    EXPECT_FALSE(logic.isOnCloseButton(-5, 5));
 }
 
 TEST_F(StandaloneTest, FullscreenButtonDetection) {
-    EXPECT_TRUE(WindowActionsButtonLogic::isOnFullscreenButton(17, 5));
-    EXPECT_TRUE(WindowActionsButtonLogic::isOnFullscreenButton(25, 10));
-    EXPECT_FALSE(WindowActionsButtonLogic::isOnFullscreenButton(5, 5));
-    EXPECT_FALSE(WindowActionsButtonLogic::isOnFullscreenButton(40, 5));
-    EXPECT_FALSE(WindowActionsButtonLogic::isOnFullscreenButton(20, 25));
+    WindowActionsButtonLogic logic;
+    EXPECT_TRUE(logic.isOnFullscreenButton(17, 5));
+    EXPECT_TRUE(logic.isOnFullscreenButton(25, 10));
+    EXPECT_FALSE(logic.isOnFullscreenButton(5, 5));
+    EXPECT_FALSE(logic.isOnFullscreenButton(40, 5));
+    EXPECT_FALSE(logic.isOnFullscreenButton(20, 25));
 }
 
 TEST_F(StandaloneTest, GroupButtonDetection) {
-    EXPECT_TRUE(WindowActionsButtonLogic::isOnGroupButton(34, 5));
-    EXPECT_TRUE(WindowActionsButtonLogic::isOnGroupButton(42, 10));
-    EXPECT_FALSE(WindowActionsButtonLogic::isOnGroupButton(20, 5));
-    EXPECT_FALSE(WindowActionsButtonLogic::isOnGroupButton(60, 5));
-    EXPECT_FALSE(WindowActionsButtonLogic::isOnGroupButton(37, 25));
+    WindowActionsButtonLogic logic;
+    EXPECT_TRUE(logic.isOnGroupButton(34, 5));
+    EXPECT_TRUE(logic.isOnGroupButton(42, 10));
+    EXPECT_FALSE(logic.isOnGroupButton(20, 5));
+    EXPECT_FALSE(logic.isOnGroupButton(60, 5));
+    EXPECT_FALSE(logic.isOnGroupButton(37, 25));
 }
 
 TEST_F(StandaloneTest, FloatingButtonDetection) {
-    EXPECT_TRUE(WindowActionsButtonLogic::isOnFloatingButton(51, 5));
-    EXPECT_TRUE(WindowActionsButtonLogic::isOnFloatingButton(59, 10));
-    EXPECT_FALSE(WindowActionsButtonLogic::isOnFloatingButton(40, 5));
-    EXPECT_FALSE(WindowActionsButtonLogic::isOnFloatingButton(80, 5));
-    EXPECT_FALSE(WindowActionsButtonLogic::isOnFloatingButton(54, 25));
+    WindowActionsButtonLogic logic;
+    EXPECT_TRUE(logic.isOnFloatingButton(51, 5));
+    EXPECT_TRUE(logic.isOnFloatingButton(59, 10));
+    EXPECT_FALSE(logic.isOnFloatingButton(40, 5));
+    EXPECT_FALSE(logic.isOnFloatingButton(80, 5));
+    EXPECT_FALSE(logic.isOnFloatingButton(54, 25));
 }
 
 TEST_F(StandaloneTest, ButtonIndexCalculation) {
-    EXPECT_EQ(WindowActionsButtonLogic::getButtonIndex(5, 5), 0);
-    EXPECT_EQ(WindowActionsButtonLogic::getButtonIndex(20, 5), 1);
-    EXPECT_EQ(WindowActionsButtonLogic::getButtonIndex(37, 5), 2);
-    EXPECT_EQ(WindowActionsButtonLogic::getButtonIndex(54, 5), 3);
+    WindowActionsButtonLogic logic;
+    EXPECT_EQ(logic.getButtonIndex(5, 5), 0);
+    EXPECT_EQ(logic.getButtonIndex(20, 5), 1);
+    EXPECT_EQ(logic.getButtonIndex(37, 5), 2);
+    EXPECT_EQ(logic.getButtonIndex(54, 5), 3);
 
-    EXPECT_EQ(WindowActionsButtonLogic::getButtonIndex(100, 5), -1);
-    EXPECT_EQ(WindowActionsButtonLogic::getButtonIndex(5, 20), -1);
-    EXPECT_EQ(WindowActionsButtonLogic::getButtonIndex(-1, 5), -1);
+    EXPECT_EQ(logic.getButtonIndex(100, 5), -1);
+    EXPECT_EQ(logic.getButtonIndex(5, 20), -1);
+    EXPECT_EQ(logic.getButtonIndex(-1, 5), -1);
 }
 
 TEST_F(StandaloneTest, ButtonBoundaryTesting) {
-    EXPECT_TRUE(WindowActionsButtonLogic::isOnButton(0, 0, 0));
-    EXPECT_TRUE(WindowActionsButtonLogic::isOnButton(14, 14, 0));
-    EXPECT_FALSE(WindowActionsButtonLogic::isOnButton(15, 0, 0));
-    EXPECT_FALSE(WindowActionsButtonLogic::isOnButton(0, 15, 0));
+    WindowActionsButtonLogic logic;
+    EXPECT_TRUE(logic.isOnButton(0, 0, 0));
+    EXPECT_TRUE(logic.isOnButton(14, 14, 0));
+    EXPECT_FALSE(logic.isOnButton(15, 0, 0));
+    EXPECT_FALSE(logic.isOnButton(0, 15, 0));
+}
+
+TEST_F(StandaloneTest, ConfigurableButtonSize) {
+    // Test with custom button size
+    WindowActionsButtonLogic logic(20.0f);
+    EXPECT_EQ(logic.getButtonSize(), 20.0f);
+
+    // Test button detection with larger button size
+    EXPECT_TRUE(logic.isOnCloseButton(10, 10));
+    EXPECT_TRUE(logic.isOnCloseButton(19, 19));
+    EXPECT_FALSE(logic.isOnCloseButton(20, 10)); // Outside button
+
+    // Test second button with spacing
+    float expectedSecondButtonStart = 20.0f + WindowActionsButtonLogic::BUTTON_SPACING;
+    EXPECT_TRUE(logic.isOnFullscreenButton(expectedSecondButtonStart + 5, 10));
+    EXPECT_FALSE(logic.isOnFullscreenButton(expectedSecondButtonStart - 1, 10)); // Before button
+
+    // Test smaller button size
+    WindowActionsButtonLogic smallLogic(10.0f);
+    EXPECT_EQ(smallLogic.getButtonSize(), 10.0f);
+    EXPECT_TRUE(smallLogic.isOnCloseButton(5, 5));
+    EXPECT_FALSE(smallLogic.isOnCloseButton(10, 5)); // Outside smaller button
 }
 
 class MockGlobalState {
