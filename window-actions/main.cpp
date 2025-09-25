@@ -56,8 +56,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_pGlobalState = makeUnique<SGlobalState>();
 
     // Register configuration values
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:windowactions:button_size", Hyprlang::INT{15});
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:windowactions:action_button", Hyprlang::INT{273}); // BTN_RIGHT
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:window_actions:button_size", Hyprlang::INT{15});
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:window_actions:action_button", Hyprlang::INT{272}); // BTN_LEFT
 
     // Reload config to apply registered values
     HyprlandAPI::reloadConfig();

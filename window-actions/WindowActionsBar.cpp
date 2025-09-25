@@ -42,7 +42,7 @@ CWindowActionsBar::~CWindowActionsBar() {
 }
 
 float CWindowActionsBar::getButtonSize() const {
-    auto* const PBUTTON_SIZE_VAL = HyprlandAPI::getConfigValue(PHANDLE, "plugin:windowactions:button_size");
+    auto* const PBUTTON_SIZE_VAL = HyprlandAPI::getConfigValue(PHANDLE, "plugin:window_actions:button_size");
     int buttonSize = 15; // default
 
     if (PBUTTON_SIZE_VAL) {
@@ -53,8 +53,8 @@ float CWindowActionsBar::getButtonSize() const {
 }
 
 uint32_t CWindowActionsBar::getActionButton() const {
-    auto* const PACTION_BUTTON_VAL = HyprlandAPI::getConfigValue(PHANDLE, "plugin:windowactions:action_button");
-    int actionButton = 273; // default BTN_RIGHT
+    auto* const PACTION_BUTTON_VAL = HyprlandAPI::getConfigValue(PHANDLE, "plugin:window_actions:action_button");
+    int actionButton = 272; // default BTN_LEFT
 
     if (PACTION_BUTTON_VAL) {
         actionButton = std::any_cast<Hyprlang::INT>(PACTION_BUTTON_VAL->getValue());
