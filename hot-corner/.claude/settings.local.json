@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//usr/include/hyprland/**)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
