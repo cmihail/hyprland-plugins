@@ -9,6 +9,7 @@
 #include <hyprland/src/managers/LayoutManager.hpp>
 #include <hyprland/src/config/ConfigManager.hpp>
 #include <hyprland/src/protocols/LayerShell.hpp>
+#include <hyprland/src/managers/KeybindManager.hpp>
 #include <pango/pangocairo.h>
 #include <linux/input-event-codes.h>
 
@@ -28,10 +29,12 @@ CWindowActionsBar::CWindowActionsBar(PHLWINDOW pWindow) : IHyprWindowDecoration(
     m_pTouchUpCallback = HyprlandAPI::registerCallbackDynamic(
         PHANDLE, "touchUp", [&](void* self, SCallbackInfo& info, std::any param) { handleUpEvent(info); });
 
-    m_pCloseButtonTex = makeShared<CTexture>();
-    m_pFullscreenButtonTex = makeShared<CTexture>();
-    m_pGroupButtonTex = makeShared<CTexture>();
-    m_pFloatingButtonTex = makeShared<CTexture>();
+    // Initialize button textures based on config
+    size_t buttonCount = g_pGlobalState->buttons.size();
+    m_pButtonTextures.resize(buttonCount);
+    for (size_t i = 0; i < buttonCount; i++) {
+        m_pButtonTextures[i] = makeShared<CTexture>();
+    }
 }
 
 CWindowActionsBar::~CWindowActionsBar() {
@@ -62,6 +65,7 @@ uint32_t CWindowActionsBar::getActionButton() const {
 
     return static_cast<uint32_t>(actionButton);
 }
+
 
 SDecorationPositioningInfo CWindowActionsBar::getPositioningInfo() {
     SDecorationPositioningInfo info;
@@ -121,29 +125,10 @@ void CWindowActionsBar::onMouseButton(SCallbackInfo& info, IPointer::SButtonEven
 
     if (e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
         int buttonIndex = getButtonIndex(COORDS);
-        if (buttonIndex >= 0) {
+        if (buttonIndex >= 0 && buttonIndex < (int)g_pGlobalState->buttons.size()) {
             if (e.button == getActionButton()) {
-                switch (buttonIndex) {
-                    case 0: // Close button
-                        g_pCompositor->closeWindow(PWINDOW);
-                        break;
-                    case 1: // Fullscreen button
-                        g_pCompositor->setWindowFullscreenState(PWINDOW, {.internal = PWINDOW->isFullscreen() ? FSMODE_NONE : FSMODE_MAXIMIZED});
-                        break;
-                    case 2: // Group button
-                        if (PWINDOW->m_groupData.pNextWindow) {
-                            PWINDOW->destroyGroup();
-                        } else {
-                            PWINDOW->createGroup();
-                        }
-                        break;
-                    case 3: // Floating button
-                        PWINDOW->m_isFloating = !PWINDOW->m_isFloating;
-                        g_pLayoutManager->getCurrentLayout()->changeWindowFloatingMode(PWINDOW);
-                        // Focus the window to bring it to front
-                        g_pCompositor->focusWindow(PWINDOW);
-                        break;
-                }
+                const auto& button = g_pGlobalState->buttons[buttonIndex];
+                executeCommand(button.command);
                 info.cancelled = true;
                 return;
             }
@@ -200,35 +185,57 @@ void CWindowActionsBar::handleUpEvent(SCallbackInfo& info) {
     m_bCancelledDown = false;
 }
 
-bool CWindowActionsBar::isOnCloseButton(Vector2D coords) {
-    const float buttonSize = getButtonSize();
-    return coords.x >= 0 && coords.x <= buttonSize && coords.y >= 0 && coords.y <= buttonSize;
-}
-
-bool CWindowActionsBar::isOnFullscreenButton(Vector2D coords) {
-    const float buttonSize = getButtonSize();
-    float startX = buttonSize + BUTTON_SPACING;
-    return coords.x >= startX && coords.x <= startX + buttonSize && coords.y >= 0 && coords.y <= buttonSize;
-}
-
-bool CWindowActionsBar::isOnGroupButton(Vector2D coords) {
-    const float buttonSize = getButtonSize();
-    float startX = 2 * (buttonSize + BUTTON_SPACING);
-    return coords.x >= startX && coords.x <= startX + buttonSize && coords.y >= 0 && coords.y <= buttonSize;
-}
-
-bool CWindowActionsBar::isOnFloatingButton(Vector2D coords) {
-    const float buttonSize = getButtonSize();
-    float startX = 3 * (buttonSize + BUTTON_SPACING);
-    return coords.x >= startX && coords.x <= startX + buttonSize && coords.y >= 0 && coords.y <= buttonSize;
-}
-
 int CWindowActionsBar::getButtonIndex(Vector2D coords) {
-    if (isOnCloseButton(coords)) return 0;
-    if (isOnFullscreenButton(coords)) return 1;
-    if (isOnGroupButton(coords)) return 2;
-    if (isOnFloatingButton(coords)) return 3;
+    const float buttonSize = getButtonSize();
+    const size_t buttonCount = g_pGlobalState->buttons.size();
+
+    for (size_t i = 0; i < buttonCount; i++) {
+        float startX = i * (buttonSize + BUTTON_SPACING);
+        if (coords.x >= startX && coords.x <= startX + buttonSize &&
+            coords.y >= 0 && coords.y <= buttonSize) {
+            return static_cast<int>(i);
+        }
+    }
     return -1;
+}
+
+void CWindowActionsBar::executeCommand(const std::string& command) {
+    if (command.empty())
+        return;
+
+    Debug::log(LOG, "[window-actions] Executing command: {}", command);
+
+    // Use the exec dispatcher to execute the command
+    if (g_pKeybindManager && g_pKeybindManager->m_dispatchers.contains("exec")) {
+        g_pKeybindManager->m_dispatchers["exec"](command);
+    } else {
+        Debug::log(ERR, "[window-actions] exec dispatcher not found");
+    }
+}
+
+bool CWindowActionsBar::getWindowState(const std::string& condition) {
+    const auto PWINDOW = m_pWindow.lock();
+    if (!PWINDOW)
+        return false;
+
+    if (condition.empty())
+        return false;
+
+    if (condition == "fullscreen") {
+        return PWINDOW->isFullscreen();
+    } else if (condition == "grouped") {
+        return PWINDOW->m_groupData.pNextWindow != nullptr;
+    } else if (condition == "floating") {
+        return PWINDOW->m_isFloating;
+    } else if (condition == "maximized") {
+        return PWINDOW->m_fullscreenState.internal == FSMODE_MAXIMIZED;
+    } else if (condition == "focused") {
+        return g_pCompositor->m_lastWindow.lock() == PWINDOW;
+    } else if (condition == "pinned") {
+        return PWINDOW->m_pinned;
+    }
+
+    return false;
 }
 
 void CWindowActionsBar::renderText(SP<CTexture> out, const std::string& text, const CHyprColor& color, const Vector2D& bufferSize, const float scale, const int fontSize) {
@@ -277,34 +284,37 @@ void CWindowActionsBar::renderText(SP<CTexture> out, const std::string& text, co
 }
 
 void CWindowActionsBar::renderButtonTexts(const Vector2D& bufferSize, const float scale) {
-    const CHyprColor color = CHyprColor(0.9, 0.9, 0.9, 1.0);
     const auto PWINDOW = m_pWindow.lock();
 
     if (!PWINDOW)
         return;
 
-    // Always render close button - state doesn't change
-    if (m_pCloseButtonTex->m_texID == 0) {
-        renderText(m_pCloseButtonTex, "⨯", color, bufferSize, scale, getButtonSize() * 0.6);
+    // Ensure we have the right number of button textures
+    if (m_pButtonTextures.size() != g_pGlobalState->buttons.size()) {
+        m_pButtonTextures.resize(g_pGlobalState->buttons.size());
+        for (size_t i = 0; i < g_pGlobalState->buttons.size(); i++) {
+            if (!m_pButtonTextures[i]) {
+                m_pButtonTextures[i] = makeShared<CTexture>();
+            }
+        }
     }
 
-    // Fullscreen button - show different icons based on fullscreen state
-    bool isFullscreen = PWINDOW->isFullscreen();
-    std::string fullscreenIcon = isFullscreen ? "⬋" : "⬈";
-    m_pFullscreenButtonTex->destroyTexture(); // Clear existing texture to force re-render
-    renderText(m_pFullscreenButtonTex, fullscreenIcon, color, bufferSize, scale, getButtonSize() * 0.6);
+    // Render buttons based on configuration
+    for (size_t i = 0; i < g_pGlobalState->buttons.size(); i++) {
+        const auto& button = g_pGlobalState->buttons[i];
 
-    // Group button - show different icons based on group state
-    bool isInGroup = PWINDOW->m_groupData.pNextWindow != nullptr;
-    std::string groupIcon = isInGroup ? "⊞" : "⊟";
-    m_pGroupButtonTex->destroyTexture(); // Clear existing texture to force re-render
-    renderText(m_pGroupButtonTex, groupIcon, color, bufferSize, scale, getButtonSize() * 0.6);
+        // Choose icon based on window state
+        std::string icon;
+        if (!button.condition.empty() && getWindowState(button.condition)) {
+            icon = button.icon_active;
+        } else {
+            icon = button.icon_inactive;
+        }
 
-    // Floating button - show different icons based on floating state
-    bool isFloating = PWINDOW->m_isFloating;
-    std::string floatingIcon = isFloating ? "⠶" : "•";
-    m_pFloatingButtonTex->destroyTexture(); // Clear existing texture to force re-render
-    renderText(m_pFloatingButtonTex, floatingIcon, color, bufferSize, scale, getButtonSize() * 0.6);
+        // Clear existing texture to force re-render (for state changes)
+        m_pButtonTextures[i]->destroyTexture();
+        renderText(m_pButtonTextures[i], icon, button.text_color, bufferSize, scale, getButtonSize() * 0.6);
+    }
 }
 
 void CWindowActionsBar::draw(PHLMONITOR pMonitor, const float& a) {
@@ -333,14 +343,11 @@ void CWindowActionsBar::renderPass(PHLMONITOR pMonitor, const float& a) {
     const Vector2D bufferSize = {buttonSize * pMonitor->m_scale, buttonSize * pMonitor->m_scale};
     renderButtonTexts(bufferSize, pMonitor->m_scale);
 
-    CHyprColor bgColor = CHyprColor(0.2, 0.2, 0.2, 0.8);
-    bgColor.a *= a;
+    // Render all configured buttons
+    for (size_t i = 0; i < g_pGlobalState->buttons.size() && i < m_pButtonTextures.size(); i++) {
+        const auto& button = g_pGlobalState->buttons[i];
 
-    // Render all buttons
-    SP<CTexture> buttonTextures[] = {m_pCloseButtonTex, m_pFullscreenButtonTex, m_pGroupButtonTex, m_pFloatingButtonTex};
-
-    for (int i = 0; i < NUM_BUTTONS; i++) {
-        CBox buttonBox = {PWINDOW->m_realPosition->value().x - pMonitor->m_position.x + i * (buttonSize + BUTTON_SPACING),
+        CBox buttonBox = {PWINDOW->m_realPosition->value().x - pMonitor->m_position.x + static_cast<float>(i) * (buttonSize + BUTTON_SPACING),
                           PWINDOW->m_realPosition->value().y - pMonitor->m_position.y,
                           buttonSize, buttonSize};
 
@@ -349,10 +356,14 @@ void CWindowActionsBar::renderPass(PHLMONITOR pMonitor, const float& a) {
         if (buttonBox.w < 1 || buttonBox.h < 1)
             continue;
 
+        // Use button's configured background color with alpha
+        CHyprColor bgColor = button.bg_color;
+        bgColor.a *= a;
+
         g_pHyprOpenGL->renderRect(buttonBox, bgColor, {.round = 3.0f * pMonitor->m_scale});
 
-        if (buttonTextures[i]->m_texID != 0)
-            g_pHyprOpenGL->renderTexture(buttonTextures[i], buttonBox, {.a = a});
+        if (m_pButtonTextures[i] && m_pButtonTextures[i]->m_texID != 0)
+            g_pHyprOpenGL->renderTexture(m_pButtonTextures[i], buttonBox, {.a = a});
     }
 
     m_bWindowSizeChanged = false;
@@ -372,10 +383,13 @@ void CWindowActionsBar::damageEntire() {
         return;
 
     const float buttonSize = getButtonSize();
-    CBox damageBox = {PWINDOW->m_realPosition->value().x,
-                      PWINDOW->m_realPosition->value().y,
-                      NUM_BUTTONS * buttonSize + (NUM_BUTTONS - 1) * BUTTON_SPACING, buttonSize};
-    g_pHyprRenderer->damageBox(damageBox);
+    const int buttonCount = static_cast<int>(g_pGlobalState->buttons.size());
+    if (buttonCount > 0) {
+        CBox damageBox = {PWINDOW->m_realPosition->value().x,
+                          PWINDOW->m_realPosition->value().y,
+                          buttonCount * buttonSize + (buttonCount - 1) * BUTTON_SPACING, buttonSize};
+        g_pHyprRenderer->damageBox(damageBox);
+    }
 }
 
 eDecorationLayer CWindowActionsBar::getDecorationLayer() {
@@ -396,7 +410,10 @@ CBox CWindowActionsBar::assignedBoxGlobal() {
         return {};
 
     const float buttonSize = getButtonSize();
+    const int buttonCount = static_cast<int>(g_pGlobalState->buttons.size());
+    if (buttonCount == 0)
+        return {};
     return CBox{PWINDOW->m_realPosition->value().x,
                 PWINDOW->m_realPosition->value().y,
-                NUM_BUTTONS * buttonSize + (NUM_BUTTONS - 1) * BUTTON_SPACING, buttonSize};
+                buttonCount * buttonSize + (buttonCount - 1) * BUTTON_SPACING, buttonSize};
 }
