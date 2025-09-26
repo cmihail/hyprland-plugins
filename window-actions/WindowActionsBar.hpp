@@ -61,6 +61,7 @@ class CWindowActionsBar : public IHyprWindowDecoration {
 
     void                      handleDownEvent(SCallbackInfo& info, std::optional<ITouch::SDownEvent> touchEvent);
     void                      handleUpEvent(SCallbackInfo& info);
+    void                      handleMovement();
     int                       getButtonIndex(Vector2D coords);
     bool                      getWindowState(const std::string& condition);
     void                      executeCommand(const std::string& command);
@@ -73,6 +74,8 @@ class CWindowActionsBar : public IHyprWindowDecoration {
     bool                      m_bTouchEv = false;
     bool                      m_bCancelledDown = false;
     int                       m_iHoveredButton = -1;
+    bool                      m_bDragPending = false;
+    bool                      m_bDraggingThis = false;
 
     friend class CWindowActionsPassElement;
 };

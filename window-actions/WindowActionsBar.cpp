@@ -139,15 +139,27 @@ void CWindowActionsBar::onMouseButton(SCallbackInfo& info, IPointer::SButtonEven
 
     if (e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
         int buttonIndex = getButtonIndex(COORDS);
-        if (buttonIndex >= 0 && buttonIndex < (int)g_pGlobalState->buttons.size()) {
-            if (e.button == getActionButton()) {
+        if (buttonIndex >= 0) {
+            // Handle configured buttons
+            if (buttonIndex < (int)g_pGlobalState->buttons.size()) {
                 const auto& button = g_pGlobalState->buttons[buttonIndex];
-                executeCommand(button.command);
-                info.cancelled = true;
-                return;
-            }
-            if (e.button == BTN_LEFT) {
-                return;
+
+                if (e.button == getActionButton()) {
+                    executeCommand(button.command);
+                    info.cancelled = true;
+                    return;
+                }
+
+                // For __movewindow__ command, also handle left-click
+                if (e.button == BTN_LEFT && button.command == "__movewindow__") {
+                    executeCommand(button.command);
+                    info.cancelled = true;
+                    return;
+                }
+
+                if (e.button == BTN_LEFT) {
+                    return;
+                }
             }
         }
         handleDownEvent(info, std::nullopt);
@@ -169,6 +181,13 @@ void CWindowActionsBar::onTouchDown(SCallbackInfo& info, ITouch::SDownEvent e) {
 
 void CWindowActionsBar::onMouseMove(Vector2D coords) {
     if (!inputIsValid()) return;
+
+    // Handle drag movement if pending
+    if (m_bDragPending && !m_bTouchEv && validMapped(m_pWindow)) {
+        m_bDragPending = false;
+        handleMovement();
+        return;
+    }
 
     const auto COORDS = cursorRelativeToButton();
     const int newHoveredButton = getButtonIndex(COORDS);
@@ -205,10 +224,24 @@ void CWindowActionsBar::handleUpEvent(SCallbackInfo& info) {
     if (m_pWindow.lock() != g_pCompositor->m_lastWindow.lock())
         return;
 
+    if (m_bDraggingThis) {
+        g_pKeybindManager->m_dispatchers["mouse"]("0movewindow");
+        m_bDraggingThis = false;
+        damageEntire(); // Trigger redraw to restore inactive icon and normal opacity
+    }
+
     if (m_bCancelledDown)
         info.cancelled = true;
 
     m_bCancelledDown = false;
+    m_bDragPending = false;
+}
+
+void CWindowActionsBar::handleMovement() {
+    g_pKeybindManager->m_dispatchers["mouse"]("1movewindow");
+    m_bDraggingThis = true;
+    damageEntire(); // Trigger redraw to show active icon and full opacity
+    Debug::log(LOG, "[window-actions] Dragging initiated");
 }
 
 int CWindowActionsBar::getButtonIndex(Vector2D coords) {
@@ -230,6 +263,13 @@ void CWindowActionsBar::executeCommand(const std::string& command) {
         return;
 
     Debug::log(LOG, "[window-actions] Executing command: {}", command);
+
+    // Check for special movewindow command
+    if (command == "__movewindow__") {
+        Debug::log(LOG, "[window-actions] Initiating window move");
+        m_bDragPending = true;
+        return;
+    }
 
     // Use the exec dispatcher to execute the command
     if (g_pKeybindManager && g_pKeybindManager->m_dispatchers.contains("exec")) {
@@ -329,9 +369,12 @@ void CWindowActionsBar::renderButtonTexts(const Vector2D& bufferSize, const floa
     for (size_t i = 0; i < g_pGlobalState->buttons.size(); i++) {
         const auto& button = g_pGlobalState->buttons[i];
 
-        // Choose icon based on window state
+        // Choose icon based on window state or drag state
         std::string icon;
-        if (!button.condition.empty() && getWindowState(button.condition)) {
+        if (button.command == "__movewindow__" && m_bDraggingThis) {
+            // Show active icon while dragging
+            icon = button.icon_active;
+        } else if (!button.condition.empty() && getWindowState(button.condition)) {
             icon = button.icon_active;
         } else {
             icon = button.icon_inactive;
@@ -382,9 +425,10 @@ void CWindowActionsBar::renderPass(PHLMONITOR pMonitor, const float& a) {
         if (buttonBox.w < 1 || buttonBox.h < 1)
             continue;
 
-        // Apply hover opacity: unhovered_alpha when not hovered, full opacity when hovered
+        // Apply hover opacity: unhovered_alpha when not hovered, full opacity when hovered or dragging
         float unhovered_alpha = getUnhoveredAlpha();
-        float buttonAlpha = (m_iHoveredButton == static_cast<int>(i)) ? a : a * unhovered_alpha;
+        bool isDraggingMoveButton = (button.command == "__movewindow__" && m_bDraggingThis);
+        float buttonAlpha = (m_iHoveredButton == static_cast<int>(i) || isDraggingMoveButton) ? a : a * unhovered_alpha;
 
         // Use button's configured background color with hover-adjusted alpha
         CHyprColor bgColor = button.bg_color;

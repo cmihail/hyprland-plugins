@@ -508,3 +508,255 @@ TEST_F(StandaloneTest, UnhoveredAlphaConfiguration) {
     hoverLogic.onMouseMove(5, 5); // Hover first button
     EXPECT_FLOAT_EQ(hoverLogic.getButtonAlpha(0, 1.0f), 1.0f); // Full alpha despite low unhovered_alpha
 }
+
+// Mock class for testing movewindow command detection and drag functionality
+class WindowActionCommandExecutor {
+public:
+    enum class ActionResult {
+        EXECUTED_COMMAND,
+        STARTED_DRAG,
+        INVALID_COMMAND
+    };
+
+    static ActionResult executeCommand(const std::string& command) {
+        if (command.empty()) {
+            return ActionResult::INVALID_COMMAND;
+        }
+
+        // Check for special movewindow command
+        if (command == "__movewindow__") {
+            return ActionResult::STARTED_DRAG;
+        }
+
+        // All other commands are executed normally
+        return ActionResult::EXECUTED_COMMAND;
+    }
+
+    static bool isMoveWindowCommand(const std::string& command) {
+        return command == "__movewindow__";
+    }
+};
+
+TEST_F(StandaloneTest, MoveWindowCommandDetection) {
+    // Test movewindow command detection
+    EXPECT_TRUE(WindowActionCommandExecutor::isMoveWindowCommand("__movewindow__"));
+    EXPECT_FALSE(WindowActionCommandExecutor::isMoveWindowCommand("hyprctl dispatch killactive"));
+    EXPECT_FALSE(WindowActionCommandExecutor::isMoveWindowCommand("hyprctl dispatch fullscreen"));
+    EXPECT_FALSE(WindowActionCommandExecutor::isMoveWindowCommand(""));
+    EXPECT_FALSE(WindowActionCommandExecutor::isMoveWindowCommand("movewindow")); // Without underscores
+    EXPECT_FALSE(WindowActionCommandExecutor::isMoveWindowCommand("__movewindow")); // Missing trailing __
+    EXPECT_FALSE(WindowActionCommandExecutor::isMoveWindowCommand("movewindow__")); // Missing leading __
+}
+
+TEST_F(StandaloneTest, CommandExecution) {
+    // Test regular command execution
+    auto result1 = WindowActionCommandExecutor::executeCommand("hyprctl dispatch killactive");
+    EXPECT_EQ(result1, WindowActionCommandExecutor::ActionResult::EXECUTED_COMMAND);
+
+    auto result2 = WindowActionCommandExecutor::executeCommand("notify-send 'test'");
+    EXPECT_EQ(result2, WindowActionCommandExecutor::ActionResult::EXECUTED_COMMAND);
+
+    // Test movewindow command
+    auto result3 = WindowActionCommandExecutor::executeCommand("__movewindow__");
+    EXPECT_EQ(result3, WindowActionCommandExecutor::ActionResult::STARTED_DRAG);
+
+    // Test empty command
+    auto result4 = WindowActionCommandExecutor::executeCommand("");
+    EXPECT_EQ(result4, WindowActionCommandExecutor::ActionResult::INVALID_COMMAND);
+}
+
+// Mock class for testing drag state and visual feedback
+class WindowDragStateManager {
+private:
+    bool m_bDragPending = false;
+    bool m_bDraggingThis = false;
+    int m_hoveredButton = -1;
+    float m_unhovered_alpha = 1.0f;
+
+public:
+    void setDragPending(bool pending) {
+        m_bDragPending = pending;
+    }
+
+    void setDraggingThis(bool dragging) {
+        m_bDraggingThis = dragging;
+        if (dragging) {
+            m_bDragPending = false; // Clear pending when drag starts
+        }
+    }
+
+    void setHoveredButton(int buttonIndex) {
+        m_hoveredButton = buttonIndex;
+    }
+
+    void setUnhoveredAlpha(float alpha) {
+        m_unhovered_alpha = alpha;
+    }
+
+    bool isDragPending() const {
+        return m_bDragPending;
+    }
+
+    bool isDragging() const {
+        return m_bDraggingThis;
+    }
+
+    int getHoveredButton() const {
+        return m_hoveredButton;
+    }
+
+    // Simulate icon selection logic with drag state
+    std::string getButtonIcon(const std::string& iconInactive, const std::string& iconActive,
+                             const std::string& command, const std::string& condition, bool conditionMet) const {
+        // For movewindow buttons, show active icon while dragging
+        if (command == "__movewindow__" && m_bDraggingThis) {
+            return iconActive;
+        }
+
+        // For other buttons, use condition-based logic
+        if (!condition.empty() && conditionMet) {
+            return iconActive;
+        }
+
+        return iconInactive;
+    }
+
+    // Simulate alpha calculation with drag state
+    float getButtonAlpha(int buttonIndex, const std::string& command, float baseAlpha = 1.0f) const {
+        // For movewindow buttons, full opacity while dragging
+        bool isDraggingMoveButton = (command == "__movewindow__" && m_bDraggingThis);
+
+        if (m_hoveredButton == buttonIndex || isDraggingMoveButton) {
+            return baseAlpha; // Full opacity
+        } else {
+            return baseAlpha * m_unhovered_alpha; // Apply unhovered alpha
+        }
+    }
+};
+
+TEST_F(StandaloneTest, DragStateManagement) {
+    WindowDragStateManager dragManager;
+
+    // Initial state
+    EXPECT_FALSE(dragManager.isDragPending());
+    EXPECT_FALSE(dragManager.isDragging());
+
+    // Set drag pending
+    dragManager.setDragPending(true);
+    EXPECT_TRUE(dragManager.isDragPending());
+    EXPECT_FALSE(dragManager.isDragging());
+
+    // Start dragging (should clear pending)
+    dragManager.setDraggingThis(true);
+    EXPECT_FALSE(dragManager.isDragPending());
+    EXPECT_TRUE(dragManager.isDragging());
+
+    // Stop dragging
+    dragManager.setDraggingThis(false);
+    EXPECT_FALSE(dragManager.isDragPending());
+    EXPECT_FALSE(dragManager.isDragging());
+}
+
+TEST_F(StandaloneTest, DragVisualFeedbackIconSwitching) {
+    WindowDragStateManager dragManager;
+
+    std::string iconInactive = "⇱";
+    std::string iconActive = "⇲";
+    std::string moveCommand = "__movewindow__";
+    std::string normalCommand = "hyprctl dispatch killactive";
+
+    // Test movewindow button - shows inactive icon when not dragging
+    std::string icon1 = dragManager.getButtonIcon(iconInactive, iconActive, moveCommand, "", false);
+    EXPECT_EQ(icon1, iconInactive);
+
+    // Test movewindow button - shows active icon while dragging
+    dragManager.setDraggingThis(true);
+    std::string icon2 = dragManager.getButtonIcon(iconInactive, iconActive, moveCommand, "", false);
+    EXPECT_EQ(icon2, iconActive);
+
+    // Test normal button - not affected by drag state
+    std::string icon3 = dragManager.getButtonIcon("⨯", "⨯", normalCommand, "", false);
+    EXPECT_EQ(icon3, "⨯");
+
+    // Test condition-based button - still works with conditions
+    dragManager.setDraggingThis(false);
+    std::string icon4 = dragManager.getButtonIcon("⬈", "⬋", normalCommand, "fullscreen", true);
+    EXPECT_EQ(icon4, "⬋"); // Active due to condition, not drag state
+}
+
+TEST_F(StandaloneTest, DragVisualFeedbackAlpha) {
+    WindowDragStateManager dragManager;
+    dragManager.setUnhoveredAlpha(0.3f); // 30% opacity when not hovered
+
+    float baseAlpha = 1.0f;
+    std::string moveCommand = "__movewindow__";
+    std::string normalCommand = "hyprctl dispatch killactive";
+
+    // Test normal button alpha (not hovered, not dragging)
+    float alpha1 = dragManager.getButtonAlpha(0, normalCommand, baseAlpha);
+    EXPECT_FLOAT_EQ(alpha1, 0.3f); // Reduced alpha
+
+    // Test hovered button alpha
+    dragManager.setHoveredButton(0);
+    float alpha2 = dragManager.getButtonAlpha(0, normalCommand, baseAlpha);
+    EXPECT_FLOAT_EQ(alpha2, 1.0f); // Full alpha when hovered
+
+    // Test movewindow button alpha while dragging (not hovered)
+    dragManager.setHoveredButton(-1); // Not hovered
+    dragManager.setDraggingThis(true);
+    float alpha3 = dragManager.getButtonAlpha(0, moveCommand, baseAlpha);
+    EXPECT_FLOAT_EQ(alpha3, 1.0f); // Full alpha while dragging, even if not hovered
+
+    // Test non-movewindow button while movewindow is dragging
+    float alpha4 = dragManager.getButtonAlpha(1, normalCommand, baseAlpha);
+    EXPECT_FLOAT_EQ(alpha4, 0.3f); // Still reduced alpha for other buttons
+}
+
+TEST_F(StandaloneTest, MoveWindowButtonConfiguration) {
+    // Test parsing movewindow button configuration
+    auto result = ButtonConfigParser::parseButtonConfig("rgb(e6e6e6), rgb(859900), ⇱, ⇲, __movewindow__,");
+    EXPECT_TRUE(result.valid);
+    EXPECT_EQ(result.button.icon_inactive, "⇱");
+    EXPECT_EQ(result.button.icon_active, "⇲");
+    EXPECT_EQ(result.button.command, "__movewindow__");
+    EXPECT_EQ(result.button.condition, "");
+
+    // Verify it's recognized as a move command
+    EXPECT_TRUE(WindowActionCommandExecutor::isMoveWindowCommand(result.button.command));
+}
+
+TEST_F(StandaloneTest, MoveWindowButtonIntegration) {
+    MockGlobalState globalState;
+
+    // Add a movewindow button and a regular button
+    MockWindowActionButton moveButton{"", "⇱", "⇲", "__movewindow__", "", 0xe6e6e6, 0x859900};
+    MockWindowActionButton closeButton{"", "⨯", "⨯", "hyprctl dispatch killactive", "", 0xff4040, 0x333333};
+
+    globalState.buttons.push_back(moveButton);
+    globalState.buttons.push_back(closeButton);
+
+    WindowActionsButtonLogic buttonLogic(15.0f, &globalState);
+    WindowDragStateManager dragManager;
+
+    EXPECT_EQ(buttonLogic.getButtonCount(), 2);
+
+    // Test button positioning
+    EXPECT_EQ(buttonLogic.getButtonIndex(5, 5), 0);   // First button (move)
+    EXPECT_EQ(buttonLogic.getButtonIndex(20, 5), 1);  // Second button (close)
+
+    // Test command execution
+    auto moveResult = WindowActionCommandExecutor::executeCommand(moveButton.command);
+    EXPECT_EQ(moveResult, WindowActionCommandExecutor::ActionResult::STARTED_DRAG);
+
+    auto closeResult = WindowActionCommandExecutor::executeCommand(closeButton.command);
+    EXPECT_EQ(closeResult, WindowActionCommandExecutor::ActionResult::EXECUTED_COMMAND);
+
+    // Test visual feedback for movewindow button
+    dragManager.setDraggingThis(true);
+    std::string moveIcon = dragManager.getButtonIcon(moveButton.icon_inactive, moveButton.icon_active,
+                                                    moveButton.command, moveButton.condition, false);
+    EXPECT_EQ(moveIcon, "⇲"); // Active icon while dragging
+
+    float moveAlpha = dragManager.getButtonAlpha(0, moveButton.command, 1.0f);
+    EXPECT_FLOAT_EQ(moveAlpha, 1.0f); // Full alpha while dragging
+}

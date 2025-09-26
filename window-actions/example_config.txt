@@ -1,0 +1,23 @@
+# Example configuration for Hyprland with window-actions plugin
+# Add this to your hyprland.conf file:
+
+# Load the plugin
+plugin = /path/to/your/window-actions.so
+
+# Configure window action buttons
+# Format: text_color, bg_color, icon_inactive, icon_active, command, [condition]
+
+# Example: Add a move window button (with visual feedback)
+# The icon will change from inactive to active while dragging
+window_actions_button = rgba(e6e6e6ff), rgba(859900dd), ⇱, ⇲, __movewindow__
+
+# Example: Add close button
+window_actions_button = rgba(ff6b6bff), rgba(333333dd), ✕, ✕, hyprctl dispatch killactive
+
+# Example: Add maximize/restore button
+window_actions_button = rgba(4ecdc4ff), rgba(333333dd), □, ◊, hyprctl dispatch fullscreen 1, fullscreen
+
+# Configure plugin settings (optional)
+plugin:window_actions:button_size = 15
+plugin:window_actions:action_button = 272  # BTN_LEFT
+plugin:window_actions:unhovered_alpha = 0.8

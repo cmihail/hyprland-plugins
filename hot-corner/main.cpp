@@ -28,7 +28,7 @@ struct HotCornerState {
 static std::unique_ptr<HotCornerState> g_pHotCornerState;
 
 static void executeHotCornerCommand() {
-    auto* const PCOMMAND_VAL = HyprlandAPI::getConfigValue(PHANDLE, "plugin:hotcorner:command");
+    auto* const PCOMMAND_VAL = HyprlandAPI::getConfigValue(PHANDLE, "plugin:hot_corner:command");
 
     std::string commandStr = "";
     if (PCOMMAND_VAL) {
@@ -45,7 +45,7 @@ static void startHotCornerTimer() {
         return; // Timer already running
     }
 
-    auto* const PDELAYMS_VAL = HyprlandAPI::getConfigValue(PHANDLE, "plugin:hotcorner:delay_ms");
+    auto* const PDELAYMS_VAL = HyprlandAPI::getConfigValue(PHANDLE, "plugin:hot_corner:delay_ms");
     int delayMs = 1000; // default
 
     if (PDELAYMS_VAL) {
@@ -81,7 +81,7 @@ static void onMouseMotion(void* self, SCallbackInfo& info, std::any data) {
         return;
 
     // Get configuration values
-    auto* const PCORNERSIZE_VAL = HyprlandAPI::getConfigValue(PHANDLE, "plugin:hotcorner:corner_size");
+    auto* const PCORNERSIZE_VAL = HyprlandAPI::getConfigValue(PHANDLE, "plugin:hot_corner:corner_size");
     int cornerSize = 10; // default
 
     if (PCORNERSIZE_VAL) {
@@ -120,9 +120,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_pHotCornerState = std::make_unique<HotCornerState>();
 
     // Register configuration values
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:hotcorner:command", Hyprlang::STRING{""});
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:hotcorner:delay_ms", Hyprlang::INT{1000});
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:hotcorner:corner_size", Hyprlang::INT{10});
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:hot_corner:command", Hyprlang::STRING{""});
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:hot_corner:delay_ms", Hyprlang::INT{1000});
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:hot_corner:corner_size", Hyprlang::INT{10});
 
     // Reload config to apply registered values
     HyprlandAPI::reloadConfig();

@@ -8,7 +8,7 @@ Add the following to your Hyprland configuration file (`~/.config/hypr/hyprland.
 
 ```ini
 plugin {
-    hotcorner {
+    hot_corner {
         # Command to execute when hot corner is activated (required)
         command = "notify-send 'Hot corner activated!'"
 

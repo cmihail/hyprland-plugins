@@ -1,7 +1,7 @@
 {
   "permissions": {
     "allow": [
-      "Read(//usr/include/hyprland/**)"
+      "WebFetch(domain:github.com)"
     ],
     "deny": [],
     "ask": []

@@ -102,10 +102,17 @@ window_actions_button = , , ⚙, ⚙, notify-send "Window Info" "$(hyprctl activ
 Each `window_actions_button` line follows this format:
 - **text_color**: Button text color in `rgb(rrggbb)` format (empty = default rgba(e6e6e6ff))
 - **bg_color**: Button background color in `rgb(rrggbb)` format (empty = default rgba(333333dd))
-- **inactive_icon**: Unicode icon shown when condition is false/unset
-- **active_icon**: Unicode icon shown when condition is true
-- **command**: Shell command to execute when button is clicked
+- **inactive_icon**: Unicode icon shown when condition is false/unset (or during normal state)
+- **active_icon**: Unicode icon shown when condition is true (or during active operations like dragging)
+- **command**: Shell command to execute when button is clicked, or special commands like `__movewindow__`
 - **condition** (optional): Window state to check for icon switching
+
+#### Special Commands
+- **`__movewindow__`**: Enables window dragging functionality with visual feedback
+  - Shows `inactive_icon` when not dragging
+  - Shows `active_icon` while dragging the window
+  - Maintains full opacity during drag operation
+  - Works with both left-click and configured action button
 
 #### Plugin Settings
 - **button_size**: Size of buttons in pixels (default: 15)
@@ -149,17 +156,20 @@ plugin {
     }
 }
 
+# Move window button - with visual feedback during drag
+window_actions_button = rgb(e6e6e6), rgb(859900), ⇱, ⇲, __movewindow__,
+
 # Close button with custom red text and dark background
-window_actions_button = rgb(e74c3c), rgb(2c1810), ✕, ✕, hyprctl dispatch killactive,
+window_actions_button = rgb(e74c3c), rgb(dc322f), ⨯, ⨯, hyprctl dispatch killactive,
 
-# Minimize button with orange text and brown background
-window_actions_button = rgb(f39c12), rgb(2c1f10), ▽, ▽, hyprctl dispatch movetoworkspacesilent special,
+# Fullscreen toggle with blue text and custom background
+window_actions_button = rgb(e6e6e6), rgb(268bd2), ⬈, ⬋, hyprctl dispatch fullscreen 1, fullscreen
 
-# Fullscreen toggle with green text and custom background
-window_actions_button = rgb(2ecc71), rgb(0f1f0f), ⛶, ⛷, hyprctl dispatch fullscreen 1, fullscreen
+# Group toggle with purple text and custom background
+window_actions_button = rgb(e6e6e6), rgb(6c71c4), ⊟, ⊞, hyprctl dispatch togglegroup, grouped
 
-# Info button with purple text and dark purple background
-window_actions_button = rgb(9b59b6), rgb(1f0f2c), ⚙, ⚙, notify-send "Window Info" "$(hyprctl activewindow)",
+# Floating toggle with teal text and custom background
+window_actions_button = rgb(e6e6e6), rgb(16a085), ❐, ⊡, hyprctl dispatch togglefloating, floating
 ```
 
 #### Custom Commands
@@ -190,7 +200,12 @@ make test
 This will compile and run all unit tests using Google Test framework. The tests focus on core logic validation including:
 
 - Button position detection algorithms
-- State management logic
+- State management logic and window state checking
+- Movewindow command detection and execution
+- Drag state management and visual feedback
+- Icon switching based on conditions and drag state
+- Alpha transparency calculations during hover and drag operations
+- Configuration parsing and button management
 - Pass element functionality
 - Boundary condition testing
 
@@ -199,11 +214,14 @@ Note: Tests are designed as standalone unit tests that don't require the full Hy
 ## Features
 
 - **Dynamic Button Configuration**: Define any number of buttons with custom icons and commands
+- **Window Move Functionality**: Built-in window dragging with `__movewindow__` special command
+- **Visual Feedback**: Icons and opacity change during active operations (like window dragging)
 - **State-Aware Icons**: Icons change based on window state (fullscreen, floating, grouped, etc.)
-- **Customizable Colors**: Set individual colors for each button's text/icons and global background
+- **Customizable Colors**: Set individual colors for each button's text/icons and background
 - **Flexible Commands**: Execute any shell command or Hyprland dispatcher
 - **Mouse Button Configuration**: Choose which mouse button triggers actions
 - **Unicode Icon Support**: Use any Unicode characters as button icons
+- **Hover Effects**: Configurable transparency for non-hovered buttons
 
 ## Development
 
