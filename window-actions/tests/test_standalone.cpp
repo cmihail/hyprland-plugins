@@ -397,3 +397,114 @@ TEST_F(StandaloneTest, EdgeCaseHandling) {
     float lastButtonX = 9 * (15.0f + 2.0f) + 7; // 9th button center
     EXPECT_EQ(logic.getButtonIndex(lastButtonX, 5), 9);
 }
+
+// Mock class for testing hover functionality
+class WindowActionsHoverLogic {
+private:
+    WindowActionsButtonLogic* m_buttonLogic;
+    int m_hoveredButton = -1;
+    float m_unhovered_alpha = 1.0f;
+
+public:
+    explicit WindowActionsHoverLogic(WindowActionsButtonLogic* buttonLogic, float unhovered_alpha = 1.0f)
+        : m_buttonLogic(buttonLogic), m_unhovered_alpha(unhovered_alpha) {}
+
+    void onMouseMove(float x, float y) {
+        int newHoveredButton = m_buttonLogic ? m_buttonLogic->getButtonIndex(x, y) : -1;
+        if (newHoveredButton != m_hoveredButton) {
+            m_hoveredButton = newHoveredButton;
+        }
+    }
+
+    int getHoveredButton() const {
+        return m_hoveredButton;
+    }
+
+    float getButtonAlpha(int buttonIndex, float baseAlpha = 1.0f) const {
+        return (m_hoveredButton == buttonIndex) ? baseAlpha : baseAlpha * m_unhovered_alpha;
+    }
+
+    void setUnhoveredAlpha(float alpha) {
+        m_unhovered_alpha = alpha;
+    }
+
+    float getUnhoveredAlpha() const {
+        return m_unhovered_alpha;
+    }
+};
+
+TEST_F(StandaloneTest, HoverStateTracking) {
+    MockGlobalState globalState;
+    WindowActionsButtonLogic buttonLogic(15.0f, &globalState);
+    WindowActionsHoverLogic hoverLogic(&buttonLogic);
+
+    // Add some buttons
+    globalState.buttons.push_back({"", "⨯", "⨯", "killactive", "", 0xff4040, 0x333333});
+    globalState.buttons.push_back({"", "⬈", "⬋", "fullscreen", "fullscreen", 0xeeee11, 0x444444});
+
+    // Initially no button is hovered
+    EXPECT_EQ(hoverLogic.getHoveredButton(), -1);
+
+    // Move mouse over first button
+    hoverLogic.onMouseMove(5, 5);
+    EXPECT_EQ(hoverLogic.getHoveredButton(), 0);
+
+    // Move mouse over second button
+    hoverLogic.onMouseMove(20, 5); // Second button starts at x=17 (15 + 2)
+    EXPECT_EQ(hoverLogic.getHoveredButton(), 1);
+
+    // Move mouse away from buttons
+    hoverLogic.onMouseMove(100, 5);
+    EXPECT_EQ(hoverLogic.getHoveredButton(), -1);
+}
+
+TEST_F(StandaloneTest, HoverAlphaCalculation) {
+    MockGlobalState globalState;
+    WindowActionsButtonLogic buttonLogic(15.0f, &globalState);
+    WindowActionsHoverLogic hoverLogic(&buttonLogic, 0.3f); // 30% when not hovered
+
+    // Add buttons
+    globalState.buttons.push_back({"", "⨯", "⨯", "killactive", "", 0xff4040, 0x333333});
+    globalState.buttons.push_back({"", "⬈", "⬋", "fullscreen", "fullscreen", 0xeeee11, 0x444444});
+
+    float baseAlpha = 0.8f;
+
+    // No button hovered - all buttons should have reduced alpha
+    EXPECT_FLOAT_EQ(hoverLogic.getButtonAlpha(0, baseAlpha), 0.24f); // 0.8 * 0.3
+    EXPECT_FLOAT_EQ(hoverLogic.getButtonAlpha(1, baseAlpha), 0.24f); // 0.8 * 0.3
+
+    // Hover first button
+    hoverLogic.onMouseMove(5, 5);
+    EXPECT_FLOAT_EQ(hoverLogic.getButtonAlpha(0, baseAlpha), 0.8f); // Full alpha
+    EXPECT_FLOAT_EQ(hoverLogic.getButtonAlpha(1, baseAlpha), 0.24f); // Reduced alpha
+
+    // Hover second button
+    hoverLogic.onMouseMove(20, 5);
+    EXPECT_FLOAT_EQ(hoverLogic.getButtonAlpha(0, baseAlpha), 0.24f); // Reduced alpha
+    EXPECT_FLOAT_EQ(hoverLogic.getButtonAlpha(1, baseAlpha), 0.8f); // Full alpha
+}
+
+TEST_F(StandaloneTest, UnhoveredAlphaConfiguration) {
+    MockGlobalState globalState;
+    WindowActionsButtonLogic buttonLogic(15.0f, &globalState);
+    WindowActionsHoverLogic hoverLogic(&buttonLogic);
+
+    // Test default alpha (1.0 = no transparency)
+    EXPECT_FLOAT_EQ(hoverLogic.getUnhoveredAlpha(), 1.0f);
+    EXPECT_FLOAT_EQ(hoverLogic.getButtonAlpha(0, 1.0f), 1.0f); // No reduction
+
+    // Test 10% opacity when not hovered
+    hoverLogic.setUnhoveredAlpha(0.1f);
+    EXPECT_FLOAT_EQ(hoverLogic.getUnhoveredAlpha(), 0.1f);
+    EXPECT_FLOAT_EQ(hoverLogic.getButtonAlpha(0, 1.0f), 0.1f); // 10% opacity
+
+    // Test 50% opacity when not hovered
+    hoverLogic.setUnhoveredAlpha(0.5f);
+    EXPECT_FLOAT_EQ(hoverLogic.getUnhoveredAlpha(), 0.5f);
+    EXPECT_FLOAT_EQ(hoverLogic.getButtonAlpha(0, 1.0f), 0.5f); // 50% opacity
+
+    // Test with hovered button (should always get full alpha)
+    globalState.buttons.push_back({"", "⨯", "⨯", "killactive", "", 0xff4040, 0x333333});
+    hoverLogic.onMouseMove(5, 5); // Hover first button
+    EXPECT_FLOAT_EQ(hoverLogic.getButtonAlpha(0, 1.0f), 1.0f); // Full alpha despite low unhovered_alpha
+}

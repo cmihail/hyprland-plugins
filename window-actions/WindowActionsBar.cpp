@@ -24,6 +24,8 @@ CWindowActionsBar::CWindowActionsBar(PHLWINDOW pWindow) : IHyprWindowDecoration(
 
     m_pMouseButtonCallback = HyprlandAPI::registerCallbackDynamic(
         PHANDLE, "mouseButton", [&](void* self, SCallbackInfo& info, std::any param) { onMouseButton(info, std::any_cast<IPointer::SButtonEvent>(param)); });
+    m_pMouseMoveCallback = HyprlandAPI::registerCallbackDynamic(
+        PHANDLE, "mouseMove", [&](void* self, SCallbackInfo& info, std::any param) { onMouseMove(std::any_cast<Vector2D>(param)); });
     m_pTouchDownCallback = HyprlandAPI::registerCallbackDynamic(
         PHANDLE, "touchDown", [&](void* self, SCallbackInfo& info, std::any param) { onTouchDown(info, std::any_cast<ITouch::SDownEvent>(param)); });
     m_pTouchUpCallback = HyprlandAPI::registerCallbackDynamic(
@@ -39,6 +41,7 @@ CWindowActionsBar::CWindowActionsBar(PHLWINDOW pWindow) : IHyprWindowDecoration(
 
 CWindowActionsBar::~CWindowActionsBar() {
     HyprlandAPI::unregisterCallback(PHANDLE, m_pMouseButtonCallback);
+    HyprlandAPI::unregisterCallback(PHANDLE, m_pMouseMoveCallback);
     HyprlandAPI::unregisterCallback(PHANDLE, m_pTouchDownCallback);
     HyprlandAPI::unregisterCallback(PHANDLE, m_pTouchUpCallback);
     std::erase(g_pGlobalState->bars, m_self);
@@ -64,6 +67,17 @@ uint32_t CWindowActionsBar::getActionButton() const {
     }
 
     return static_cast<uint32_t>(actionButton);
+}
+
+float CWindowActionsBar::getUnhoveredAlpha() const {
+    auto* const PUNHOVERED_ALPHA_VAL = HyprlandAPI::getConfigValue(PHANDLE, "plugin:window_actions:unhovered_alpha");
+    float unhovered_alpha = 1.0f; // default (no transparency)
+
+    if (PUNHOVERED_ALPHA_VAL) {
+        unhovered_alpha = std::any_cast<Hyprlang::FLOAT>(PUNHOVERED_ALPHA_VAL->getValue());
+    }
+
+    return unhovered_alpha;
 }
 
 
@@ -151,6 +165,18 @@ void CWindowActionsBar::onTouchDown(SCallbackInfo& info, ITouch::SDownEvent e) {
     g_pCompositor->warpCursorTo({PMONITOR->m_position.x + e.pos.x * PMONITOR->m_size.x, PMONITOR->m_position.y + e.pos.y * PMONITOR->m_size.y}, true);
 
     handleDownEvent(info, e);
+}
+
+void CWindowActionsBar::onMouseMove(Vector2D coords) {
+    if (!inputIsValid()) return;
+
+    const auto COORDS = cursorRelativeToButton();
+    const int newHoveredButton = getButtonIndex(COORDS);
+
+    if (newHoveredButton != m_iHoveredButton) {
+        m_iHoveredButton = newHoveredButton;
+        damageEntire(); // Trigger redraw
+    }
 }
 
 Vector2D CWindowActionsBar::cursorRelativeToButton() {
@@ -356,14 +382,18 @@ void CWindowActionsBar::renderPass(PHLMONITOR pMonitor, const float& a) {
         if (buttonBox.w < 1 || buttonBox.h < 1)
             continue;
 
-        // Use button's configured background color with alpha
+        // Apply hover opacity: unhovered_alpha when not hovered, full opacity when hovered
+        float unhovered_alpha = getUnhoveredAlpha();
+        float buttonAlpha = (m_iHoveredButton == static_cast<int>(i)) ? a : a * unhovered_alpha;
+
+        // Use button's configured background color with hover-adjusted alpha
         CHyprColor bgColor = button.bg_color;
-        bgColor.a *= a;
+        bgColor.a *= buttonAlpha;
 
         g_pHyprOpenGL->renderRect(buttonBox, bgColor, {.round = 3.0f * pMonitor->m_scale});
 
         if (m_pButtonTextures[i] && m_pButtonTextures[i]->m_texID != 0)
-            g_pHyprOpenGL->renderTexture(m_pButtonTextures[i], buttonBox, {.a = a});
+            g_pHyprOpenGL->renderTexture(m_pButtonTextures[i], buttonBox, {.a = buttonAlpha});
     }
 
     m_bWindowSizeChanged = false;

@@ -48,6 +48,7 @@ class CWindowActionsBar : public IHyprWindowDecoration {
 
     float                     getButtonSize() const;
     uint32_t                  getActionButton() const;
+    float                     getUnhoveredAlpha() const;
 
     Vector2D                  cursorRelativeToButton();
     void                      renderButtonTexts(const Vector2D& bufferSize, const float scale);
@@ -55,6 +56,7 @@ class CWindowActionsBar : public IHyprWindowDecoration {
 
     bool                      inputIsValid();
     void                      onMouseButton(SCallbackInfo& info, IPointer::SButtonEvent e);
+    void                      onMouseMove(Vector2D coords);
     void                      onTouchDown(SCallbackInfo& info, ITouch::SDownEvent e);
 
     void                      handleDownEvent(SCallbackInfo& info, std::optional<ITouch::SDownEvent> touchEvent);
@@ -64,11 +66,13 @@ class CWindowActionsBar : public IHyprWindowDecoration {
     void                      executeCommand(const std::string& command);
 
     SP<HOOK_CALLBACK_FN>      m_pMouseButtonCallback;
+    SP<HOOK_CALLBACK_FN>      m_pMouseMoveCallback;
     SP<HOOK_CALLBACK_FN>      m_pTouchDownCallback;
     SP<HOOK_CALLBACK_FN>      m_pTouchUpCallback;
 
     bool                      m_bTouchEv = false;
     bool                      m_bCancelledDown = false;
+    int                       m_iHoveredButton = -1;
 
     friend class CWindowActionsPassElement;
 };

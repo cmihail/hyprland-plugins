@@ -68,6 +68,7 @@ plugin {
     window_actions {
         button_size = 15                    # Size of buttons in pixels (default: 15)
         action_button = 272                 # Mouse button for actions (default: 272 = BTN_LEFT)
+        unhovered_alpha = 1.0               # Opacity when not hovered (default: 1.0 = full opacity)
     }
 }
 ```
@@ -106,6 +107,14 @@ Each `window_actions_button` line follows this format:
 - **command**: Shell command to execute when button is clicked
 - **condition** (optional): Window state to check for icon switching
 
+#### Plugin Settings
+- **button_size**: Size of buttons in pixels (default: 15)
+- **action_button**: Mouse button code for triggering actions (default: 272 = BTN_LEFT)
+- **unhovered_alpha**: Opacity multiplier when buttons are not hovered (default: 1.0 = full opacity)
+  - Set to `0.1` for 10% opacity when not hovered
+  - Set to `0.5` for 50% opacity when not hovered
+  - Set to `1.0` for no transparency effect (default)
+
 #### Available Conditions
 - `fullscreen` - Window is in fullscreen mode
 - `grouped` - Window is part of a group
@@ -136,6 +145,7 @@ plugin {
     window_actions {
         button_size = 18
         action_button = 272
+        unhovered_alpha = 0.3        # Buttons fade to 30% opacity when not hovered
     }
 }
 

@@ -128,6 +128,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     // Register configuration values
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:window_actions:button_size", Hyprlang::INT{15});
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:window_actions:action_button", Hyprlang::INT{272}); // BTN_LEFT
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:window_actions:unhovered_alpha", Hyprlang::FLOAT{1.0f});
 
     // Register config keyword for window_actions_button
     HyprlandAPI::addConfigKeyword(PHANDLE, "window_actions_button", onNewButton, Hyprlang::SHandlerOptions{});
