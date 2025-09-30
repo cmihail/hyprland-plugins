@@ -1,0 +1,31 @@
+# Example configuration for Hyprland with monitor-workspace plugin
+# Add this to your hyprland.conf file:
+
+# Load the plugin
+plugin = /path/to/your/monitor-workspace.so
+
+# Configure workspace layouts for different monitor counts
+plugin {
+    monitor_workspace {
+        # Single monitor: all workspaces on one monitor
+        layout_1_monitors = m1:1,2,3,4,5,6,7,8,9,10
+
+        # Dual monitor: alternating workspaces
+        layout_2_monitors = m1:2,4,6,8,10;m2:1,3,5,7,9
+
+        # Triple monitor: distributed workspaces
+        layout_3_monitors = m1:7,8,9,10;m2:1,2,3;m3:4,5,6
+
+        # Four monitors example
+        layout_4_monitors = m1:1,5,9;m2:2,6,10;m3:3,7;m4:4,8
+    }
+}
+
+# Notes:
+# - m1 is the leftmost monitor (lowest X position)
+# - m2 is the second monitor from the left
+# - m3 is the third monitor from the left
+# - Monitors are sorted by X position, then Y if X is equal
+# - Each monitor automatically switches to its first workspace when layout is applied
+# - Workspaces are created if they don't exist
+# - Existing workspaces are moved to their assigned monitors
