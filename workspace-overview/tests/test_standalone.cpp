@@ -74,29 +74,37 @@ static std::vector<LayoutBox> calculateLayout(float monitorWidth, float monitorH
     std::vector<LayoutBox> boxes;
     const int LEFT_WORKSPACES = 4;
 
-    const float leftWidth = monitorWidth * leftWidthRatio;
-    const float rightWidth = monitorWidth - leftWidth;
     const float availableHeight = monitorHeight - (2 * padding);
     const float totalGaps = (LEFT_WORKSPACES - 1) * gapWidth;
     const float leftPreviewHeight = (availableHeight - totalGaps) / LEFT_WORKSPACES;
 
-    // Left side workspaces
+    // Left workspaces: calculate width so that left margin = top/bottom margin = padding
+    // The aspect ratio should match the monitor's aspect ratio for proper scaling
+    const float monitorAspectRatio = monitorWidth / monitorHeight;
+    const float leftWorkspaceWidth = leftPreviewHeight * monitorAspectRatio;
+
+    // Active workspace: starts right after left section with padding gap
+    const float activeX = padding + leftWorkspaceWidth + padding;  // left margin + left width + gap
+    const float activeMaxWidth = monitorWidth - activeX - padding;  // Leave padding on right edge
+    const float activeMaxHeight = monitorHeight - (2 * padding);
+
+    // Left side workspaces (left margin = padding, same as top/bottom)
     for (int i = 0; i < LEFT_WORKSPACES; ++i) {
         LayoutBox box;
         box.x = padding;
         box.y = padding + i * (leftPreviewHeight + gapWidth);
-        box.w = leftWidth - (2 * padding);
+        box.w = leftWorkspaceWidth;
         box.h = leftPreviewHeight;
         box.isActive = false;
         boxes.push_back(box);
     }
 
-    // Right side - active workspace
+    // Right side - active workspace (maximized with consistent margins)
     LayoutBox activeBox;
-    activeBox.x = leftWidth + padding;
+    activeBox.x = activeX;
     activeBox.y = padding;
-    activeBox.w = rightWidth - (2 * padding);
-    activeBox.h = monitorHeight - (2 * padding);
+    activeBox.w = activeMaxWidth;
+    activeBox.h = activeMaxHeight;
     activeBox.isActive = true;
     boxes.push_back(activeBox);
 
@@ -169,13 +177,17 @@ TEST(LayoutTest, LeftSideDimensions) {
 
     auto boxes = calculateLayout(monitorWidth, monitorHeight, leftWidthRatio, 10.0f, padding);
 
-    const float expectedLeftWidth = monitorWidth * leftWidthRatio - 2 * padding;
+    const float availableHeight = monitorHeight - (2 * padding);
+    const float totalGaps = 3 * 10.0f;  // 3 gaps between 4 workspaces
+    const float leftPreviewHeight = (availableHeight - totalGaps) / 4;
+    const float monitorAspectRatio = monitorWidth / monitorHeight;
+    const float expectedLeftWidth = leftPreviewHeight * monitorAspectRatio;
 
     // Check first 4 boxes (left side)
     for (int i = 0; i < 4; ++i) {
         EXPECT_NEAR(boxes[i].w, expectedLeftWidth, 0.1f);
-        EXPECT_GE(boxes[i].x, 0.0f);
-        EXPECT_LE(boxes[i].x + boxes[i].w, monitorWidth * leftWidthRatio);
+        EXPECT_FLOAT_EQ(boxes[i].x, padding);  // Left margin should equal padding
+        EXPECT_NEAR(boxes[i].h, leftPreviewHeight, 0.1f);
     }
 }
 
@@ -188,13 +200,18 @@ TEST(LayoutTest, RightSideDimensions) {
 
     auto boxes = calculateLayout(monitorWidth, monitorHeight, leftWidthRatio, 10.0f, padding);
 
-    const float leftWidth = monitorWidth * leftWidthRatio;
-    const float rightWidth = monitorWidth - leftWidth - 2 * padding;
+    const float availableHeight = monitorHeight - (2 * padding);
+    const float totalGaps = 3 * 10.0f;
+    const float leftPreviewHeight = (availableHeight - totalGaps) / 4;
+    const float monitorAspectRatio = monitorWidth / monitorHeight;
+    const float leftWorkspaceWidth = leftPreviewHeight * monitorAspectRatio;
+    const float activeX = padding + leftWorkspaceWidth + padding;
+    const float activeMaxWidth = monitorWidth - activeX - padding;
 
     // Check active workspace box (index 4)
-    EXPECT_NEAR(boxes[4].w, rightWidth, 0.1f);
+    EXPECT_NEAR(boxes[4].x, activeX, 0.1f);
+    EXPECT_NEAR(boxes[4].w, activeMaxWidth, 0.1f);
     EXPECT_NEAR(boxes[4].h, monitorHeight - 2 * padding, 0.1f);
-    EXPECT_GE(boxes[4].x, leftWidth);
 }
 
 // Test: Aspect ratio fitting - wider framebuffer

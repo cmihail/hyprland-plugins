@@ -79,13 +79,21 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
 
     g_pHyprRenderer->makeEGLCurrent();
 
-    // Calculate layout
+    // Calculate layout with equal margins on left, top, and bottom for left workspaces
     const Vector2D monitorSize       = pMonitor->m_size;
-    const float    leftWidth         = monitorSize.x * LEFT_WIDTH_RATIO;
-    const float    rightWidth        = monitorSize.x - leftWidth;
     const float    availableHeight   = monitorSize.y - (2 * PADDING);
     const float    totalGaps         = (LEFT_WORKSPACES - 1) * GAP_WIDTH;
     const float    leftPreviewHeight = (availableHeight - totalGaps) / LEFT_WORKSPACES;
+
+    // Left workspaces: calculate width so that left margin = top/bottom margin = PADDING
+    // The aspect ratio should match the monitor's aspect ratio for proper scaling
+    const float monitorAspectRatio = monitorSize.x / monitorSize.y;
+    const float leftWorkspaceWidth = leftPreviewHeight * monitorAspectRatio;
+
+    // Active workspace: starts right after left section with PADDING gap
+    const float activeX = PADDING + leftWorkspaceWidth + PADDING;  // left margin + left width + gap
+    const float activeMaxWidth = monitorSize.x - activeX - PADDING;  // Leave PADDING on right edge
+    const float activeMaxHeight = monitorSize.y - (2 * PADDING);
 
     CBox monbox = {{0, 0}, pMonitor->m_pixelSize};
 
@@ -129,11 +137,11 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
 
         // Calculate box positions for rendering
         if (image.isActive) {
-            // Right side - active workspace
-            image.box = {leftWidth + PADDING, PADDING, rightWidth - (2 * PADDING), monitorSize.y - (2 * PADDING)};
+            // Right side - active workspace (maximized with consistent margins)
+            image.box = {activeX, PADDING, activeMaxWidth, activeMaxHeight};
         } else {
-            // Left side - workspace list
-            image.box = {PADDING, PADDING + i * (leftPreviewHeight + GAP_WIDTH), leftWidth - (2 * PADDING), leftPreviewHeight};
+            // Left side - workspace list (left margin = PADDING, same as top/bottom)
+            image.box = {PADDING, PADDING + i * (leftPreviewHeight + GAP_WIDTH), leftWorkspaceWidth, leftPreviewHeight};
         }
 
         g_pHyprOpenGL->m_renderData.blockScreenShader = true;
