@@ -154,8 +154,25 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
     size->setUpdateCallback(damageMonitor);
     pos->setUpdateCallback(damageMonitor);
 
-    *size = pMonitor->m_size;
-    *pos  = {0, 0};
+    // Start with the view zoomed into the active workspace (right side)
+    const auto& activeBox = images[activeIndex].box;
+
+    // Calculate scale needed to zoom the active box to fill the screen
+    const float scaleX = monitorSize.x / activeBox.w;
+    const float scaleY = monitorSize.y / activeBox.h;
+    const float scale = std::min(scaleX, scaleY);
+
+    // Starting position: zoomed into active workspace
+    const Vector2D activeCenter = Vector2D{activeBox.x + activeBox.w / 2.0f, activeBox.y + activeBox.h / 2.0f};
+    const Vector2D screenCenter = monitorSize / 2.0f;
+
+    // Set initial value (zoomed in)
+    size->setValue(monitorSize * scale);
+    pos->setValue((screenCenter - activeCenter) * scale);
+
+    // Set goal (normal view) - this starts the animation
+    *size = monitorSize;
+    *pos  = Vector2D{0, 0};
 
     size->setCallbackOnEnd([this](auto) { redrawAll(true); });
 
@@ -387,28 +404,31 @@ void COverview::fullRender() {
             scaledBox.w          = newWidth;
         }
 
-        // Apply zoom animation transformations
-        if (closing) {
-            // During closing animation, scale and translate all boxes
-            scaledBox.x = scaledBox.x * zoomScale;
-            scaledBox.y = scaledBox.y * zoomScale;
-            scaledBox.w = scaledBox.w * zoomScale;
-            scaledBox.h = scaledBox.h * zoomScale;
+        // Apply zoom animation transformations (for both opening and closing)
+        // During opening: animate from zoomed-in to normal view
+        // During closing: animate from normal view to zoomed-in
+        scaledBox.x = scaledBox.x * zoomScale;
+        scaledBox.y = scaledBox.y * zoomScale;
+        scaledBox.w = scaledBox.w * zoomScale;
+        scaledBox.h = scaledBox.h * zoomScale;
 
-            // Apply position offset
-            scaledBox.x += currentPos.x;
-            scaledBox.y += currentPos.y;
-        }
+        // Apply position offset
+        scaledBox.x += currentPos.x;
+        scaledBox.y += currentPos.y;
 
         scaledBox.scale(monScale);
         scaledBox.round();
 
         CRegion damage{0, 0, INT16_MAX, INT16_MAX};
 
-        // Fade out non-active workspaces during closing
+        // Fade in/out non-active workspaces during animation
         float alpha = 1.0f;
-        if (closing && i != (size_t)activeIndex) {
-            alpha = 1.0f - size->getPercent();  // Fade out as we zoom
+        if (i != (size_t)activeIndex) {
+            if (closing) {
+                alpha = 1.0f - size->getPercent();  // Fade out as we zoom in
+            } else {
+                alpha = size->getPercent();  // Fade in as we zoom out
+            }
         }
 
         g_pHyprOpenGL->renderTextureInternal(fbToRender->getTexture(), scaledBox, {.damage = &damage, .a = alpha});

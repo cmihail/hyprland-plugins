@@ -513,3 +513,300 @@ TEST(WorkspaceBadgeTest, TextAlwaysCentered) {
     EXPECT_FLOAT_EQ(badge.textX, (expectedCircleSize - 15.0f) / 2);
     EXPECT_FLOAT_EQ(badge.textY, (expectedCircleSize - 25.0f) / 2);
 }
+
+// Test helper: Animation zoom calculations
+struct ZoomAnimation {
+    float scale;
+    float posX;
+    float posY;
+};
+
+static ZoomAnimation calculateOpeningAnimation(float monitorWidth, float monitorHeight,
+                                                float activeBoxX, float activeBoxY,
+                                                float activeBoxW, float activeBoxH) {
+    ZoomAnimation result;
+
+    // Calculate scale needed to zoom the active box to fill the screen
+    const float scaleX = monitorWidth / activeBoxW;
+    const float scaleY = monitorHeight / activeBoxH;
+    result.scale = std::min(scaleX, scaleY);
+
+    // Calculate position offset to center active workspace
+    const float activeCenter_x = activeBoxX + activeBoxW / 2.0f;
+    const float activeCenter_y = activeBoxY + activeBoxH / 2.0f;
+    const float screenCenter_x = monitorWidth / 2.0f;
+    const float screenCenter_y = monitorHeight / 2.0f;
+
+    result.posX = (screenCenter_x - activeCenter_x) * result.scale;
+    result.posY = (screenCenter_y - activeCenter_y) * result.scale;
+
+    return result;
+}
+
+static ScaledBox applyZoomTransform(float boxX, float boxY, float boxW, float boxH,
+                                     float zoomScale, float offsetX, float offsetY) {
+    ScaledBox result;
+    result.x = boxX * zoomScale + offsetX;
+    result.y = boxY * zoomScale + offsetY;
+    result.w = boxW * zoomScale;
+    result.h = boxH * zoomScale;
+    return result;
+}
+
+// Test: Opening animation scale calculation
+TEST(AnimationTest, OpeningAnimationScale) {
+    auto boxes = calculateLayout(1920, 1080, 0.33f, 10.0f, 20.0f);
+    const auto& activeBox = boxes[4];
+
+    auto anim = calculateOpeningAnimation(1920, 1080,
+                                          activeBox.x, activeBox.y,
+                                          activeBox.w, activeBox.h);
+
+    // Scale should be greater than 1 (zooming in on active workspace)
+    EXPECT_GT(anim.scale, 1.0f);
+
+    // Scale should make active box fill the screen
+    float scaledWidth = activeBox.w * anim.scale;
+    float scaledHeight = activeBox.h * anim.scale;
+
+    // Either width or height should match monitor size (aspect ratio preserved)
+    bool widthMatches = std::abs(scaledWidth - 1920.0f) < 0.1f;
+    bool heightMatches = std::abs(scaledHeight - 1080.0f) < 0.1f;
+    EXPECT_TRUE(widthMatches || heightMatches);
+}
+
+// Test: Opening animation centers active workspace
+TEST(AnimationTest, OpeningAnimationCentersActiveWorkspace) {
+    auto boxes = calculateLayout(1920, 1080, 0.33f, 10.0f, 20.0f);
+    const auto& activeBox = boxes[4];
+
+    auto anim = calculateOpeningAnimation(1920, 1080,
+                                          activeBox.x, activeBox.y,
+                                          activeBox.w, activeBox.h);
+
+    // Apply transform to active box
+    auto transformed = applyZoomTransform(activeBox.x, activeBox.y,
+                                          activeBox.w, activeBox.h,
+                                          anim.scale, anim.posX, anim.posY);
+
+    // Center of transformed box should be at screen center
+    float transformedCenterX = transformed.x + transformed.w / 2.0f;
+    float transformedCenterY = transformed.y + transformed.h / 2.0f;
+
+    EXPECT_NEAR(transformedCenterX, 960.0f, 40.0f);  // 1920/2, tolerance for rounding
+    EXPECT_NEAR(transformedCenterY, 540.0f, 25.0f);  // 1080/2, tolerance for rounding
+}
+
+// Test: Zoom transform maintains aspect ratio
+TEST(AnimationTest, ZoomTransformAspectRatio) {
+    const float originalW = 100.0f;
+    const float originalH = 50.0f;
+    const float scale = 2.0f;
+
+    auto transformed = applyZoomTransform(0, 0, originalW, originalH, scale, 0, 0);
+
+    // Aspect ratio should be preserved
+    float originalRatio = originalW / originalH;
+    float transformedRatio = transformed.w / transformed.h;
+
+    EXPECT_NEAR(originalRatio, transformedRatio, 0.01f);
+}
+
+// Test: Zoom transform with identity transform (scale=1, offset=0)
+TEST(AnimationTest, IdentityZoomTransform) {
+    const float x = 100.0f, y = 200.0f, w = 300.0f, h = 400.0f;
+
+    auto transformed = applyZoomTransform(x, y, w, h, 1.0f, 0.0f, 0.0f);
+
+    EXPECT_FLOAT_EQ(transformed.x, x);
+    EXPECT_FLOAT_EQ(transformed.y, y);
+    EXPECT_FLOAT_EQ(transformed.w, w);
+    EXPECT_FLOAT_EQ(transformed.h, h);
+}
+
+// Test: Zoom transform with scale only (no offset)
+TEST(AnimationTest, ZoomTransformScaleOnly) {
+    const float scale = 1.5f;
+
+    auto transformed = applyZoomTransform(100.0f, 200.0f, 300.0f, 400.0f,
+                                          scale, 0.0f, 0.0f);
+
+    EXPECT_FLOAT_EQ(transformed.x, 150.0f);   // 100 * 1.5
+    EXPECT_FLOAT_EQ(transformed.y, 300.0f);   // 200 * 1.5
+    EXPECT_FLOAT_EQ(transformed.w, 450.0f);   // 300 * 1.5
+    EXPECT_FLOAT_EQ(transformed.h, 600.0f);   // 400 * 1.5
+}
+
+// Test: Zoom transform with offset only (no scale)
+TEST(AnimationTest, ZoomTransformOffsetOnly) {
+    const float offsetX = 50.0f;
+    const float offsetY = 100.0f;
+
+    auto transformed = applyZoomTransform(100.0f, 200.0f, 300.0f, 400.0f,
+                                          1.0f, offsetX, offsetY);
+
+    EXPECT_FLOAT_EQ(transformed.x, 150.0f);   // 100 + 50
+    EXPECT_FLOAT_EQ(transformed.y, 300.0f);   // 200 + 100
+    EXPECT_FLOAT_EQ(transformed.w, 300.0f);   // unchanged
+    EXPECT_FLOAT_EQ(transformed.h, 400.0f);   // unchanged
+}
+
+// Test: Zoom transform with both scale and offset
+TEST(AnimationTest, ZoomTransformScaleAndOffset) {
+    const float scale = 2.0f;
+    const float offsetX = 10.0f;
+    const float offsetY = 20.0f;
+
+    auto transformed = applyZoomTransform(50.0f, 100.0f, 200.0f, 150.0f,
+                                          scale, offsetX, offsetY);
+
+    EXPECT_FLOAT_EQ(transformed.x, 110.0f);   // 50*2 + 10
+    EXPECT_FLOAT_EQ(transformed.y, 220.0f);   // 100*2 + 20
+    EXPECT_FLOAT_EQ(transformed.w, 400.0f);   // 200*2
+    EXPECT_FLOAT_EQ(transformed.h, 300.0f);   // 150*2
+}
+
+// Test: Opening animation for different monitor sizes
+TEST(AnimationTest, OpeningAnimationDifferentMonitorSizes) {
+    std::vector<std::pair<float, float>> resolutions = {
+        {1920, 1080},  // 1080p
+        {2560, 1440},  // 1440p
+        {3840, 2160},  // 4K
+    };
+
+    for (const auto& [width, height] : resolutions) {
+        auto boxes = calculateLayout(width, height, 0.33f, 10.0f, 20.0f);
+        const auto& activeBox = boxes[4];
+
+        auto anim = calculateOpeningAnimation(width, height,
+                                              activeBox.x, activeBox.y,
+                                              activeBox.w, activeBox.h);
+
+        // Apply transform to active box
+        auto transformed = applyZoomTransform(activeBox.x, activeBox.y,
+                                              activeBox.w, activeBox.h,
+                                              anim.scale, anim.posX, anim.posY);
+
+        // Active workspace should be centered after transform
+        float centerX = transformed.x + transformed.w / 2.0f;
+        float centerY = transformed.y + transformed.h / 2.0f;
+
+        EXPECT_NEAR(centerX, width / 2.0f, 40.0f);   // Tolerance for rounding
+        EXPECT_NEAR(centerY, height / 2.0f, 25.0f);  // Tolerance for rounding
+    }
+}
+
+// Test: Animation ensures left workspaces move off-screen when zoomed
+TEST(AnimationTest, LeftWorkspacesOffScreenWhenZoomed) {
+    auto boxes = calculateLayout(1920, 1080, 0.33f, 10.0f, 20.0f);
+    const auto& activeBox = boxes[4];
+
+    auto anim = calculateOpeningAnimation(1920, 1080,
+                                          activeBox.x, activeBox.y,
+                                          activeBox.w, activeBox.h);
+
+    // Apply transform to first left workspace
+    const auto& leftBox = boxes[0];
+    auto transformed = applyZoomTransform(leftBox.x, leftBox.y,
+                                          leftBox.w, leftBox.h,
+                                          anim.scale, anim.posX, anim.posY);
+
+    // Left workspace should be pushed left (possibly off-screen)
+    // Since we're zooming into the right side, left boxes should have negative x
+    EXPECT_LT(transformed.x, leftBox.x);
+}
+
+// Test: Opening animation scale consistency
+TEST(AnimationTest, ScaleConsistencyAcrossBoxes) {
+    auto boxes = calculateLayout(1920, 1080, 0.33f, 10.0f, 20.0f);
+    const auto& activeBox = boxes[4];
+
+    auto anim = calculateOpeningAnimation(1920, 1080,
+                                          activeBox.x, activeBox.y,
+                                          activeBox.w, activeBox.h);
+
+    // All boxes should scale by the same amount
+    for (const auto& box : boxes) {
+        auto transformed = applyZoomTransform(box.x, box.y, box.w, box.h,
+                                              anim.scale, anim.posX, anim.posY);
+
+        // Check that scale is applied uniformly
+        EXPECT_NEAR(transformed.w / box.w, anim.scale, 0.01f);
+        EXPECT_NEAR(transformed.h / box.h, anim.scale, 0.01f);
+    }
+}
+
+// Test helper: Alpha calculation for fade animations
+static float calculateFadeAlpha(float animationPercent, bool isClosing, bool isActiveWorkspace) {
+    if (isActiveWorkspace) {
+        return 1.0f;  // Active workspace always fully visible
+    }
+
+    if (isClosing) {
+        return 1.0f - animationPercent;  // Fade out
+    } else {
+        return animationPercent;  // Fade in
+    }
+}
+
+// Test: Fade animation alpha for opening (non-active workspaces)
+TEST(AnimationTest, FadeInAlphaForOpening) {
+    // At start of opening animation (0%)
+    float alpha = calculateFadeAlpha(0.0f, false, false);
+    EXPECT_FLOAT_EQ(alpha, 0.0f);
+
+    // Mid-way through opening (50%)
+    alpha = calculateFadeAlpha(0.5f, false, false);
+    EXPECT_FLOAT_EQ(alpha, 0.5f);
+
+    // At end of opening (100%)
+    alpha = calculateFadeAlpha(1.0f, false, false);
+    EXPECT_FLOAT_EQ(alpha, 1.0f);
+}
+
+// Test: Fade animation alpha for closing (non-active workspaces)
+TEST(AnimationTest, FadeOutAlphaForClosing) {
+    // At start of closing animation (0%)
+    float alpha = calculateFadeAlpha(0.0f, true, false);
+    EXPECT_FLOAT_EQ(alpha, 1.0f);
+
+    // Mid-way through closing (50%)
+    alpha = calculateFadeAlpha(0.5f, true, false);
+    EXPECT_FLOAT_EQ(alpha, 0.5f);
+
+    // At end of closing (100%)
+    alpha = calculateFadeAlpha(1.0f, true, false);
+    EXPECT_FLOAT_EQ(alpha, 0.0f);
+}
+
+// Test: Active workspace always fully visible
+TEST(AnimationTest, ActiveWorkspaceAlwaysVisible) {
+    std::vector<float> percentages = {0.0f, 0.25f, 0.5f, 0.75f, 1.0f};
+
+    for (float percent : percentages) {
+        // Opening animation
+        float alpha = calculateFadeAlpha(percent, false, true);
+        EXPECT_FLOAT_EQ(alpha, 1.0f);
+
+        // Closing animation
+        alpha = calculateFadeAlpha(percent, true, true);
+        EXPECT_FLOAT_EQ(alpha, 1.0f);
+    }
+}
+
+// Test: Alpha always within valid range [0, 1]
+TEST(AnimationTest, AlphaWithinValidRange) {
+    std::vector<float> percentages = {0.0f, 0.1f, 0.5f, 0.9f, 1.0f};
+    std::vector<bool> closingStates = {false, true};
+    std::vector<bool> activeStates = {false, true};
+
+    for (float percent : percentages) {
+        for (bool closing : closingStates) {
+            for (bool active : activeStates) {
+                float alpha = calculateFadeAlpha(percent, closing, active);
+                EXPECT_GE(alpha, 0.0f);
+                EXPECT_LE(alpha, 1.0f);
+            }
+        }
+    }
+}

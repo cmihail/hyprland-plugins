@@ -80,7 +80,7 @@ static SDispatchResult workspaceOverviewDispatch(std::string arg) {
 }
 
 static void failNotif(const std::string& reason) {
-    HyprlandAPI::addNotification(PHANDLE, "[workspace-overview] Failure in initialization: " + reason, CHyprColor{1.0, 0.2, 0.2, 1.0}, 5000);
+    Debug::log(ERR, "[workspace-overview] Failure in initialization: {}", reason);
 }
 
 APICALL EXPORT std::string PLUGIN_API_VERSION() {
@@ -138,7 +138,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
     HyprlandAPI::addDispatcherV2(PHANDLE, "workspace-overview", workspaceOverviewDispatch);
 
-    HyprlandAPI::addNotification(PHANDLE, "[workspace-overview] Plugin initialized successfully", CHyprColor{0.2, 1.0, 0.2, 1.0}, 3000);
+    Debug::log(LOG, "[workspace-overview] Plugin initialized successfully");
 
     return {"workspace-overview", "Workspace overview plugin for Hyprland", "cmihail", "1.0"};
 }
