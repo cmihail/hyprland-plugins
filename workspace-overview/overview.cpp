@@ -10,6 +10,7 @@
 #include <hyprland/src/managers/animation/DesktopAnimationManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/managers/KeybindManager.hpp>
+#include <hyprland/src/managers/LayoutManager.hpp>
 #include <hyprland/src/devices/IPointer.hpp>
 #include <hyprland/src/helpers/time/Time.hpp>
 #undef private
@@ -289,13 +290,8 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
                     int targetIndex = findWorkspaceIndexAtPosition(lastMousePosLocal);
 
                     if (targetIndex >= 0 && targetIndex != sourceWorkspaceIndex) {
-                        // Show what would be moved
-                        std::string msg = "Would move: " + draggedWindow->m_class +
-                                          "\nTo WS: " +
-                                          std::to_string(images[targetIndex].workspaceID);
-                        HyprlandAPI::addNotification(PHANDLE, msg,
-                                                     CHyprColor{0.2, 0.8, 0.2, 1.0}, 3000);
-                        // moveWindowToWorkspace(draggedWindow, targetIndex);
+                        // Move window to different workspace
+                        moveWindowToWorkspace(draggedWindow, targetIndex);
                     } else if (targetIndex == sourceWorkspaceIndex) {
                         HyprlandAPI::addNotification(PHANDLE, "Same workspace",
                                                      CHyprColor{0.8, 0.6, 0.2, 1.0}, 2000);
@@ -744,11 +740,40 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
     if (window->m_workspace == targetImage.pWorkspace)
         return;
 
-    // Show what would be moved (not actually moving yet)
-    std::string msg = "Would move: " + window->m_class + "\nTo WS: " +
-                      std::to_string(targetImage.workspaceID);
-    HyprlandAPI::addNotification(PHANDLE, msg, CHyprColor{0.2, 0.8, 0.2, 1.0}, 3000);
+    // Store source workspace for redrawing
+    const auto sourceWorkspace = window->m_workspace;
+    int sourceIndex = -1;
+    for (size_t i = 0; i < images.size(); ++i) {
+        if (images[i].pWorkspace == sourceWorkspace) {
+            sourceIndex = i;
+            break;
+        }
+    }
 
-    // TODO: Uncomment to actually move window
-    // window->moveToWorkspace(targetImage.pWorkspace);
+    // Exit fullscreen if needed
+    if (window->isFullscreen()) {
+        g_pCompositor->setWindowFullscreenInternal(window, FSMODE_NONE);
+    }
+
+    // Make window tiled (not floating) in target workspace
+    if (window->m_isFloating) {
+        window->m_isFloating = false;
+    }
+
+    // Move window to target workspace
+    window->moveToWorkspace(targetImage.pWorkspace);
+
+    // Recalculate layouts for both workspaces
+    if (sourceWorkspace) {
+        g_pLayoutManager->getCurrentLayout()->recalculateMonitor(
+            sourceWorkspace->monitorID());
+    }
+    g_pLayoutManager->getCurrentLayout()->recalculateMonitor(
+        targetImage.pWorkspace->monitorID());
+
+    // Redraw both source and target workspace previews
+    if (sourceIndex >= 0) {
+        redrawID(sourceIndex);
+    }
+    redrawID(targetWorkspaceIndex);
 }
