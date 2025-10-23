@@ -22,6 +22,7 @@ class COverview {
     void onPreRender();
 
     void close();
+    void selectWorkspaceAtPosition(const Vector2D& pos);
 
     bool blockOverviewRendering = false;
     bool blockDamageReporting   = false;
@@ -51,18 +52,22 @@ class COverview {
     };
 
     int                          activeIndex = -1;  // Index of active workspace in images
+    int                          selectedIndex = -1;  // Workspace to switch to on close
     std::vector<SWorkspaceImage> images;
     PHLWORKSPACE                 startedOn;
 
     PHLANIMVAR<Vector2D> size;
     PHLANIMVAR<Vector2D> pos;
 
-    bool closing = false;
+    bool     closing = false;
+    Vector2D lastMousePosLocal = Vector2D{};
 
     // Event hooks
     SP<HOOK_CALLBACK_FN> mouseButtonHook;
+    SP<HOOK_CALLBACK_FN> mouseMoveHook;
 
     friend class COverviewPassElement;
+    friend void removeOverview(WP<Hyprutils::Animation::CBaseAnimatedVariable>);
 };
 
 inline std::unique_ptr<COverview> g_pOverview;

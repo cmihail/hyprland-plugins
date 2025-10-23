@@ -7,6 +7,8 @@
 #include <hyprland/src/config/ConfigManager.hpp>
 #include <hyprland/src/managers/animation/AnimationManager.hpp>
 #include <hyprland/src/managers/animation/DesktopAnimationManager.hpp>
+#include <hyprland/src/managers/input/InputManager.hpp>
+#include <hyprland/src/managers/KeybindManager.hpp>
 #include <hyprland/src/helpers/time/Time.hpp>
 #undef private
 #include "OverviewPassElement.hpp"
@@ -15,7 +17,7 @@ static void damageMonitor(WP<Hyprutils::Animation::CBaseAnimatedVariable> thispt
     g_pOverview->damage();
 }
 
-static void removeOverview(WP<Hyprutils::Animation::CBaseAnimatedVariable> thisptr) {
+void removeOverview(WP<Hyprutils::Animation::CBaseAnimatedVariable> thisptr) {
     g_pOverview.reset();
 }
 
@@ -157,12 +159,21 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
 
     size->setCallbackOnEnd([this](auto) { redrawAll(true); });
 
-    // Setup mouse button hook to close on click
+    // Setup mouse move hook to track cursor position
+    auto onMouseMove = [this](void* self, SCallbackInfo& info, std::any param) {
+        if (closing)
+            return;
+        lastMousePosLocal = g_pInputManager->getMouseCoordsInternal() - pMonitor->m_position;
+    };
+    mouseMoveHook = g_pHookSystem->hookDynamic("mouseMove", onMouseMove);
+
+    // Setup mouse button hook to detect workspace clicks
     auto onMouseButton = [this](void* self, SCallbackInfo& info, std::any param) {
         if (closing)
             return;
 
         info.cancelled = true;
+        selectWorkspaceAtPosition(lastMousePosLocal);
         close();
     };
 
@@ -248,15 +259,32 @@ void COverview::onDamageReported() {
     g_pCompositor->scheduleFrameForMonitor(pMonitor.lock());
 }
 
+void COverview::selectWorkspaceAtPosition(const Vector2D& pos) {
+    // Reset selection - if nothing is clicked, stay on active workspace
+    selectedIndex = -1;
+
+    // Check if click is within any workspace box
+    for (size_t i = 0; i < images.size(); ++i) {
+        const auto& box = images[i].box;
+
+        // Check if position is within this workspace's box
+        if (pos.x >= box.x && pos.x <= box.x + box.w &&
+            pos.y >= box.y && pos.y <= box.y + box.h) {
+            selectedIndex = i;
+            break;
+        }
+    }
+}
+
 void COverview::close() {
     if (closing)
         return;
 
-    // Get the active workspace box (always on the right side)
+    // Always animate towards the active workspace position (right side)
+    // This ensures a consistent zoom animation regardless of which workspace was clicked
     const auto& activeBox = images[activeIndex].box;
 
-    // Calculate zoom animation to focus on active workspace
-    // We want to zoom from current overview to just the active workspace filling the screen
+    // Calculate zoom animation to focus on active workspace position
     const Vector2D monitorSize = pMonitor->m_size;
 
     // Calculate the scale factor needed to zoom the active box to fill the screen
@@ -275,6 +303,28 @@ void COverview::close() {
     size->setCallbackOnEnd(removeOverview);
     closing = true;
     redrawAll();
+
+    // Switch workspace after starting the closing animation (exactly like hyprexpo)
+    if (selectedIndex >= 0 && selectedIndex < (int)images.size()) {
+        const auto& targetImage = images[selectedIndex];
+
+        if (targetImage.workspaceID != pMonitor->activeWorkspaceID()) {
+            pMonitor->setSpecialWorkspace(nullptr);
+
+            const auto NEWIDWS = g_pCompositor->getWorkspaceByID(targetImage.workspaceID);
+            const auto OLDWS = pMonitor->m_activeWorkspace;
+
+            if (!NEWIDWS)
+                g_pKeybindManager->changeworkspace(std::to_string(targetImage.workspaceID));
+            else
+                g_pKeybindManager->changeworkspace(NEWIDWS->getConfigName());
+
+            // Start animations for workspace transition (like hyprexpo)
+            g_pDesktopAnimationManager->startAnimation(pMonitor->m_activeWorkspace, CDesktopAnimationManager::ANIMATION_TYPE_IN, true, true);
+            g_pDesktopAnimationManager->startAnimation(OLDWS, CDesktopAnimationManager::ANIMATION_TYPE_OUT, false, true);
+            startedOn = pMonitor->m_activeWorkspace;
+        }
+    }
 }
 
 void COverview::onPreRender() {
@@ -305,11 +355,23 @@ void COverview::fullRender() {
     for (size_t i = 0; i < images.size(); ++i) {
         auto& image = images[i];
 
-        // Get the pre-calculated box from constructor
+        // During closing animation, if a different workspace was selected,
+        // render the selected workspace in the active workspace position
         CBox texbox = image.box;
+        auto* fbToRender = &image.fb;
+
+        if (closing && selectedIndex >= 0 && selectedIndex != activeIndex) {
+            if (i == (size_t)activeIndex) {
+                // Render selected workspace's content in active workspace position
+                fbToRender = &images[selectedIndex].fb;
+            } else if (i == (size_t)selectedIndex) {
+                // Don't render the selected workspace in its original position
+                continue;
+            }
+        }
 
         // Scale the workspace framebuffer to fit in the box while maintaining aspect ratio
-        const float fbAspect  = (float)image.fb.m_size.x / image.fb.m_size.y;
+        const float fbAspect  = (float)fbToRender->m_size.x / fbToRender->m_size.y;
         const float boxAspect = texbox.w / texbox.h;
 
         CBox scaledBox = texbox;
@@ -349,6 +411,6 @@ void COverview::fullRender() {
             alpha = 1.0f - size->getPercent();  // Fade out as we zoom
         }
 
-        g_pHyprOpenGL->renderTextureInternal(image.fb.getTexture(), scaledBox, {.damage = &damage, .a = alpha});
+        g_pHyprOpenGL->renderTextureInternal(fbToRender->getTexture(), scaledBox, {.damage = &damage, .a = alpha});
     }
 }

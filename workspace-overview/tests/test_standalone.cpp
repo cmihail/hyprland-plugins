@@ -287,3 +287,131 @@ TEST(LayoutTest, ZeroPadding) {
     EXPECT_FLOAT_EQ(boxes[0].x, 0.0f);  // Should start at edge
     EXPECT_FLOAT_EQ(boxes[4].y, 0.0f);  // Should start at edge
 }
+
+// Test helper: Workspace selection
+static int selectWorkspaceAtPosition(float posX, float posY, const std::vector<LayoutBox>& boxes) {
+    int selectedIndex = -1;
+
+    for (size_t i = 0; i < boxes.size(); ++i) {
+        const auto& box = boxes[i];
+
+        if (posX >= box.x && posX <= box.x + box.w &&
+            posY >= box.y && posY <= box.y + box.h) {
+            selectedIndex = i;
+            break;
+        }
+    }
+
+    return selectedIndex;
+}
+
+// Test: Click inside first workspace (top-left)
+TEST(WorkspaceSelectionTest, ClickInsideFirstWorkspace) {
+    auto boxes = calculateLayout(1920, 1080, 0.33f, 10.0f, 20.0f);
+
+    // Click in the middle of first workspace
+    float clickX = boxes[0].x + boxes[0].w / 2.0f;
+    float clickY = boxes[0].y + boxes[0].h / 2.0f;
+
+    int selected = selectWorkspaceAtPosition(clickX, clickY, boxes);
+    EXPECT_EQ(selected, 0);
+}
+
+// Test: Click inside active workspace (right side)
+TEST(WorkspaceSelectionTest, ClickInsideActiveWorkspace) {
+    auto boxes = calculateLayout(1920, 1080, 0.33f, 10.0f, 20.0f);
+
+    // Click in the middle of active workspace (index 4)
+    float clickX = boxes[4].x + boxes[4].w / 2.0f;
+    float clickY = boxes[4].y + boxes[4].h / 2.0f;
+
+    int selected = selectWorkspaceAtPosition(clickX, clickY, boxes);
+    EXPECT_EQ(selected, 4);
+}
+
+// Test: Click outside all workspaces
+TEST(WorkspaceSelectionTest, ClickOutsideAllWorkspaces) {
+    auto boxes = calculateLayout(1920, 1080, 0.33f, 10.0f, 20.0f);
+
+    // Click in gap between left and right sections
+    float clickX = boxes[0].x + boxes[0].w + 5.0f;
+    float clickY = 540.0f;  // Middle of screen height
+
+    int selected = selectWorkspaceAtPosition(clickX, clickY, boxes);
+    EXPECT_EQ(selected, -1);
+}
+
+// Test: Click on workspace boundary (edge case)
+TEST(WorkspaceSelectionTest, ClickOnWorkspaceBoundary) {
+    auto boxes = calculateLayout(1920, 1080, 0.33f, 10.0f, 20.0f);
+
+    // Click exactly on the left edge of first workspace
+    float clickX = boxes[0].x;
+    float clickY = boxes[0].y;
+
+    int selected = selectWorkspaceAtPosition(clickX, clickY, boxes);
+    EXPECT_EQ(selected, 0);
+
+    // Click exactly on the right edge of first workspace
+    clickX = boxes[0].x + boxes[0].w;
+    clickY = boxes[0].y + boxes[0].h;
+
+    selected = selectWorkspaceAtPosition(clickX, clickY, boxes);
+    EXPECT_EQ(selected, 0);
+}
+
+// Test: Click in gap between left workspaces
+TEST(WorkspaceSelectionTest, ClickInGapBetweenWorkspaces) {
+    auto boxes = calculateLayout(1920, 1080, 0.33f, 10.0f, 20.0f);
+
+    // Click in gap between first and second workspace
+    float clickX = boxes[0].x + boxes[0].w / 2.0f;
+    float clickY = boxes[0].y + boxes[0].h + 5.0f;  // Middle of gap
+
+    int selected = selectWorkspaceAtPosition(clickX, clickY, boxes);
+    EXPECT_EQ(selected, -1);
+}
+
+// Test: Click on each left workspace
+TEST(WorkspaceSelectionTest, ClickOnEachLeftWorkspace) {
+    auto boxes = calculateLayout(1920, 1080, 0.33f, 10.0f, 20.0f);
+
+    // Test clicking each of the 4 left workspaces
+    for (int i = 0; i < 4; ++i) {
+        float clickX = boxes[i].x + boxes[i].w / 2.0f;
+        float clickY = boxes[i].y + boxes[i].h / 2.0f;
+
+        int selected = selectWorkspaceAtPosition(clickX, clickY, boxes);
+        EXPECT_EQ(selected, i) << "Failed for workspace " << i;
+    }
+}
+
+// Test: Click outside monitor bounds
+TEST(WorkspaceSelectionTest, ClickOutsideMonitorBounds) {
+    auto boxes = calculateLayout(1920, 1080, 0.33f, 10.0f, 20.0f);
+
+    // Click beyond monitor width
+    int selected = selectWorkspaceAtPosition(2000.0f, 500.0f, boxes);
+    EXPECT_EQ(selected, -1);
+
+    // Click beyond monitor height
+    selected = selectWorkspaceAtPosition(1000.0f, 1200.0f, boxes);
+    EXPECT_EQ(selected, -1);
+
+    // Click with negative coordinates
+    selected = selectWorkspaceAtPosition(-10.0f, 500.0f, boxes);
+    EXPECT_EQ(selected, -1);
+}
+
+// Test: Click in padding area
+TEST(WorkspaceSelectionTest, ClickInPaddingArea) {
+    auto boxes = calculateLayout(1920, 1080, 0.33f, 10.0f, 20.0f);
+
+    // Click in top padding
+    int selected = selectWorkspaceAtPosition(100.0f, 10.0f, boxes);
+    EXPECT_EQ(selected, -1);
+
+    // Click in left padding
+    selected = selectWorkspaceAtPosition(10.0f, 100.0f, boxes);
+    EXPECT_EQ(selected, -1);
+}
