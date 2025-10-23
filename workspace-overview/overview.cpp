@@ -698,23 +698,38 @@ PHLWINDOW COverview::findWindowAtPosition(const Vector2D& pos, int workspaceInde
     Vector2D wsPos = {pMonitor->m_position.x + relX * monitorSize.x,
                       pMonitor->m_position.y + relY * monitorSize.y};
 
-    // Find window at this position in the workspace
+    // Find all windows at this position, then return the topmost one
+    PHLWINDOW topmostWindow = nullptr;
+
     for (auto& w : g_pCompositor->m_windows) {
         if (!w->m_workspace || w->m_workspace != image.pWorkspace)
             continue;
         if (w->isHidden() || !w->m_isMapped)
             continue;
 
-        const Vector2D wPos = w->m_position;
-        const Vector2D wSize = w->m_size;
+        // Use real position/size which works for both tiled and floating windows
+        const Vector2D wPos = w->m_realPosition->value();
+        const Vector2D wSize = w->m_realSize->value();
 
         if (wsPos.x >= wPos.x && wsPos.x <= wPos.x + wSize.x &&
             wsPos.y >= wPos.y && wsPos.y <= wPos.y + wSize.y) {
-            return w;
+            // Found a window at this position
+            // Prioritize: fullscreen > floating > tiled
+            if (!topmostWindow) {
+                topmostWindow = w;
+            } else {
+                // Check if this window should be on top
+                if (w->isFullscreen() && !topmostWindow->isFullscreen()) {
+                    topmostWindow = w;
+                } else if (w->m_isFloating && !topmostWindow->m_isFloating &&
+                           !topmostWindow->isFullscreen()) {
+                    topmostWindow = w;
+                }
+            }
         }
     }
 
-    return nullptr;
+    return topmostWindow;
 }
 
 void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex) {

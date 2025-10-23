@@ -1148,3 +1148,126 @@ TEST(WindowHitDetectionTest, MultipleWindowsCorrectSelection) {
     EXPECT_EQ(hitCount, 1);  // Only one window should be hit
     EXPECT_EQ(hitIndex, 1);  // Second window (index 1)
 }
+
+// Test helper: Window with type
+struct WindowWithType {
+    float x, y, w, h;
+    bool isFullscreen;
+    bool isFloating;
+};
+
+static int findTopmostWindow(float clickX, float clickY,
+                             const std::vector<WindowWithType>& windows) {
+    int topmostIndex = -1;
+
+    for (size_t i = 0; i < windows.size(); ++i) {
+        const auto& w = windows[i];
+
+        // Check if click hits this window
+        if (clickX >= w.x && clickX <= w.x + w.w &&
+            clickY >= w.y && clickY <= w.y + w.h) {
+
+            if (topmostIndex == -1) {
+                topmostIndex = i;
+            } else {
+                const auto& topmost = windows[topmostIndex];
+
+                // Prioritize: fullscreen > floating > tiled
+                if (w.isFullscreen && !topmost.isFullscreen) {
+                    topmostIndex = i;
+                } else if (w.isFloating && !topmost.isFloating &&
+                           !topmost.isFullscreen) {
+                    topmostIndex = i;
+                }
+            }
+        }
+    }
+
+    return topmostIndex;
+}
+
+// Test: Window stacking - fullscreen over tiled
+TEST(WindowStackingTest, FullscreenOverTiled) {
+    std::vector<WindowWithType> windows = {
+        {100, 100, 200, 200, false, false},  // Tiled
+        {100, 100, 200, 200, true, false}    // Fullscreen (same position)
+    };
+
+    int selected = findTopmostWindow(150, 150, windows);
+    EXPECT_EQ(selected, 1);  // Fullscreen window should be selected
+}
+
+// Test: Window stacking - floating over tiled
+TEST(WindowStackingTest, FloatingOverTiled) {
+    std::vector<WindowWithType> windows = {
+        {100, 100, 200, 200, false, false},  // Tiled
+        {100, 100, 200, 200, false, true}    // Floating (same position)
+    };
+
+    int selected = findTopmostWindow(150, 150, windows);
+    EXPECT_EQ(selected, 1);  // Floating window should be selected
+}
+
+// Test: Window stacking - fullscreen over floating
+TEST(WindowStackingTest, FullscreenOverFloating) {
+    std::vector<WindowWithType> windows = {
+        {100, 100, 200, 200, false, true},   // Floating
+        {100, 100, 200, 200, true, false}    // Fullscreen (same position)
+    };
+
+    int selected = findTopmostWindow(150, 150, windows);
+    EXPECT_EQ(selected, 1);  // Fullscreen window should be selected
+}
+
+// Test: Window stacking - first tiled when both tiled
+TEST(WindowStackingTest, FirstTiledWhenBothTiled) {
+    std::vector<WindowWithType> windows = {
+        {100, 100, 200, 200, false, false},  // Tiled
+        {100, 100, 200, 200, false, false}   // Tiled (same position)
+    };
+
+    int selected = findTopmostWindow(150, 150, windows);
+    EXPECT_EQ(selected, 0);  // First window found is selected
+}
+
+// Test: Window stacking - complex scenario
+TEST(WindowStackingTest, ComplexStackingScenario) {
+    std::vector<WindowWithType> windows = {
+        {100, 100, 200, 200, false, false},  // Tiled
+        {100, 100, 200, 200, false, true},   // Floating
+        {100, 100, 200, 200, false, false},  // Tiled
+        {100, 100, 200, 200, true, false}    // Fullscreen
+    };
+
+    int selected = findTopmostWindow(150, 150, windows);
+    EXPECT_EQ(selected, 3);  // Fullscreen (index 3) should be selected
+}
+
+// Test: Window stacking - no overlap
+TEST(WindowStackingTest, NoOverlap) {
+    std::vector<WindowWithType> windows = {
+        {100, 100, 100, 100, false, false},  // Tiled
+        {300, 100, 100, 100, false, true},   // Floating (different position)
+        {100, 300, 100, 100, true, false}    // Fullscreen (different position)
+    };
+
+    // Click on floating window
+    int selected = findTopmostWindow(350, 150, windows);
+    EXPECT_EQ(selected, 1);
+}
+
+// Test: Window stacking - partial overlap with fullscreen
+TEST(WindowStackingTest, PartialOverlapWithFullscreen) {
+    std::vector<WindowWithType> windows = {
+        {100, 100, 200, 200, false, false},  // Tiled
+        {150, 150, 200, 200, true, false}    // Fullscreen (partial overlap)
+    };
+
+    // Click in overlap area - fullscreen should win
+    int selected = findTopmostWindow(200, 200, windows);
+    EXPECT_EQ(selected, 1);
+
+    // Click in tiled-only area
+    selected = findTopmostWindow(120, 120, windows);
+    EXPECT_EQ(selected, 0);
+}
