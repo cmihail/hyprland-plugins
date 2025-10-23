@@ -415,3 +415,101 @@ TEST(WorkspaceSelectionTest, ClickInPaddingArea) {
     selected = selectWorkspaceAtPosition(10.0f, 100.0f, boxes);
     EXPECT_EQ(selected, -1);
 }
+
+// Test helper: Workspace number badge calculations
+struct BadgeGeometry {
+    float circleSize;
+    float textX;
+    float textY;
+};
+
+static BadgeGeometry calculateBadgeGeometry(float textWidth, float textHeight, float padding) {
+    BadgeGeometry result;
+
+    // Calculate circle size (must be square for perfect circle)
+    result.circleSize = std::max(textWidth, textHeight) + padding * 2;
+
+    // Center text within circle
+    result.textX = (result.circleSize - textWidth) / 2;
+    result.textY = (result.circleSize - textHeight) / 2;
+
+    return result;
+}
+
+// Test: Badge circle size calculation for square text
+TEST(WorkspaceBadgeTest, CircleSizeSquareText) {
+    auto badge = calculateBadgeGeometry(20.0f, 20.0f, 4.0f);
+
+    // Circle should be text size + 2*padding
+    EXPECT_FLOAT_EQ(badge.circleSize, 28.0f);
+
+    // Text should be centered
+    EXPECT_FLOAT_EQ(badge.textX, 4.0f);
+    EXPECT_FLOAT_EQ(badge.textY, 4.0f);
+}
+
+// Test: Badge circle size calculation for wide text
+TEST(WorkspaceBadgeTest, CircleSizeWideText) {
+    auto badge = calculateBadgeGeometry(30.0f, 20.0f, 4.0f);
+
+    // Circle should use larger dimension (width)
+    EXPECT_FLOAT_EQ(badge.circleSize, 38.0f);
+
+    // Text should be centered
+    EXPECT_FLOAT_EQ(badge.textX, 4.0f);
+    EXPECT_FLOAT_EQ(badge.textY, 9.0f);  // (38 - 20) / 2 = 9
+}
+
+// Test: Badge circle size calculation for tall text
+TEST(WorkspaceBadgeTest, CircleSizeTallText) {
+    auto badge = calculateBadgeGeometry(20.0f, 30.0f, 4.0f);
+
+    // Circle should use larger dimension (height)
+    EXPECT_FLOAT_EQ(badge.circleSize, 38.0f);
+
+    // Text should be centered
+    EXPECT_FLOAT_EQ(badge.textX, 9.0f);  // (38 - 20) / 2 = 9
+    EXPECT_FLOAT_EQ(badge.textY, 4.0f);
+}
+
+// Test: Badge with different padding values
+TEST(WorkspaceBadgeTest, DifferentPadding) {
+    auto badge1 = calculateBadgeGeometry(20.0f, 20.0f, 2.0f);
+    auto badge2 = calculateBadgeGeometry(20.0f, 20.0f, 8.0f);
+
+    EXPECT_FLOAT_EQ(badge1.circleSize, 24.0f);
+    EXPECT_FLOAT_EQ(badge2.circleSize, 36.0f);
+
+    // Larger padding = larger centering offset
+    EXPECT_FLOAT_EQ(badge1.textX, 2.0f);
+    EXPECT_FLOAT_EQ(badge2.textX, 8.0f);
+}
+
+// Test: Badge ensures perfect circle (width == height)
+TEST(WorkspaceBadgeTest, PerfectCircleProperty) {
+    std::vector<std::pair<float, float>> textSizes = {
+        {10.0f, 20.0f},
+        {20.0f, 10.0f},
+        {15.0f, 25.0f},
+        {25.0f, 15.0f}
+    };
+
+    for (const auto& [width, height] : textSizes) {
+        auto badge = calculateBadgeGeometry(width, height, 4.0f);
+
+        // Circle must be square (perfect circle)
+        float expectedSize = std::max(width, height) + 8.0f;
+        EXPECT_FLOAT_EQ(badge.circleSize, expectedSize);
+    }
+}
+
+// Test: Badge text always centered
+TEST(WorkspaceBadgeTest, TextAlwaysCentered) {
+    auto badge = calculateBadgeGeometry(15.0f, 25.0f, 5.0f);
+
+    // Verify text is centered in both dimensions
+    float expectedCircleSize = 35.0f;  // max(15, 25) + 2*5
+
+    EXPECT_FLOAT_EQ(badge.textX, (expectedCircleSize - 15.0f) / 2);
+    EXPECT_FLOAT_EQ(badge.textY, (expectedCircleSize - 25.0f) / 2);
+}

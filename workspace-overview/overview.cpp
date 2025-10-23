@@ -412,5 +412,41 @@ void COverview::fullRender() {
         }
 
         g_pHyprOpenGL->renderTextureInternal(fbToRender->getTexture(), scaledBox, {.damage = &damage, .a = alpha});
+
+        // Render workspace number in top-left corner
+        int workspaceNum = image.workspaceID;
+        if (closing && selectedIndex >= 0 && selectedIndex != activeIndex && i == (size_t)activeIndex) {
+            // If rendering selected workspace in active position during animation, show its number
+            workspaceNum = images[selectedIndex].workspaceID;
+        }
+
+        std::string numberText = std::to_string(workspaceNum);
+        auto textTexture = g_pHyprOpenGL->renderText(numberText, CHyprColor{1.0, 1.0, 1.0, 1.0}, 16, false);
+
+        if (textTexture) {
+            // Create a perfect circle background
+            const float bgPadding = 4.0f;
+
+            // Make the background a perfect circle by using the larger dimension
+            const float circleSize = std::max(textTexture->m_size.x, textTexture->m_size.y) + bgPadding * 2;
+
+            CBox bgBox;
+            bgBox.x = scaledBox.x;
+            bgBox.y = scaledBox.y;
+            bgBox.w = circleSize;
+            bgBox.h = circleSize;
+
+            // Render circular background (round = half of size makes a perfect circle)
+            g_pHyprOpenGL->renderRect(bgBox, CHyprColor{0.0, 0.0, 0.0, 0.7}, {.damage = &damage, .round = (int)(circleSize / 2)});
+
+            // Center text within the circular background
+            CBox textBox;
+            textBox.x = bgBox.x + (circleSize - textTexture->m_size.x) / 2;
+            textBox.y = bgBox.y + (circleSize - textTexture->m_size.y) / 2;
+            textBox.w = textTexture->m_size.x;
+            textBox.h = textTexture->m_size.y;
+
+            g_pHyprOpenGL->renderTexture(textTexture, textBox, {.damage = &damage, .a = alpha});
+        }
     }
 }

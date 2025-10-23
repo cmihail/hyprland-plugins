@@ -1,6 +1,6 @@
 # Workspace Overview Plugin
 
-A Hyprland plugin that provides a visual workspace overview similar to GNOME's Activities view. Shows workspace previews in a split-screen layout: 4 surrounding workspaces on the left (1/3 of screen), and the current workspace on the right (2/3 of screen). Exit the overview with a mouse click.
+A Hyprland plugin that provides a visual workspace overview similar to GNOME's Activities view. Shows workspace previews in a split-screen layout: 4 surrounding workspaces on the left (1/3 of screen), and the current workspace on the right (2/3 of screen). Click on any workspace to switch to it.
 
 ## Features
 
@@ -8,8 +8,10 @@ A Hyprland plugin that provides a visual workspace overview similar to GNOME's A
   - Left panel (1/3): Shows 4 workspace previews (2 before + 2 after current)
   - Right panel (2/3): Shows the current workspace enlarged
 - **Smart Workspace Selection**: Automatically adjusts workspace list for edge cases (workspace 1 and 2)
-- **Smooth Animations**: Zoom animation when exiting the overview
-- **Mouse Click Exit**: Click anywhere to exit the overview with a smooth transition
+- **Click-to-Switch**: Click on any workspace preview to switch to it with smooth animation
+- **Workspace Numbers**: Displays workspace number in the top-left corner of each preview
+- **Smooth Animations**: Zoom animation when switching or exiting the overview
+- **Mouse Click Exit**: Click outside workspaces to exit without switching
 - **Live Previews**: Real-time rendering of workspace contents
 
 ## Prerequisites
@@ -81,10 +83,11 @@ bind = SUPER, Tab, exec, hyprctl dispatch workspace-overview
 bind = SUPER, Tab, exec, hyprctl dispatch workspace-overview toggle
 ```
 
-### Closing the Overview
+### Interacting with the Overview
 
-- **Mouse Click**: Click anywhere on the screen to exit with a smooth zoom animation
-- **Keyboard**: Press the same keybind again (if using toggle mode)
+- **Click on Workspace**: Click any workspace preview to switch to that workspace with a smooth zoom animation
+- **Click Outside**: Click outside any workspace to exit without switching
+- **Keyboard**: Press the same keybind again (if using toggle mode) to exit
 
 ### Dispatcher Commands
 
