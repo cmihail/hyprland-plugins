@@ -42,6 +42,11 @@ class COverview {
     void setupAnimations(const Vector2D& monitorSize);
     void setupEventHooks();
 
+    // Helper functions for drag and drop
+    int         findWorkspaceIndexAtPosition(const Vector2D& pos);
+    PHLWINDOW   findWindowAtPosition(const Vector2D& pos, int workspaceIndex);
+    void        moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex);
+
     // Layout constants
     static constexpr int   LEFT_WORKSPACES     = 4;  // Number of workspaces in left list
     static constexpr float LEFT_WIDTH_RATIO    = 0.33f;  // Left side takes 1/3
@@ -69,6 +74,14 @@ class COverview {
 
     bool     closing = false;
     Vector2D lastMousePosLocal = Vector2D{};
+
+    // Drag detection
+    static constexpr float DRAG_THRESHOLD = 50.0f;
+    bool                   mouseButtonPressed = false;
+    Vector2D               mouseDownPos = Vector2D{};
+    bool                   isDragging = false;
+    PHLWINDOW              draggedWindow = nullptr;
+    int                    sourceWorkspaceIndex = -1;
 
     // Event hooks
     SP<HOOK_CALLBACK_FN> mouseButtonHook;

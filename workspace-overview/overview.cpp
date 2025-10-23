@@ -10,6 +10,7 @@
 #include <hyprland/src/managers/animation/DesktopAnimationManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/managers/KeybindManager.hpp>
+#include <hyprland/src/devices/IPointer.hpp>
 #include <hyprland/src/helpers/time/Time.hpp>
 #undef private
 #include "OverviewPassElement.hpp"
@@ -229,22 +230,93 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
 
     size->setCallbackOnEnd([this](auto) { redrawAll(true); });
 
-    // Setup mouse move hook to track cursor position
+    // Setup mouse move hook to track cursor position and detect dragging
     auto onMouseMove = [this](void* self, SCallbackInfo& info, std::any param) {
         if (closing)
             return;
-        lastMousePosLocal = g_pInputManager->getMouseCoordsInternal() - pMonitor->m_position;
+
+        lastMousePosLocal =
+            g_pInputManager->getMouseCoordsInternal() - pMonitor->m_position;
+
+        // Check if we're dragging (similar to Hyprland's drag detection)
+        if (mouseButtonPressed && !isDragging) {
+            const float distanceX = std::abs(lastMousePosLocal.x - mouseDownPos.x);
+            const float distanceY = std::abs(lastMousePosLocal.y - mouseDownPos.y);
+
+            if (distanceX > DRAG_THRESHOLD || distanceY > DRAG_THRESHOLD) {
+                isDragging = true;
+            }
+        }
     };
     mouseMoveHook = g_pHookSystem->hookDynamic("mouseMove", onMouseMove);
 
-    // Setup mouse button hook to detect workspace clicks
+    // Setup mouse button hook to detect workspace clicks vs drags
     auto onMouseButton = [this](void* self, SCallbackInfo& info, std::any param) {
         if (closing)
             return;
 
         info.cancelled = true;
-        selectWorkspaceAtPosition(lastMousePosLocal);
-        close();
+
+        auto e = std::any_cast<IPointer::SButtonEvent>(param);
+
+        // Any button except left click: close overview and stay on current workspace
+        if (e.button != BTN_LEFT) {
+            if (e.state == WL_POINTER_BUTTON_STATE_RELEASED) {
+                close();
+            }
+            return;
+        }
+
+        if (e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
+            // Mouse button pressed - record position and find window
+            mouseButtonPressed = true;
+            mouseDownPos = lastMousePosLocal;
+            isDragging = false;
+
+            // Find which workspace was clicked
+            sourceWorkspaceIndex = findWorkspaceIndexAtPosition(mouseDownPos);
+
+            // Find window at click position in that workspace
+            draggedWindow = findWindowAtPosition(mouseDownPos, sourceWorkspaceIndex);
+        } else {
+            // Mouse button released
+            mouseButtonPressed = false;
+
+            if (isDragging) {
+                // Dragging detected - handle window move
+                if (draggedWindow) {
+                    // Find target workspace at release position
+                    int targetIndex = findWorkspaceIndexAtPosition(lastMousePosLocal);
+
+                    if (targetIndex >= 0 && targetIndex != sourceWorkspaceIndex) {
+                        // Show what would be moved
+                        std::string msg = "Would move: " + draggedWindow->m_class +
+                                          "\nTo WS: " +
+                                          std::to_string(images[targetIndex].workspaceID);
+                        HyprlandAPI::addNotification(PHANDLE, msg,
+                                                     CHyprColor{0.2, 0.8, 0.2, 1.0}, 3000);
+                        // moveWindowToWorkspace(draggedWindow, targetIndex);
+                    } else if (targetIndex == sourceWorkspaceIndex) {
+                        HyprlandAPI::addNotification(PHANDLE, "Same workspace",
+                                                     CHyprColor{0.8, 0.6, 0.2, 1.0}, 2000);
+                    } else {
+                        HyprlandAPI::addNotification(PHANDLE, "Outside workspace area",
+                                                     CHyprColor{0.8, 0.6, 0.2, 1.0}, 2000);
+                    }
+                } else {
+                    HyprlandAPI::addNotification(PHANDLE, "Drag (no window)",
+                                                 CHyprColor{0.8, 0.4, 0.2, 1.0}, 2000);
+                }
+            } else {
+                // Click (not drag) - select workspace and close
+                selectWorkspaceAtPosition(lastMousePosLocal);
+                close();
+            }
+
+            // Reset drag state
+            draggedWindow = nullptr;
+            sourceWorkspaceIndex = -1;
+        }
     };
 
     mouseButtonHook = g_pHookSystem->hookDynamic("mouseButton", onMouseButton);
@@ -543,4 +615,125 @@ void COverview::fullRender() {
                                          {.damage = &damage, .a = alpha});
         }
     }
+}
+
+int COverview::findWorkspaceIndexAtPosition(const Vector2D& pos) {
+    // Get animation values to transform boxes the same way as in rendering
+    const Vector2D monitorSize = pMonitor->m_size;
+    const Vector2D currentSize = size->value();
+    const Vector2D currentPos  = this->pos->value();
+    const float    zoomScale   = currentSize.x / monitorSize.x;
+
+    // Check if position is within any workspace box (with animation applied)
+    for (size_t i = 0; i < images.size(); ++i) {
+        const auto& box = images[i].box;
+
+        // Apply same transformation as in fullRender()
+        CBox transformedBox = box;
+        transformedBox.x = transformedBox.x * zoomScale + currentPos.x;
+        transformedBox.y = transformedBox.y * zoomScale + currentPos.y;
+        transformedBox.w = transformedBox.w * zoomScale;
+        transformedBox.h = transformedBox.h * zoomScale;
+
+        if (pos.x >= transformedBox.x &&
+            pos.x <= transformedBox.x + transformedBox.w &&
+            pos.y >= transformedBox.y &&
+            pos.y <= transformedBox.y + transformedBox.h) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+PHLWINDOW COverview::findWindowAtPosition(const Vector2D& pos, int workspaceIndex) {
+    if (workspaceIndex < 0 || workspaceIndex >= (int)images.size())
+        return nullptr;
+
+    const auto& image = images[workspaceIndex];
+    if (!image.pWorkspace)
+        return nullptr;
+
+    // Get animation values to transform box the same way as in rendering
+    const Vector2D monitorSize = pMonitor->m_size;
+    const Vector2D currentSize = size->value();
+    const Vector2D currentPos  = this->pos->value();
+    const float    zoomScale   = currentSize.x / monitorSize.x;
+
+    // Apply same transformation as in fullRender()
+    CBox transformedBox = image.box;
+    transformedBox.x = transformedBox.x * zoomScale + currentPos.x;
+    transformedBox.y = transformedBox.y * zoomScale + currentPos.y;
+    transformedBox.w = transformedBox.w * zoomScale;
+    transformedBox.h = transformedBox.h * zoomScale;
+
+    // Apply aspect ratio scaling (same as in fullRender())
+    const float fbAspect  = monitorSize.x / monitorSize.y;
+    const float boxAspect = transformedBox.w / transformedBox.h;
+
+    CBox scaledBox = transformedBox;
+    if (fbAspect > boxAspect) {
+        // Framebuffer is wider, fit to width
+        const float newHeight = transformedBox.w / fbAspect;
+        scaledBox.y           = transformedBox.y + (transformedBox.h - newHeight) / 2.0f;
+        scaledBox.h           = newHeight;
+    } else {
+        // Framebuffer is taller, fit to height
+        const float newWidth = transformedBox.h * fbAspect;
+        scaledBox.x          = transformedBox.x + (transformedBox.w - newWidth) / 2.0f;
+        scaledBox.w          = newWidth;
+    }
+
+    // Check if click is within the scaled box (not in black bars)
+    if (pos.x < scaledBox.x || pos.x > scaledBox.x + scaledBox.w ||
+        pos.y < scaledBox.y || pos.y > scaledBox.y + scaledBox.h) {
+        return nullptr;  // Click is in black bar area
+    }
+
+    // Convert click position to workspace-relative coordinates
+    // Account for the scaling of the preview
+    float relX = (pos.x - scaledBox.x) / scaledBox.w;
+    float relY = (pos.y - scaledBox.y) / scaledBox.h;
+
+    // Convert to global coordinates (windows are positioned globally)
+    Vector2D wsPos = {pMonitor->m_position.x + relX * monitorSize.x,
+                      pMonitor->m_position.y + relY * monitorSize.y};
+
+    // Find window at this position in the workspace
+    for (auto& w : g_pCompositor->m_windows) {
+        if (!w->m_workspace || w->m_workspace != image.pWorkspace)
+            continue;
+        if (w->isHidden() || !w->m_isMapped)
+            continue;
+
+        const Vector2D wPos = w->m_position;
+        const Vector2D wSize = w->m_size;
+
+        if (wsPos.x >= wPos.x && wsPos.x <= wPos.x + wSize.x &&
+            wsPos.y >= wPos.y && wsPos.y <= wPos.y + wSize.y) {
+            return w;
+        }
+    }
+
+    return nullptr;
+}
+
+void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex) {
+    if (!window || targetWorkspaceIndex < 0 || targetWorkspaceIndex >= (int)images.size())
+        return;
+
+    const auto& targetImage = images[targetWorkspaceIndex];
+    if (!targetImage.pWorkspace)
+        return;
+
+    // Don't move if it's already in the target workspace
+    if (window->m_workspace == targetImage.pWorkspace)
+        return;
+
+    // Show what would be moved (not actually moving yet)
+    std::string msg = "Would move: " + window->m_class + "\nTo WS: " +
+                      std::to_string(targetImage.workspaceID);
+    HyprlandAPI::addNotification(PHANDLE, msg, CHyprColor{0.2, 0.8, 0.2, 1.0}, 3000);
+
+    // TODO: Uncomment to actually move window
+    // window->moveToWorkspace(targetImage.pWorkspace);
 }

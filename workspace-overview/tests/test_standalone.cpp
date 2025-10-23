@@ -878,3 +878,273 @@ TEST(AnimationTest, AlphaWithinValidRange) {
         }
     }
 }
+
+// Test helper: Drag detection
+static bool isDragDetected(float startX, float startY, float endX, float endY,
+                          float threshold) {
+    const float distanceX = std::abs(endX - startX);
+    const float distanceY = std::abs(endY - startY);
+    return (distanceX > threshold || distanceY > threshold);
+}
+
+// Test: Drag threshold - no drag when within threshold
+TEST(DragDetectionTest, NoDragWithinThreshold) {
+    const float threshold = 50.0f;
+
+    // Mouse moved 30px horizontally (less than threshold)
+    EXPECT_FALSE(isDragDetected(100.0f, 100.0f, 130.0f, 100.0f, threshold));
+
+    // Mouse moved 40px vertically (less than threshold)
+    EXPECT_FALSE(isDragDetected(100.0f, 100.0f, 100.0f, 140.0f, threshold));
+
+    // Mouse moved diagonally but each component < threshold
+    EXPECT_FALSE(isDragDetected(100.0f, 100.0f, 130.0f, 130.0f, threshold));
+}
+
+// Test: Drag threshold - drag detected when exceeds threshold
+TEST(DragDetectionTest, DragDetectedAboveThreshold) {
+    const float threshold = 50.0f;
+
+    // Mouse moved 51px horizontally (exceeds threshold)
+    EXPECT_TRUE(isDragDetected(100.0f, 100.0f, 151.0f, 100.0f, threshold));
+
+    // Mouse moved 60px vertically (exceeds threshold)
+    EXPECT_TRUE(isDragDetected(100.0f, 100.0f, 100.0f, 160.0f, threshold));
+
+    // Mouse moved diagonally with one component > threshold
+    EXPECT_TRUE(isDragDetected(100.0f, 100.0f, 151.0f, 130.0f, threshold));
+}
+
+// Test: Drag threshold - exact threshold boundary
+TEST(DragDetectionTest, ExactThresholdBoundary) {
+    const float threshold = 50.0f;
+
+    // Exactly at threshold should not trigger (uses >)
+    EXPECT_FALSE(isDragDetected(100.0f, 100.0f, 150.0f, 100.0f, threshold));
+
+    // One pixel over threshold should trigger
+    EXPECT_TRUE(isDragDetected(100.0f, 100.0f, 150.01f, 100.0f, threshold));
+}
+
+// Test: Drag threshold - negative movement
+TEST(DragDetectionTest, NegativeMovement) {
+    const float threshold = 50.0f;
+
+    // Mouse moved 60px left (negative direction)
+    EXPECT_TRUE(isDragDetected(100.0f, 100.0f, 40.0f, 100.0f, threshold));
+
+    // Mouse moved 70px up (negative direction)
+    EXPECT_TRUE(isDragDetected(100.0f, 100.0f, 100.0f, 30.0f, threshold));
+}
+
+// Test helper: Calculate global window position
+struct WindowPosition {
+    float globalX;
+    float globalY;
+};
+
+static WindowPosition calculateGlobalWindowPosition(float monitorX, float monitorY,
+                                                     float monitorW, float monitorH,
+                                                     float relX, float relY) {
+    WindowPosition result;
+    result.globalX = monitorX + relX * monitorW;
+    result.globalY = monitorY + relY * monitorH;
+    return result;
+}
+
+// Test: Global coordinate calculation for first monitor
+TEST(CoordinateTransformTest, FirstMonitorAtOrigin) {
+    // Monitor 1 at (0, 0) with size 1920x1080
+    auto pos = calculateGlobalWindowPosition(0, 0, 1920, 1080, 0.5f, 0.5f);
+
+    // Center of monitor
+    EXPECT_FLOAT_EQ(pos.globalX, 960.0f);
+    EXPECT_FLOAT_EQ(pos.globalY, 540.0f);
+}
+
+// Test: Global coordinate calculation for second monitor
+TEST(CoordinateTransformTest, SecondMonitorOffset) {
+    // Monitor 2 at (1920, 0) with size 1920x1080
+    auto pos = calculateGlobalWindowPosition(1920, 0, 1920, 1080, 0.5f, 0.5f);
+
+    // Center of second monitor
+    EXPECT_FLOAT_EQ(pos.globalX, 2880.0f);  // 1920 + 960
+    EXPECT_FLOAT_EQ(pos.globalY, 540.0f);
+}
+
+// Test: Global coordinate calculation for third monitor
+TEST(CoordinateTransformTest, ThirdMonitorOffset) {
+    // Monitor 3 at (3840, 0) with size 1920x1080
+    auto pos = calculateGlobalWindowPosition(3840, 0, 1920, 1080, 0.5f, 0.5f);
+
+    // Center of third monitor
+    EXPECT_FLOAT_EQ(pos.globalX, 4800.0f);  // 3840 + 960
+    EXPECT_FLOAT_EQ(pos.globalY, 540.0f);
+}
+
+// Test: Global coordinate at top-left corner
+TEST(CoordinateTransformTest, TopLeftCorner) {
+    auto pos = calculateGlobalWindowPosition(1920, 0, 1920, 1080, 0.0f, 0.0f);
+
+    EXPECT_FLOAT_EQ(pos.globalX, 1920.0f);
+    EXPECT_FLOAT_EQ(pos.globalY, 0.0f);
+}
+
+// Test: Global coordinate at bottom-right corner
+TEST(CoordinateTransformTest, BottomRightCorner) {
+    auto pos = calculateGlobalWindowPosition(1920, 0, 1920, 1080, 1.0f, 1.0f);
+
+    EXPECT_FLOAT_EQ(pos.globalX, 3840.0f);  // 1920 + 1920
+    EXPECT_FLOAT_EQ(pos.globalY, 1080.0f);
+}
+
+// Test helper: Check if point is in black bar
+static bool isInBlackBar(float clickX, float clickY,
+                        float boxX, float boxY, float boxW, float boxH,
+                        float fbW, float fbH) {
+    // Apply aspect ratio scaling
+    auto scaled = calculateAspectRatioFit(boxX, boxY, boxW, boxH, fbW, fbH);
+
+    // Check if click is outside the scaled area (in black bars)
+    return (clickX < scaled.x || clickX > scaled.x + scaled.w ||
+            clickY < scaled.y || clickY > scaled.y + scaled.h);
+}
+
+// Test: Black bar detection for wider framebuffer (horizontal bars)
+TEST(BlackBarDetectionTest, WiderFramebufferVerticalBars) {
+    // Box 100x100, FB 200x100 creates vertical black bars on top/bottom
+    // Scaled area will be 100x50 centered vertically
+
+    // Click in actual content area (should not be in black bar)
+    EXPECT_FALSE(isInBlackBar(50.0f, 50.0f, 0, 0, 100, 100, 200, 100));
+
+    // Click in top black bar
+    EXPECT_TRUE(isInBlackBar(50.0f, 10.0f, 0, 0, 100, 100, 200, 100));
+
+    // Click in bottom black bar
+    EXPECT_TRUE(isInBlackBar(50.0f, 90.0f, 0, 0, 100, 100, 200, 100));
+}
+
+// Test: Black bar detection for taller framebuffer (vertical bars)
+TEST(BlackBarDetectionTest, TallerFramebufferHorizontalBars) {
+    // Box 100x100, FB 100x200 creates horizontal black bars on left/right
+    // Scaled area will be 50x100 centered horizontally
+
+    // Click in actual content area (should not be in black bar)
+    EXPECT_FALSE(isInBlackBar(50.0f, 50.0f, 0, 0, 100, 100, 100, 200));
+
+    // Click in left black bar
+    EXPECT_TRUE(isInBlackBar(10.0f, 50.0f, 0, 0, 100, 100, 100, 200));
+
+    // Click in right black bar
+    EXPECT_TRUE(isInBlackBar(90.0f, 50.0f, 0, 0, 100, 100, 100, 200));
+}
+
+// Test: No black bars when aspect ratios match
+TEST(BlackBarDetectionTest, NoBlackBarsMatchingAspectRatio) {
+    // Box 100x100, FB 200x200 (same aspect ratio)
+    // Entire box should be content, no black bars
+
+    // Clicks anywhere in box should not be in black bars
+    EXPECT_FALSE(isInBlackBar(10.0f, 10.0f, 0, 0, 100, 100, 200, 200));
+    EXPECT_FALSE(isInBlackBar(90.0f, 90.0f, 0, 0, 100, 100, 200, 200));
+    EXPECT_FALSE(isInBlackBar(50.0f, 50.0f, 0, 0, 100, 100, 200, 200));
+}
+
+// Test: Black bar boundary detection
+TEST(BlackBarDetectionTest, BoundaryBetweenContentAndBlackBar) {
+    // Box 100x100, FB 200x100
+    auto scaled = calculateAspectRatioFit(0, 0, 100, 100, 200, 100);
+
+    // Click exactly on the boundary (should be in content)
+    EXPECT_FALSE(isInBlackBar(scaled.x, scaled.y, 0, 0, 100, 100, 200, 100));
+
+    // Click just inside black bar
+    EXPECT_TRUE(isInBlackBar(scaled.y - 1.0f, scaled.y - 1.0f,
+                            0, 0, 100, 100, 200, 100));
+}
+
+// Test helper: Window hit detection
+struct Window {
+    float x, y, w, h;
+};
+
+static bool isWindowHit(float clickX, float clickY, const Window& window) {
+    return (clickX >= window.x && clickX <= window.x + window.w &&
+            clickY >= window.y && clickY <= window.y + window.h);
+}
+
+// Test: Window hit detection - center of window
+TEST(WindowHitDetectionTest, ClickCenterOfWindow) {
+    Window w = {100, 200, 300, 400};
+
+    // Click in center
+    EXPECT_TRUE(isWindowHit(250.0f, 400.0f, w));
+}
+
+// Test: Window hit detection - corners
+TEST(WindowHitDetectionTest, ClickWindowCorners) {
+    Window w = {100, 200, 300, 400};
+
+    // All corners should be hit
+    EXPECT_TRUE(isWindowHit(100.0f, 200.0f, w));  // Top-left
+    EXPECT_TRUE(isWindowHit(400.0f, 200.0f, w));  // Top-right
+    EXPECT_TRUE(isWindowHit(100.0f, 600.0f, w));  // Bottom-left
+    EXPECT_TRUE(isWindowHit(400.0f, 600.0f, w));  // Bottom-right
+}
+
+// Test: Window hit detection - outside window
+TEST(WindowHitDetectionTest, ClickOutsideWindow) {
+    Window w = {100, 200, 300, 400};
+
+    // Click outside (left)
+    EXPECT_FALSE(isWindowHit(50.0f, 400.0f, w));
+
+    // Click outside (right)
+    EXPECT_FALSE(isWindowHit(450.0f, 400.0f, w));
+
+    // Click outside (above)
+    EXPECT_FALSE(isWindowHit(250.0f, 150.0f, w));
+
+    // Click outside (below)
+    EXPECT_FALSE(isWindowHit(250.0f, 650.0f, w));
+}
+
+// Test: Window hit detection with global coordinates
+TEST(WindowHitDetectionTest, GlobalCoordinates) {
+    // Window on second monitor at (1920, 0)
+    Window w = {2000, 100, 500, 300};
+
+    // Convert click from relative to global and test
+    auto clickPos = calculateGlobalWindowPosition(1920, 0, 1920, 1080,
+                                                   0.1f, 0.2f);
+
+    // This click at (2112, 216) should hit the window
+    EXPECT_TRUE(isWindowHit(clickPos.globalX, clickPos.globalY, w));
+}
+
+// Test: Multiple windows, find correct one
+TEST(WindowHitDetectionTest, MultipleWindowsCorrectSelection) {
+    std::vector<Window> windows = {
+        {100, 100, 200, 200},
+        {400, 100, 200, 200},
+        {100, 400, 200, 200},
+        {400, 400, 200, 200}
+    };
+
+    // Click should hit second window
+    float clickX = 500.0f;
+    float clickY = 200.0f;
+
+    int hitCount = 0;
+    int hitIndex = -1;
+    for (size_t i = 0; i < windows.size(); ++i) {
+        if (isWindowHit(clickX, clickY, windows[i])) {
+            hitCount++;
+            hitIndex = i;
+        }
+    }
+
+    EXPECT_EQ(hitCount, 1);  // Only one window should be hit
+    EXPECT_EQ(hitIndex, 1);  // Second window (index 1)
+}
