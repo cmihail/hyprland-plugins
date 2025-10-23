@@ -34,6 +34,14 @@ class COverview {
     void redrawAll(bool forcelowres = false);
     void fullRender();
 
+    // Helper functions for constructor
+    void setupWorkspaceIDs(int currentID);
+    void calculateLayoutBoxes(const Vector2D& monitorSize);
+    void renderWorkspacesToFramebuffers(PHLMONITOR monitor,
+                                        PHLWORKSPACE openSpecial);
+    void setupAnimations(const Vector2D& monitorSize);
+    void setupEventHooks();
+
     // Layout constants
     static constexpr int   LEFT_WORKSPACES     = 4;  // Number of workspaces in left list
     static constexpr float LEFT_WIDTH_RATIO    = 0.33f;  // Left side takes 1/3

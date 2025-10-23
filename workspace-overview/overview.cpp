@@ -1,4 +1,5 @@
 #include "overview.hpp"
+#include <algorithm>
 #include <any>
 #define private public
 #include <hyprland/src/render/Renderer.hpp>
@@ -34,43 +35,77 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
     // We need LEFT_WORKSPACES + 1 (for the active workspace on the right)
     images.resize(LEFT_WORKSPACES + 1);
 
-    // Get workspaces relative to current
+    // Get current workspace ID
     int currentID = pMonitor->activeWorkspaceID();
 
-    // Determine offsets based on current workspace ID
-    int offsets[4];
-    if (currentID == 1) {
-        // First workspace: show next 4 workspaces (2, 3, 4, 5)
-        offsets[0] = +1;
-        offsets[1] = +2;
-        offsets[2] = +3;
-        offsets[3] = +4;
-    } else if (currentID == 2) {
-        // Second workspace: show previous 1 and next 3 (1, 3, 4, 5)
-        offsets[0] = -1;
-        offsets[1] = +1;
-        offsets[2] = +2;
-        offsets[3] = +3;
-    } else {
-        // Normal case: show 2 before and 2 after (-2, -1, +1, +2)
-        offsets[0] = -2;
-        offsets[1] = -1;
-        offsets[2] = +1;
-        offsets[3] = +2;
+    // Get all workspaces and filter by monitor
+    auto allWorkspaces = g_pCompositor->getWorkspacesCopy();
+    std::vector<int64_t> monitorWorkspaceIDs;
+
+    for (const auto& ws : allWorkspaces) {
+        if (!ws || ws->m_isSpecialWorkspace)
+            continue;
+
+        auto wsMonitor = ws->m_monitor.lock();
+
+        // Include workspaces that belong to this monitor OR are unassigned
+        if (!wsMonitor || wsMonitor == pMonitor) {
+            monitorWorkspaceIDs.push_back(ws->m_id);
+        }
     }
 
-    // Populate left side workspaces
-    for (size_t i = 0; i < LEFT_WORKSPACES; ++i) {
-        auto& image = images[i];
-        int offset = offsets[i];
+    // Sort workspace IDs
+    std::sort(monitorWorkspaceIDs.begin(), monitorWorkspaceIDs.end());
 
-        if (offset < 0) {
-            image.workspaceID = getWorkspaceIDNameFromString("r" + std::to_string(offset)).id;
-        } else {
-            image.workspaceID = getWorkspaceIDNameFromString("r+" + std::to_string(offset)).id;
-        }
+    // Remove the active workspace from the list
+    monitorWorkspaceIDs.erase(
+        std::remove(monitorWorkspaceIDs.begin(), monitorWorkspaceIDs.end(), currentID),
+        monitorWorkspaceIDs.end()
+    );
+
+    // Populate left side workspaces: first with existing, then fill with new IDs
+    size_t numExisting = std::min(static_cast<size_t>(LEFT_WORKSPACES),
+                                   monitorWorkspaceIDs.size());
+
+    for (size_t i = 0; i < numExisting; ++i) {
+        auto& image = images[i];
+        image.workspaceID = monitorWorkspaceIDs[i];
         image.isActive = false;
     }
+
+    // Fill remaining slots with new workspace IDs (not assigned to any monitor)
+    if (numExisting < LEFT_WORKSPACES) {
+        // Collect all workspace IDs already in use (on any monitor)
+        std::vector<int64_t> allUsedIDs;
+        for (const auto& ws : allWorkspaces) {
+            if (!ws || ws->m_isSpecialWorkspace)
+                continue;
+            allUsedIDs.push_back(ws->m_id);
+        }
+        std::sort(allUsedIDs.begin(), allUsedIDs.end());
+
+        // Find new workspace IDs that aren't in use
+        int nextID = 1;
+        for (size_t i = numExisting; i < LEFT_WORKSPACES; ++i) {
+            // Find an ID that's not in use
+            while (std::find(allUsedIDs.begin(), allUsedIDs.end(), nextID) !=
+                   allUsedIDs.end()) {
+                nextID++;
+            }
+
+            auto& image = images[i];
+            image.workspaceID = nextID;
+            image.isActive = false;
+
+            // Mark this ID as used so we don't reuse it
+            allUsedIDs.push_back(nextID);
+            std::sort(allUsedIDs.begin(), allUsedIDs.end());
+            nextID++;
+        }
+    }
+
+    // Keep all LEFT_WORKSPACES + active workspace
+    images.resize(LEFT_WORKSPACES + 1);
 
     // Last image is for the active workspace (right side)
     images[LEFT_WORKSPACES].workspaceID = currentID;
@@ -110,7 +145,8 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
         image.fb.alloc(monbox.w, monbox.h, PMONITOR->m_output->state->state().drmFormat);
 
         CRegion fakeDamage{0, 0, INT16_MAX, INT16_MAX};
-        g_pHyprRenderer->beginRender(PMONITOR, fakeDamage, RENDER_MODE_FULL_FAKE, nullptr, &image.fb);
+        g_pHyprRenderer->beginRender(PMONITOR, fakeDamage, RENDER_MODE_FULL_FAKE,
+                                      nullptr, &image.fb);
 
         g_pHyprOpenGL->clear(CHyprColor{0, 0, 0, 1.0});
 
@@ -119,16 +155,19 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
         if (PWORKSPACE) {
             image.pWorkspace            = PWORKSPACE;
             PMONITOR->m_activeWorkspace = PWORKSPACE;
-            g_pDesktopAnimationManager->startAnimation(PWORKSPACE, CDesktopAnimationManager::ANIMATION_TYPE_IN, true, true);
+            g_pDesktopAnimationManager->startAnimation(
+                PWORKSPACE, CDesktopAnimationManager::ANIMATION_TYPE_IN, true, true);
             PWORKSPACE->m_visible = true;
 
             if (PWORKSPACE == startedOn)
                 PMONITOR->m_activeSpecialWorkspace = openSpecial;
 
-            g_pHyprRenderer->renderWorkspace(PMONITOR, PWORKSPACE, Time::steadyNow(), monbox);
+            g_pHyprRenderer->renderWorkspace(PMONITOR, PWORKSPACE,
+                                             Time::steadyNow(), monbox);
 
             PWORKSPACE->m_visible = false;
-            g_pDesktopAnimationManager->startAnimation(PWORKSPACE, CDesktopAnimationManager::ANIMATION_TYPE_OUT, false, true);
+            g_pDesktopAnimationManager->startAnimation(
+                PWORKSPACE, CDesktopAnimationManager::ANIMATION_TYPE_OUT, false, true);
 
             if (PWORKSPACE == startedOn)
                 PMONITOR->m_activeSpecialWorkspace.reset();
@@ -140,8 +179,9 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
             // Right side - active workspace (maximized with consistent margins)
             image.box = {activeX, PADDING, activeMaxWidth, activeMaxHeight};
         } else {
-            // Left side - workspace list (left margin = PADDING, same as top/bottom)
-            image.box = {PADDING, PADDING + i * (leftPreviewHeight + GAP_WIDTH), leftWorkspaceWidth, leftPreviewHeight};
+            // Left side - workspace list (left margin = PADDING, same as top)
+            float yPos = PADDING + i * (leftPreviewHeight + GAP_WIDTH);
+            image.box = {PADDING, yPos, leftWorkspaceWidth, leftPreviewHeight};
         }
 
         g_pHyprOpenGL->m_renderData.blockScreenShader = true;
@@ -153,11 +193,15 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
     PMONITOR->m_activeSpecialWorkspace = openSpecial;
     PMONITOR->m_activeWorkspace        = startedOn;
     startedOn->m_visible               = true;
-    g_pDesktopAnimationManager->startAnimation(startedOn, CDesktopAnimationManager::ANIMATION_TYPE_IN, true, true);
+    g_pDesktopAnimationManager->startAnimation(
+        startedOn, CDesktopAnimationManager::ANIMATION_TYPE_IN, true, true);
 
     // Setup animations for zoom effect
-    g_pAnimationManager->createAnimation(pMonitor->m_size, size, g_pConfigManager->getAnimationPropertyConfig("windowsMove"), AVARDAMAGE_NONE);
-    g_pAnimationManager->createAnimation(Vector2D{0, 0}, pos, g_pConfigManager->getAnimationPropertyConfig("windowsMove"), AVARDAMAGE_NONE);
+    auto animConfig = g_pConfigManager->getAnimationPropertyConfig("windowsMove");
+    g_pAnimationManager->createAnimation(pMonitor->m_size, size, animConfig,
+                                         AVARDAMAGE_NONE);
+    g_pAnimationManager->createAnimation(Vector2D{0, 0}, pos, animConfig,
+                                         AVARDAMAGE_NONE);
 
     size->setUpdateCallback(damageMonitor);
     pos->setUpdateCallback(damageMonitor);
@@ -171,7 +215,8 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
     const float scale = std::min(scaleX, scaleY);
 
     // Starting position: zoomed into active workspace
-    const Vector2D activeCenter = Vector2D{activeBox.x + activeBox.w / 2.0f, activeBox.y + activeBox.h / 2.0f};
+    const Vector2D activeCenter = Vector2D{activeBox.x + activeBox.w / 2.0f,
+                                           activeBox.y + activeBox.h / 2.0f};
     const Vector2D screenCenter = monitorSize / 2.0f;
 
     // Set initial value (zoomed in)
@@ -225,7 +270,8 @@ void COverview::redrawID(int id, bool forcelowres) {
     }
 
     CRegion fakeDamage{0, 0, INT16_MAX, INT16_MAX};
-    g_pHyprRenderer->beginRender(pMonitor.lock(), fakeDamage, RENDER_MODE_FULL_FAKE, nullptr, &image.fb);
+    g_pHyprRenderer->beginRender(pMonitor.lock(), fakeDamage,
+                                  RENDER_MODE_FULL_FAKE, nullptr, &image.fb);
 
     g_pHyprOpenGL->clear(CHyprColor{0, 0, 0, 1.0});
 
@@ -239,21 +285,25 @@ void COverview::redrawID(int id, bool forcelowres) {
 
     if (PWORKSPACE) {
         pMonitor->m_activeWorkspace = PWORKSPACE;
-        g_pDesktopAnimationManager->startAnimation(PWORKSPACE, CDesktopAnimationManager::ANIMATION_TYPE_IN, true, true);
+        g_pDesktopAnimationManager->startAnimation(
+            PWORKSPACE, CDesktopAnimationManager::ANIMATION_TYPE_IN, true, true);
         PWORKSPACE->m_visible = true;
 
         if (PWORKSPACE == startedOn)
             pMonitor->m_activeSpecialWorkspace = openSpecial;
 
-        g_pHyprRenderer->renderWorkspace(pMonitor.lock(), PWORKSPACE, Time::steadyNow(), monbox);
+        g_pHyprRenderer->renderWorkspace(pMonitor.lock(), PWORKSPACE,
+                                         Time::steadyNow(), monbox);
 
         PWORKSPACE->m_visible = false;
-        g_pDesktopAnimationManager->startAnimation(PWORKSPACE, CDesktopAnimationManager::ANIMATION_TYPE_OUT, false, true);
+        g_pDesktopAnimationManager->startAnimation(
+            PWORKSPACE, CDesktopAnimationManager::ANIMATION_TYPE_OUT, false, true);
 
         if (PWORKSPACE == startedOn)
             pMonitor->m_activeSpecialWorkspace.reset();
     } else
-        g_pHyprRenderer->renderWorkspace(pMonitor.lock(), PWORKSPACE, Time::steadyNow(), monbox);
+        g_pHyprRenderer->renderWorkspace(pMonitor.lock(), PWORKSPACE,
+                                         Time::steadyNow(), monbox);
 
     g_pHyprOpenGL->m_renderData.blockScreenShader = true;
     g_pHyprRenderer->endRender();
@@ -261,7 +311,8 @@ void COverview::redrawID(int id, bool forcelowres) {
     pMonitor->m_activeSpecialWorkspace = openSpecial;
     pMonitor->m_activeWorkspace        = startedOn;
     startedOn->m_visible               = true;
-    g_pDesktopAnimationManager->startAnimation(startedOn, CDesktopAnimationManager::ANIMATION_TYPE_IN, true, true);
+    g_pDesktopAnimationManager->startAnimation(
+        startedOn, CDesktopAnimationManager::ANIMATION_TYPE_IN, true, true);
 
     blockOverviewRendering = false;
 }
@@ -312,7 +363,7 @@ void COverview::close() {
     // Calculate zoom animation to focus on active workspace position
     const Vector2D monitorSize = pMonitor->m_size;
 
-    // Calculate the scale factor needed to zoom the active box to fill the screen
+    // Calculate the scale factor to zoom the active box to fill screen
     const float scaleX = monitorSize.x / activeBox.w;
     const float scaleY = monitorSize.y / activeBox.h;
     const float scale = std::min(scaleX, scaleY);
@@ -320,8 +371,9 @@ void COverview::close() {
     // Target size is scaled up from current
     *size = monitorSize * scale;
 
-    // Target position: we need to move so the active workspace center aligns with screen center
-    const Vector2D activeCenter = Vector2D{activeBox.x + activeBox.w / 2.0f, activeBox.y + activeBox.h / 2.0f};
+    // Target position: move active workspace center to screen center
+    const Vector2D activeCenter = Vector2D{activeBox.x + activeBox.w / 2.0f,
+                                           activeBox.y + activeBox.h / 2.0f};
     const Vector2D screenCenter = monitorSize / 2.0f;
     *pos = (screenCenter - activeCenter) * scale;
 
@@ -336,17 +388,22 @@ void COverview::close() {
         if (targetImage.workspaceID != pMonitor->activeWorkspaceID()) {
             pMonitor->setSpecialWorkspace(nullptr);
 
-            const auto NEWIDWS = g_pCompositor->getWorkspaceByID(targetImage.workspaceID);
+            const auto NEWIDWS =
+                g_pCompositor->getWorkspaceByID(targetImage.workspaceID);
             const auto OLDWS = pMonitor->m_activeWorkspace;
 
             if (!NEWIDWS)
-                g_pKeybindManager->changeworkspace(std::to_string(targetImage.workspaceID));
+                g_pKeybindManager->changeworkspace(
+                    std::to_string(targetImage.workspaceID));
             else
                 g_pKeybindManager->changeworkspace(NEWIDWS->getConfigName());
 
             // Start animations for workspace transition (like hyprexpo)
-            g_pDesktopAnimationManager->startAnimation(pMonitor->m_activeWorkspace, CDesktopAnimationManager::ANIMATION_TYPE_IN, true, true);
-            g_pDesktopAnimationManager->startAnimation(OLDWS, CDesktopAnimationManager::ANIMATION_TYPE_OUT, false, true);
+            g_pDesktopAnimationManager->startAnimation(
+                pMonitor->m_activeWorkspace,
+                CDesktopAnimationManager::ANIMATION_TYPE_IN, true, true);
+            g_pDesktopAnimationManager->startAnimation(
+                OLDWS, CDesktopAnimationManager::ANIMATION_TYPE_OUT, false, true);
             startedOn = pMonitor->m_activeWorkspace;
         }
     }
@@ -439,24 +496,30 @@ void COverview::fullRender() {
             }
         }
 
-        g_pHyprOpenGL->renderTextureInternal(fbToRender->getTexture(), scaledBox, {.damage = &damage, .a = alpha});
+        g_pHyprOpenGL->renderTextureInternal(fbToRender->getTexture(),
+                                              scaledBox,
+                                              {.damage = &damage, .a = alpha});
 
         // Render workspace number in top-left corner
         int workspaceNum = image.workspaceID;
-        if (closing && selectedIndex >= 0 && selectedIndex != activeIndex && i == (size_t)activeIndex) {
-            // If rendering selected workspace in active position during animation, show its number
+        if (closing && selectedIndex >= 0 && selectedIndex != activeIndex &&
+            i == (size_t)activeIndex) {
+            // If rendering selected workspace in active position, show its number
             workspaceNum = images[selectedIndex].workspaceID;
         }
 
         std::string numberText = std::to_string(workspaceNum);
-        auto textTexture = g_pHyprOpenGL->renderText(numberText, CHyprColor{1.0, 1.0, 1.0, 1.0}, 16, false);
+        auto textTexture = g_pHyprOpenGL->renderText(
+            numberText, CHyprColor{1.0, 1.0, 1.0, 1.0}, 16, false);
 
         if (textTexture) {
             // Create a perfect circle background
             const float bgPadding = 4.0f;
 
-            // Make the background a perfect circle by using the larger dimension
-            const float circleSize = std::max(textTexture->m_size.x, textTexture->m_size.y) + bgPadding * 2;
+            // Make the background a perfect circle using larger dimension
+            const float circleSize = std::max(textTexture->m_size.x,
+                                              textTexture->m_size.y) +
+                                     bgPadding * 2;
 
             CBox bgBox;
             bgBox.x = scaledBox.x;
@@ -464,8 +527,10 @@ void COverview::fullRender() {
             bgBox.w = circleSize;
             bgBox.h = circleSize;
 
-            // Render circular background (round = half of size makes a perfect circle)
-            g_pHyprOpenGL->renderRect(bgBox, CHyprColor{0.0, 0.0, 0.0, 0.7}, {.damage = &damage, .round = (int)(circleSize / 2)});
+            // Render circular background (round = half makes perfect circle)
+            g_pHyprOpenGL->renderRect(bgBox, CHyprColor{0.0, 0.0, 0.0, 0.7},
+                                      {.damage = &damage,
+                                       .round = (int)(circleSize / 2)});
 
             // Center text within the circular background
             CBox textBox;
@@ -474,7 +539,8 @@ void COverview::fullRender() {
             textBox.w = textTexture->m_size.x;
             textBox.h = textTexture->m_size.y;
 
-            g_pHyprOpenGL->renderTexture(textTexture, textBox, {.damage = &damage, .a = alpha});
+            g_pHyprOpenGL->renderTexture(textTexture, textBox,
+                                         {.damage = &damage, .a = alpha});
         }
     }
 }

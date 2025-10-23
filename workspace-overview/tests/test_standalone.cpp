@@ -5,32 +5,48 @@
 
 // Standalone implementations of plugin logic for testing
 
-// Test helper: Calculate workspace offsets for different current workspace IDs
-struct WorkspaceOffsets {
-    int offsets[4];
+// Test helper: Calculate workspace IDs to display for a given current workspace ID
+// and a list of workspaces that belong to the current monitor
+struct WorkspaceIDs {
+    int ids[4];
 };
 
-static WorkspaceOffsets calculateWorkspaceOffsets(int currentID) {
-    WorkspaceOffsets result;
+static WorkspaceIDs calculateWorkspaceIDs(int currentID, const std::vector<int>& monitorWorkspaces) {
+    WorkspaceIDs result;
 
-    if (currentID == 1) {
-        // First workspace: show next 4 workspaces (2, 3, 4, 5)
-        result.offsets[0] = +1;
-        result.offsets[1] = +2;
-        result.offsets[2] = +3;
-        result.offsets[3] = +4;
-    } else if (currentID == 2) {
-        // Second workspace: show previous 1 and next 3 (1, 3, 4, 5)
-        result.offsets[0] = -1;
-        result.offsets[1] = +1;
-        result.offsets[2] = +2;
-        result.offsets[3] = +3;
-    } else {
-        // Normal case: show 2 before and 2 after (-2, -1, +1, +2)
-        result.offsets[0] = -2;
-        result.offsets[1] = -1;
-        result.offsets[2] = +1;
-        result.offsets[3] = +2;
+    // Create a copy of monitor workspaces and sort them
+    std::vector<int> sortedWorkspaces = monitorWorkspaces;
+    std::sort(sortedWorkspaces.begin(), sortedWorkspaces.end());
+
+    // Remove the active workspace from the list
+    sortedWorkspaces.erase(
+        std::remove(sortedWorkspaces.begin(), sortedWorkspaces.end(), currentID),
+        sortedWorkspaces.end()
+    );
+
+    // Populate left side workspaces: first with existing
+    size_t numExisting = std::min(static_cast<size_t>(4), sortedWorkspaces.size());
+    for (size_t i = 0; i < numExisting; ++i) {
+        result.ids[i] = sortedWorkspaces[i];
+    }
+
+    // Fill remaining slots with new workspace IDs (not in monitorWorkspaces)
+    if (numExisting < 4) {
+        std::vector<int> allUsedIDs = monitorWorkspaces;
+        std::sort(allUsedIDs.begin(), allUsedIDs.end());
+
+        int nextID = 1;
+        for (size_t i = numExisting; i < 4; ++i) {
+            // Find an ID that's not in use
+            while (std::find(allUsedIDs.begin(), allUsedIDs.end(), nextID) != allUsedIDs.end()) {
+                nextID++;
+            }
+
+            result.ids[i] = nextID;
+            allUsedIDs.push_back(nextID);
+            std::sort(allUsedIDs.begin(), allUsedIDs.end());
+            nextID++;
+        }
     }
 
     return result;
@@ -113,38 +129,42 @@ static std::vector<LayoutBox> calculateLayout(float monitorWidth, float monitorH
 
 // Test: Workspace offset calculation for first workspace
 TEST(WorkspaceOffsetsTest, FirstWorkspace) {
-    auto offsets = calculateWorkspaceOffsets(1);
-    EXPECT_EQ(offsets.offsets[0], +1);
-    EXPECT_EQ(offsets.offsets[1], +2);
-    EXPECT_EQ(offsets.offsets[2], +3);
-    EXPECT_EQ(offsets.offsets[3], +4);
+    // Monitor has workspaces 1, 2, 3, 4, 5 - active is 1
+    auto workspaces = calculateWorkspaceIDs(1, {1, 2, 3, 4, 5});
+    EXPECT_EQ(workspaces.ids[0], 2);
+    EXPECT_EQ(workspaces.ids[1], 3);
+    EXPECT_EQ(workspaces.ids[2], 4);
+    EXPECT_EQ(workspaces.ids[3], 5);
 }
 
-// Test: Workspace offset calculation for second workspace
+// Test: Workspace ID calculation for second workspace
 TEST(WorkspaceOffsetsTest, SecondWorkspace) {
-    auto offsets = calculateWorkspaceOffsets(2);
-    EXPECT_EQ(offsets.offsets[0], -1);
-    EXPECT_EQ(offsets.offsets[1], +1);
-    EXPECT_EQ(offsets.offsets[2], +2);
-    EXPECT_EQ(offsets.offsets[3], +3);
+    // Monitor has workspaces 1, 2, 3, 4, 5 - active is 2
+    auto workspaces = calculateWorkspaceIDs(2, {1, 2, 3, 4, 5});
+    EXPECT_EQ(workspaces.ids[0], 1);
+    EXPECT_EQ(workspaces.ids[1], 3);
+    EXPECT_EQ(workspaces.ids[2], 4);
+    EXPECT_EQ(workspaces.ids[3], 5);
 }
 
-// Test: Workspace offset calculation for normal workspace
+// Test: Workspace ID calculation for normal workspace
 TEST(WorkspaceOffsetsTest, NormalWorkspace) {
-    auto offsets = calculateWorkspaceOffsets(5);
-    EXPECT_EQ(offsets.offsets[0], -2);
-    EXPECT_EQ(offsets.offsets[1], -1);
-    EXPECT_EQ(offsets.offsets[2], +1);
-    EXPECT_EQ(offsets.offsets[3], +2);
+    // Monitor has workspace 5 only - active is 5, fill with new IDs
+    auto workspaces = calculateWorkspaceIDs(5, {5});
+    EXPECT_EQ(workspaces.ids[0], 1);  // New workspace IDs to fill up to 4
+    EXPECT_EQ(workspaces.ids[1], 2);
+    EXPECT_EQ(workspaces.ids[2], 3);
+    EXPECT_EQ(workspaces.ids[3], 4);
 }
 
-// Test: Workspace offset calculation for high workspace ID
+// Test: Workspace ID calculation for high workspace ID
 TEST(WorkspaceOffsetsTest, HighWorkspaceID) {
-    auto offsets = calculateWorkspaceOffsets(100);
-    EXPECT_EQ(offsets.offsets[0], -2);
-    EXPECT_EQ(offsets.offsets[1], -1);
-    EXPECT_EQ(offsets.offsets[2], +1);
-    EXPECT_EQ(offsets.offsets[3], +2);
+    // Monitor has workspace 100 only - active is 100, fill with new IDs
+    auto workspaces = calculateWorkspaceIDs(100, {100});
+    EXPECT_EQ(workspaces.ids[0], 1);  // New workspace IDs to fill up to 4
+    EXPECT_EQ(workspaces.ids[1], 2);
+    EXPECT_EQ(workspaces.ids[2], 3);
+    EXPECT_EQ(workspaces.ids[3], 4);
 }
 
 // Test: Layout calculation produces correct number of boxes
@@ -289,11 +309,42 @@ TEST(LayoutTest, SpacingConsistency) {
 
 // Test: Edge case - workspace ID 3 (boundary between special cases)
 TEST(WorkspaceOffsetsTest, WorkspaceThree) {
-    auto offsets = calculateWorkspaceOffsets(3);
-    EXPECT_EQ(offsets.offsets[0], -2);
-    EXPECT_EQ(offsets.offsets[1], -1);
-    EXPECT_EQ(offsets.offsets[2], +1);
-    EXPECT_EQ(offsets.offsets[3], +2);
+    // Monitor has workspaces 1, 2, 3, 4, 5 - active is 3
+    auto workspaces = calculateWorkspaceIDs(3, {1, 2, 3, 4, 5});
+    EXPECT_EQ(workspaces.ids[0], 1);
+    EXPECT_EQ(workspaces.ids[1], 2);
+    EXPECT_EQ(workspaces.ids[2], 4);
+    EXPECT_EQ(workspaces.ids[3], 5);
+}
+
+// Test: Monitor 1 specific workspaces (1, 3, 5 on monitor, 7 unassigned)
+TEST(WorkspaceOffsetsTest, Monitor1Example) {
+    // Monitor 1 has workspaces 1, 3, 5, and 7 is unassigned (available) - active is 5
+    auto workspaces = calculateWorkspaceIDs(5, {1, 3, 5, 7});
+    EXPECT_EQ(workspaces.ids[0], 1);
+    EXPECT_EQ(workspaces.ids[1], 3);
+    EXPECT_EQ(workspaces.ids[2], 7);
+    EXPECT_EQ(workspaces.ids[3], 2);  // Fill with next available (2, 4, 6 are unused)
+}
+
+// Test: Monitor 2 specific workspaces (2, 4, 5 on monitor, 7 unassigned)
+TEST(WorkspaceOffsetsTest, Monitor2Example) {
+    // Monitor 2 has workspaces 2, 4, 5, and 7 is unassigned (available) - active is 5
+    auto workspaces = calculateWorkspaceIDs(5, {2, 4, 5, 7});
+    EXPECT_EQ(workspaces.ids[0], 2);
+    EXPECT_EQ(workspaces.ids[1], 4);
+    EXPECT_EQ(workspaces.ids[2], 7);
+    EXPECT_EQ(workspaces.ids[3], 1);  // Fill with next available (1, 3, 6 are unused)
+}
+
+// Test: Sparse workspace IDs
+TEST(WorkspaceOffsetsTest, SparseWorkspaceIDs) {
+    // Monitor has workspaces 1, 10, 20, 30 - active is 20
+    auto workspaces = calculateWorkspaceIDs(20, {1, 10, 20, 30});
+    EXPECT_EQ(workspaces.ids[0], 1);
+    EXPECT_EQ(workspaces.ids[1], 10);
+    EXPECT_EQ(workspaces.ids[2], 30);
+    EXPECT_EQ(workspaces.ids[3], 2);  // Fill with next available (2, 3, 4, etc)
 }
 
 // Test: Zero padding edge case
