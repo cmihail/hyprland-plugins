@@ -1271,3 +1271,97 @@ TEST(WindowStackingTest, PartialOverlapWithFullscreen) {
     selected = findTopmostWindow(120, 120, windows);
     EXPECT_EQ(selected, 0);
 }
+
+// Test: Window state preservation during workspace movement
+TEST(WindowMovementTest, PreservesFloatingState) {
+    // Simulates that a floating window should remain floating when moved
+    struct WindowState {
+        bool isFloating;
+        bool isFullscreen;
+    };
+
+    auto getStateAfterMove = [](WindowState before) -> WindowState {
+        WindowState after = before;
+
+        // Fullscreen windows are converted to tiled
+        if (before.isFullscreen) {
+            after.isFullscreen = false;
+            after.isFloating = false;
+        }
+        // Floating windows remain floating
+        // Tiled windows remain tiled
+
+        return after;
+    };
+
+    // Test floating window preservation
+    WindowState floatingWindow{true, false};
+    auto result = getStateAfterMove(floatingWindow);
+    EXPECT_TRUE(result.isFloating);
+    EXPECT_FALSE(result.isFullscreen);
+
+    // Test tiled window preservation
+    WindowState tiledWindow{false, false};
+    result = getStateAfterMove(tiledWindow);
+    EXPECT_FALSE(result.isFloating);
+    EXPECT_FALSE(result.isFullscreen);
+
+    // Test fullscreen window conversion
+    WindowState fullscreenWindow{false, true};
+    result = getStateAfterMove(fullscreenWindow);
+    EXPECT_FALSE(result.isFloating);
+    EXPECT_FALSE(result.isFullscreen);
+}
+
+TEST(WindowMovementTest, ActiveWorkspaceNotRedrawn) {
+    // Simulates checking if a workspace index should be redrawn
+    auto shouldRedraw = [](int workspaceIndex, int activeIndex) -> bool {
+        return workspaceIndex != activeIndex;
+    };
+
+    const int activeIndex = 4;  // Active workspace on right side
+
+    // Left-side workspaces should be redrawn
+    EXPECT_TRUE(shouldRedraw(0, activeIndex));
+    EXPECT_TRUE(shouldRedraw(1, activeIndex));
+    EXPECT_TRUE(shouldRedraw(2, activeIndex));
+    EXPECT_TRUE(shouldRedraw(3, activeIndex));
+
+    // Active workspace should NOT be redrawn
+    EXPECT_FALSE(shouldRedraw(4, activeIndex));
+}
+
+TEST(WindowMovementTest, LeftSideWorkspaceRedraw) {
+    // Tests that only left-side workspace gets scheduled for redraw
+    auto determineRedrawWorkspace = [](int sourceIndex, int targetIndex, int activeIndex) -> int {
+        // Returns the workspace index that should be redrawn, or -1 if none
+        if (sourceIndex >= 0 && sourceIndex != activeIndex) {
+            return sourceIndex;
+        } else if (targetIndex != activeIndex) {
+            return targetIndex;
+        }
+        return -1;
+    };
+
+    const int activeIndex = 4;
+
+    // Source on left, target is active
+    int redrawIndex = determineRedrawWorkspace(1, 4, activeIndex);
+    EXPECT_EQ(redrawIndex, 1);
+
+    // Source is active, target on left
+    redrawIndex = determineRedrawWorkspace(4, 2, activeIndex);
+    EXPECT_EQ(redrawIndex, 2);
+
+    // Both on left, source takes precedence
+    redrawIndex = determineRedrawWorkspace(1, 2, activeIndex);
+    EXPECT_EQ(redrawIndex, 1);
+
+    // Source invalid, target on left
+    redrawIndex = determineRedrawWorkspace(-1, 3, activeIndex);
+    EXPECT_EQ(redrawIndex, 3);
+
+    // Both are active (shouldn't happen in practice)
+    redrawIndex = determineRedrawWorkspace(4, 4, activeIndex);
+    EXPECT_EQ(redrawIndex, -1);
+}

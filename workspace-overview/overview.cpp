@@ -1,6 +1,7 @@
 #include "overview.hpp"
 #include <algorithm>
 #include <any>
+#include <wayland-server.h>
 #define private public
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/Compositor.hpp>
@@ -751,17 +752,30 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
     }
 
     // Exit fullscreen if needed
-    if (window->isFullscreen()) {
+    const bool wasFullscreen = window->isFullscreen();
+    if (wasFullscreen) {
         g_pCompositor->setWindowFullscreenInternal(window, FSMODE_NONE);
     }
 
-    // Make window tiled (not floating) in target workspace
-    if (window->m_isFloating) {
-        window->m_isFloating = false;
+    // Store floating state
+    const bool wasFloating = window->m_isFloating;
+
+    // Remove from source layout
+    if (wasFloating) {
+        g_pLayoutManager->getCurrentLayout()->onWindowRemovedFloating(window);
+    } else {
+        g_pLayoutManager->getCurrentLayout()->onWindowRemovedTiling(window);
     }
 
     // Move window to target workspace
     window->moveToWorkspace(targetImage.pWorkspace);
+
+    // Add to target workspace (preserve floating state)
+    if (wasFloating) {
+        g_pLayoutManager->getCurrentLayout()->onWindowCreatedFloating(window);
+    } else {
+        g_pLayoutManager->getCurrentLayout()->onWindowCreatedTiling(window);
+    }
 
     // Recalculate layouts for both workspaces
     if (sourceWorkspace) {
@@ -771,9 +785,46 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
     g_pLayoutManager->getCurrentLayout()->recalculateMonitor(
         targetImage.pWorkspace->monitorID());
 
-    // Redraw both source and target workspace previews
-    if (sourceIndex >= 0) {
-        redrawID(sourceIndex);
+    // Schedule repeating redraws for affected left-side workspace
+    // Determine which workspace on the left side needs redrawing
+    int leftWorkspaceIndex = -1;
+    if (sourceIndex >= 0 && sourceIndex != activeIndex) {
+        leftWorkspaceIndex = sourceIndex;
+    } else if (targetWorkspaceIndex != activeIndex) {
+        leftWorkspaceIndex = targetWorkspaceIndex;
     }
-    redrawID(targetWorkspaceIndex);
+
+    if (leftWorkspaceIndex >= 0) {
+        struct TimerData {
+            int workspaceIndex;
+            int tickCount;
+            wl_event_source* timerSource;
+        };
+
+        auto* timerData = new TimerData{leftWorkspaceIndex, 0, nullptr};
+
+        auto* timer = wl_event_loop_add_timer(
+            wl_display_get_event_loop(g_pCompositor->m_wlDisplay),
+            [](void* data) -> int {
+                auto* td = static_cast<TimerData*>(data);
+                if (g_pOverview) {
+                    g_pOverview->redrawID(td->workspaceIndex);
+                    g_pOverview->damage();
+
+                    td->tickCount++;
+                    // Redraw every 50ms for up to 1 second (20 ticks)
+                    if (td->tickCount < 20) {
+                        wl_event_source_timer_update(td->timerSource, 50);
+                        return 0;
+                    }
+                }
+                // Clean up after 10 ticks or if overview is closed
+                delete td;
+                return 0;
+            },
+            timerData);
+
+        timerData->timerSource = timer;
+        wl_event_source_timer_update(timer, 50);
+    }
 }
