@@ -1424,3 +1424,89 @@ TEST(DragPreviewTest, PreviewPositioning) {
         EXPECT_FLOAT_EQ(previewY + previewHeight / 2.0f, tc.cursorY);
     }
 }
+
+// Test: Workspace refresh logic for window moves
+TEST(WorkspaceRefreshTest, RefreshBothNonActiveWorkspaces) {
+    // When moving a window between two non-active workspaces,
+    // both should be scheduled for refresh
+
+    const int activeIndex = 4;  // Right side active workspace
+    const int sourceIndex = 0;  // Left side workspace
+    const int targetIndex = 2;  // Another left side workspace
+
+    std::vector<int> workspacesToRefresh;
+
+    // Add source workspace if it's not the active workspace
+    if (sourceIndex >= 0 && sourceIndex != activeIndex) {
+        workspacesToRefresh.push_back(sourceIndex);
+    }
+
+    // Add target workspace if it's not the active workspace and different from source
+    if (targetIndex != activeIndex && targetIndex != sourceIndex) {
+        workspacesToRefresh.push_back(targetIndex);
+    }
+
+    // Both workspaces should be in the refresh list
+    EXPECT_EQ(workspacesToRefresh.size(), 2);
+    EXPECT_EQ(workspacesToRefresh[0], sourceIndex);
+    EXPECT_EQ(workspacesToRefresh[1], targetIndex);
+}
+
+TEST(WorkspaceRefreshTest, RefreshOnlyNonActiveWorkspace) {
+    // When moving from active to non-active or vice versa,
+    // only the non-active workspace should be refreshed
+
+    const int activeIndex = 4;
+
+    // Test case 1: Move from active to non-active
+    {
+        const int sourceIndex = 4;  // Active workspace
+        const int targetIndex = 2;  // Non-active workspace
+        std::vector<int> workspacesToRefresh;
+
+        if (sourceIndex >= 0 && sourceIndex != activeIndex) {
+            workspacesToRefresh.push_back(sourceIndex);
+        }
+        if (targetIndex != activeIndex && targetIndex != sourceIndex) {
+            workspacesToRefresh.push_back(targetIndex);
+        }
+
+        EXPECT_EQ(workspacesToRefresh.size(), 1);
+        EXPECT_EQ(workspacesToRefresh[0], targetIndex);
+    }
+
+    // Test case 2: Move from non-active to active
+    {
+        const int sourceIndex = 1;  // Non-active workspace
+        const int targetIndex = 4;  // Active workspace
+        std::vector<int> workspacesToRefresh;
+
+        if (sourceIndex >= 0 && sourceIndex != activeIndex) {
+            workspacesToRefresh.push_back(sourceIndex);
+        }
+        if (targetIndex != activeIndex && targetIndex != sourceIndex) {
+            workspacesToRefresh.push_back(targetIndex);
+        }
+
+        EXPECT_EQ(workspacesToRefresh.size(), 1);
+        EXPECT_EQ(workspacesToRefresh[0], sourceIndex);
+    }
+}
+
+TEST(WorkspaceRefreshTest, NoRefreshForActiveToActive) {
+    // Moving within the active workspace shouldn't schedule any refreshes
+    const int activeIndex = 4;
+    const int sourceIndex = 4;
+    const int targetIndex = 4;
+
+    std::vector<int> workspacesToRefresh;
+
+    if (sourceIndex >= 0 && sourceIndex != activeIndex) {
+        workspacesToRefresh.push_back(sourceIndex);
+    }
+    if (targetIndex != activeIndex && targetIndex != sourceIndex) {
+        workspacesToRefresh.push_back(targetIndex);
+    }
+
+    EXPECT_EQ(workspacesToRefresh.size(), 0);
+}

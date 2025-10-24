@@ -847,30 +847,38 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
     g_pLayoutManager->getCurrentLayout()->recalculateMonitor(
         targetImage.pWorkspace->monitorID());
 
-    // Schedule repeating redraws for affected left-side workspace
-    // Determine which workspace on the left side needs redrawing
-    int leftWorkspaceIndex = -1;
+    // Schedule repeating redraws for affected non-active workspaces
+    // We need to refresh both source and target if they're not the active workspace
+    struct TimerData {
+        std::vector<int> workspaceIndices;
+        int tickCount;
+        wl_event_source* timerSource;
+    };
+
+    std::vector<int> workspacesToRefresh;
+
+    // Add source workspace if it's not the active workspace
     if (sourceIndex >= 0 && sourceIndex != activeIndex) {
-        leftWorkspaceIndex = sourceIndex;
-    } else if (targetWorkspaceIndex != activeIndex) {
-        leftWorkspaceIndex = targetWorkspaceIndex;
+        workspacesToRefresh.push_back(sourceIndex);
     }
 
-    if (leftWorkspaceIndex >= 0) {
-        struct TimerData {
-            int workspaceIndex;
-            int tickCount;
-            wl_event_source* timerSource;
-        };
+    // Add target workspace if it's not the active workspace and different from source
+    if (targetWorkspaceIndex != activeIndex && targetWorkspaceIndex != sourceIndex) {
+        workspacesToRefresh.push_back(targetWorkspaceIndex);
+    }
 
-        auto* timerData = new TimerData{leftWorkspaceIndex, 0, nullptr};
+    if (!workspacesToRefresh.empty()) {
+        auto* timerData = new TimerData{workspacesToRefresh, 0, nullptr};
 
         auto* timer = wl_event_loop_add_timer(
             wl_display_get_event_loop(g_pCompositor->m_wlDisplay),
             [](void* data) -> int {
                 auto* td = static_cast<TimerData*>(data);
                 if (g_pOverview) {
-                    g_pOverview->redrawID(td->workspaceIndex);
+                    // Redraw all affected workspaces
+                    for (int workspaceIndex : td->workspaceIndices) {
+                        g_pOverview->redrawID(workspaceIndex);
+                    }
                     g_pOverview->damage();
 
                     td->tickCount++;
@@ -880,7 +888,7 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
                         return 0;
                     }
                 }
-                // Clean up after 10 ticks or if overview is closed
+                // Clean up after 20 ticks or if overview is closed
                 delete td;
                 return 0;
             },
