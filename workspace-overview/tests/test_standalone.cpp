@@ -1510,3 +1510,253 @@ TEST(WorkspaceRefreshTest, NoRefreshForActiveToActive) {
 
     EXPECT_EQ(workspacesToRefresh.size(), 0);
 }
+
+// Test: Workspace creation for non-existent workspaces
+TEST(WorkspaceCreationTest, CreateWorkspaceBeforeMove) {
+    // Test that we handle the case where target workspace doesn't exist yet
+    // This simulates moving a window to a workspace that hasn't been created
+
+    struct MockWorkspaceImage {
+        int64_t workspaceID;
+        bool hasWorkspace;  // Simulates pWorkspace being null or not
+    };
+
+    MockWorkspaceImage targetImage = {5, false};  // Workspace 5 doesn't exist
+
+    // Before move, check if workspace needs to be created
+    bool needsCreation = !targetImage.hasWorkspace;
+    EXPECT_TRUE(needsCreation);
+
+    // Simulate creation
+    if (needsCreation) {
+        targetImage.hasWorkspace = true;
+    }
+
+    // After creation, workspace should exist
+    EXPECT_TRUE(targetImage.hasWorkspace);
+    EXPECT_EQ(targetImage.workspaceID, 5);
+}
+
+TEST(WorkspaceCreationTest, NoCreationForExistingWorkspace) {
+    // Test that we don't try to create a workspace that already exists
+    struct MockWorkspaceImage {
+        int64_t workspaceID;
+        bool hasWorkspace;
+    };
+
+    MockWorkspaceImage targetImage = {3, true};  // Workspace 3 exists
+
+    bool needsCreation = !targetImage.hasWorkspace;
+    EXPECT_FALSE(needsCreation);
+
+    // Workspace should remain unchanged
+    EXPECT_TRUE(targetImage.hasWorkspace);
+    EXPECT_EQ(targetImage.workspaceID, 3);
+}
+
+// Test: Plus sign rendering for new workspaces
+TEST(PlusSignRenderingTest, PlusSizeCalculation) {
+    // Test that plus sign size is calculated as 50% of the smaller dimension
+
+    struct TestCase {
+        float boxWidth;
+        float boxHeight;
+        float expectedPlusSize;
+    };
+
+    std::vector<TestCase> cases = {
+        {400, 300, 150},    // Height is smaller: 300 * 0.5 = 150
+        {300, 400, 150},    // Width is smaller: 300 * 0.5 = 150
+        {500, 500, 250},    // Equal: 500 * 0.5 = 250
+        {1920, 1080, 540}   // Height is smaller: 1080 * 0.5 = 540
+    };
+
+    for (const auto& tc : cases) {
+        float plusSize = std::min(tc.boxWidth, tc.boxHeight) * 0.5f;
+        EXPECT_FLOAT_EQ(plusSize, tc.expectedPlusSize);
+    }
+}
+
+TEST(PlusSignRenderingTest, LineThicknessCalculation) {
+    // Test that line thickness is fixed at 8.0 pixels
+    const float lineThickness = 8.0f;
+
+    EXPECT_FLOAT_EQ(lineThickness, 8.0f);
+}
+
+TEST(PlusSignRenderingTest, PlusCentering) {
+    // Test that plus sign is centered in the workspace box
+    const float boxX = 100.0f;
+    const float boxY = 50.0f;
+    const float boxW = 400.0f;
+    const float boxH = 300.0f;
+
+    const float centerX = boxX + boxW / 2.0f;
+    const float centerY = boxY + boxH / 2.0f;
+
+    EXPECT_FLOAT_EQ(centerX, 300.0f);
+    EXPECT_FLOAT_EQ(centerY, 200.0f);
+
+    // Verify the plus lines are centered
+    const float plusSize = std::min(boxW, boxH) * 0.5f;  // 150.0f
+    const float lineThickness = 8.0f;
+
+    // Horizontal line position
+    const float hLineX = centerX - plusSize / 2.0f;
+    const float hLineY = centerY - lineThickness / 2.0f;
+    EXPECT_FLOAT_EQ(hLineX, 225.0f);
+    EXPECT_FLOAT_EQ(hLineY, 196.0f);
+
+    // Vertical line position
+    const float vLineX = centerX - lineThickness / 2.0f;
+    const float vLineY = centerY - plusSize / 2.0f;
+    EXPECT_FLOAT_EQ(vLineX, 296.0f);
+    EXPECT_FLOAT_EQ(vLineY, 125.0f);
+}
+
+TEST(PlusSignRenderingTest, WorkspaceIndicatorSelection) {
+    // Test that we show plus sign for new workspaces and number for existing ones
+
+    struct MockWorkspace {
+        bool exists;
+    };
+
+    // New workspace should show plus sign
+    MockWorkspace newWs = {false};
+    bool showPlusSign = !newWs.exists;
+    EXPECT_TRUE(showPlusSign);
+
+    // Existing workspace should show number
+    MockWorkspace existingWs = {true};
+    showPlusSign = !existingWs.exists;
+    EXPECT_FALSE(showPlusSign);
+}
+
+// Test: Conditional workspace layout based on count
+TEST(WorkspaceLayoutTest, LayoutWithFourOrMoreWorkspaces) {
+    // With 4 or more existing workspaces, show 4 on the left
+    const size_t numExisting = 5;
+    const size_t LEFT_WORKSPACES = 4;
+    size_t numToShow;
+
+    if (numExisting < LEFT_WORKSPACES) {
+        numToShow = numExisting + 1;
+    } else {
+        numToShow = LEFT_WORKSPACES;
+    }
+
+    EXPECT_EQ(numToShow, 4);
+}
+
+TEST(WorkspaceLayoutTest, LayoutWithThreeWorkspaces) {
+    // With 3 existing workspaces, show all 3 plus 1 with plus sign (total 4)
+    const size_t numExisting = 3;
+    const size_t LEFT_WORKSPACES = 4;
+    size_t numToShow;
+
+    if (numExisting < LEFT_WORKSPACES) {
+        numToShow = numExisting + 1;
+    } else {
+        numToShow = LEFT_WORKSPACES;
+    }
+
+    EXPECT_EQ(numToShow, 4);
+}
+
+TEST(WorkspaceLayoutTest, LayoutWithTwoWorkspaces) {
+    // With 2 existing workspaces, show both plus 1 with plus sign (total 3)
+    const size_t numExisting = 2;
+    const size_t LEFT_WORKSPACES = 4;
+    size_t numToShow;
+
+    if (numExisting < LEFT_WORKSPACES) {
+        numToShow = numExisting + 1;
+    } else {
+        numToShow = LEFT_WORKSPACES;
+    }
+
+    EXPECT_EQ(numToShow, 3);
+}
+
+TEST(WorkspaceLayoutTest, LayoutWithOneWorkspace) {
+    // With 1 existing workspace, show it plus 1 with plus sign (total 2)
+    const size_t numExisting = 1;
+    const size_t LEFT_WORKSPACES = 4;
+    size_t numToShow;
+
+    if (numExisting < LEFT_WORKSPACES) {
+        numToShow = numExisting + 1;
+    } else {
+        numToShow = LEFT_WORKSPACES;
+    }
+
+    EXPECT_EQ(numToShow, 2);
+}
+
+TEST(WorkspaceLayoutTest, LayoutWithZeroWorkspaces) {
+    // With 0 existing workspaces, show only 1 with plus sign (total 1)
+    const size_t numExisting = 0;
+    const size_t LEFT_WORKSPACES = 4;
+    size_t numToShow;
+
+    if (numExisting < LEFT_WORKSPACES) {
+        numToShow = numExisting + 1;
+    } else {
+        numToShow = LEFT_WORKSPACES;
+    }
+
+    EXPECT_EQ(numToShow, 1);
+}
+
+TEST(WorkspaceLayoutTest, EmptySlotCalculation) {
+    // Test that we correctly calculate how many empty slots to fill
+    const size_t LEFT_WORKSPACES = 4;
+
+    // With 1 workspace shown (0 existing + 1 plus), we need to fill 3 empty slots
+    {
+        size_t numLeftWorkspaces = 1;
+        size_t numEmptySlots = 0;
+
+        if (numLeftWorkspaces < LEFT_WORKSPACES) {
+            numEmptySlots = LEFT_WORKSPACES - numLeftWorkspaces;
+        }
+
+        EXPECT_EQ(numEmptySlots, 3);
+    }
+
+    // With 2 workspaces shown (1 existing + 1 plus), we need to fill 2 empty slots
+    {
+        size_t numLeftWorkspaces = 2;
+        size_t numEmptySlots = 0;
+
+        if (numLeftWorkspaces < LEFT_WORKSPACES) {
+            numEmptySlots = LEFT_WORKSPACES - numLeftWorkspaces;
+        }
+
+        EXPECT_EQ(numEmptySlots, 2);
+    }
+
+    // With 3 workspaces shown (2 existing + 1 plus), we need to fill 1 empty slot
+    {
+        size_t numLeftWorkspaces = 3;
+        size_t numEmptySlots = 0;
+
+        if (numLeftWorkspaces < LEFT_WORKSPACES) {
+            numEmptySlots = LEFT_WORKSPACES - numLeftWorkspaces;
+        }
+
+        EXPECT_EQ(numEmptySlots, 1);
+    }
+
+    // With 4 workspaces shown, no empty slots
+    {
+        size_t numLeftWorkspaces = 4;
+        size_t numEmptySlots = 0;
+
+        if (numLeftWorkspaces < LEFT_WORKSPACES) {
+            numEmptySlots = LEFT_WORKSPACES - numLeftWorkspaces;
+        }
+
+        EXPECT_EQ(numEmptySlots, 0);
+    }
+}

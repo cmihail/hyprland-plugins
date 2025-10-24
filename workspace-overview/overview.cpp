@@ -66,18 +66,30 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
         monitorWorkspaceIDs.end()
     );
 
-    // Populate left side workspaces: first with existing, then fill with new IDs
-    size_t numExisting = std::min(static_cast<size_t>(LEFT_WORKSPACES),
-                                   monitorWorkspaceIDs.size());
+    // Determine how many workspaces to show on the left
+    size_t numExisting = monitorWorkspaceIDs.size();
+    size_t numToShow;
 
-    for (size_t i = 0; i < numExisting; ++i) {
+    // If 0-3 existing workspaces, show them all plus 1 with plus sign
+    if (numExisting < LEFT_WORKSPACES) {
+        numToShow = numExisting + 1;  // Show existing + 1 with plus
+    }
+    // If 4 or more existing workspaces, show first 4
+    else {
+        numToShow = LEFT_WORKSPACES;
+    }
+
+    // Populate left side workspaces
+    size_t numExistingToShow = std::min(numToShow, numExisting);
+
+    for (size_t i = 0; i < numExistingToShow; ++i) {
         auto& image = images[i];
         image.workspaceID = monitorWorkspaceIDs[i];
         image.isActive = false;
     }
 
     // Fill remaining slots with new workspace IDs (not assigned to any monitor)
-    if (numExisting < LEFT_WORKSPACES) {
+    if (numExistingToShow < numToShow) {
         // Collect all workspace IDs already in use (on any monitor)
         std::vector<int64_t> allUsedIDs;
         for (const auto& ws : allWorkspaces) {
@@ -89,7 +101,7 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
 
         // Find new workspace IDs that aren't in use
         int nextID = 1;
-        for (size_t i = numExisting; i < LEFT_WORKSPACES; ++i) {
+        for (size_t i = numExistingToShow; i < numToShow; ++i) {
             // Find an ID that's not in use
             while (std::find(allUsedIDs.begin(), allUsedIDs.end(), nextID) !=
                    allUsedIDs.end()) {
@@ -107,13 +119,13 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
         }
     }
 
-    // Keep all LEFT_WORKSPACES + active workspace
-    images.resize(LEFT_WORKSPACES + 1);
+    // Keep numToShow + active workspace
+    images.resize(numToShow + 1);
 
     // Last image is for the active workspace (right side)
-    images[LEFT_WORKSPACES].workspaceID = currentID;
-    images[LEFT_WORKSPACES].isActive    = true;
-    activeIndex                         = LEFT_WORKSPACES;
+    images[numToShow].workspaceID = currentID;
+    images[numToShow].isActive    = true;
+    activeIndex                   = numToShow;
 
     g_pHyprRenderer->makeEGLCurrent();
 
@@ -539,6 +551,36 @@ void COverview::fullRender() {
     // Calculate zoom scale based on animation
     const float zoomScale = currentSize.x / monitorSize.x;
 
+    // Fill empty workspace slots with background color
+    // This happens when we have fewer than LEFT_WORKSPACES displayed
+    size_t numLeftWorkspaces = images.size() - 1;  // Exclude active workspace
+    if (numLeftWorkspaces < LEFT_WORKSPACES) {
+        const float availableHeight   = monitorSize.y - (2 * PADDING);
+        const float totalGaps         = (LEFT_WORKSPACES - 1) * GAP_WIDTH;
+        const float leftPreviewHeight = (availableHeight - totalGaps) / LEFT_WORKSPACES;
+        const float monitorAspectRatio = monitorSize.x / monitorSize.y;
+        const float leftWorkspaceWidth = leftPreviewHeight * monitorAspectRatio;
+
+        // Fill slots after the displayed workspaces
+        for (size_t i = numLeftWorkspaces; i < LEFT_WORKSPACES; ++i) {
+            float yPos = PADDING + i * (leftPreviewHeight + GAP_WIDTH);
+            CBox emptyBox = {PADDING, yPos, leftWorkspaceWidth, leftPreviewHeight};
+
+            // Apply zoom animation transformations
+            emptyBox.x = emptyBox.x * zoomScale + currentPos.x;
+            emptyBox.y = emptyBox.y * zoomScale + currentPos.y;
+            emptyBox.w = emptyBox.w * zoomScale;
+            emptyBox.h = emptyBox.h * zoomScale;
+
+            emptyBox.scale(monScale);
+            emptyBox.round();
+
+            // Render background color for empty slot
+            CRegion damage{0, 0, INT16_MAX, INT16_MAX};
+            g_pHyprOpenGL->renderRect(emptyBox, BG_COLOR, {.damage = &damage});
+        }
+    }
+
     // Render each workspace
     for (size_t i = 0; i < images.size(); ++i) {
         auto& image = images[i];
@@ -606,47 +648,78 @@ void COverview::fullRender() {
                                               scaledBox,
                                               {.damage = &damage, .a = alpha});
 
-        // Render workspace number in top-left corner
-        int workspaceNum = image.workspaceID;
-        if (closing && selectedIndex >= 0 && selectedIndex != activeIndex &&
-            i == (size_t)activeIndex) {
-            // If rendering selected workspace in active position, show its number
-            workspaceNum = images[selectedIndex].workspaceID;
-        }
+        // Render workspace indicator (number or plus sign for new workspaces)
+        bool isNewWorkspace = !image.pWorkspace;
 
-        std::string numberText = std::to_string(workspaceNum);
-        auto textTexture = g_pHyprOpenGL->renderText(
-            numberText, CHyprColor{1.0, 1.0, 1.0, 1.0}, 16, false);
+        // For new workspaces, draw a plus sign in the center
+        if (isNewWorkspace) {
+            const float plusSize = std::min(scaledBox.w, scaledBox.h) * 0.5f;
+            const float lineThickness = 8.0f;
 
-        if (textTexture) {
-            // Create a perfect circle background
-            const float bgPadding = 4.0f;
+            const float centerX = scaledBox.x + scaledBox.w / 2.0f;
+            const float centerY = scaledBox.y + scaledBox.h / 2.0f;
 
-            // Make the background a perfect circle using larger dimension
-            const float circleSize = std::max(textTexture->m_size.x,
-                                              textTexture->m_size.y) +
-                                     bgPadding * 2;
+            // Horizontal line of the plus
+            CBox hLine = {
+                centerX - plusSize / 2.0f,
+                centerY - lineThickness / 2.0f,
+                plusSize,
+                lineThickness
+            };
 
-            CBox bgBox;
-            bgBox.x = scaledBox.x;
-            bgBox.y = scaledBox.y;
-            bgBox.w = circleSize;
-            bgBox.h = circleSize;
+            // Vertical line of the plus
+            CBox vLine = {
+                centerX - lineThickness / 2.0f,
+                centerY - plusSize / 2.0f,
+                lineThickness,
+                plusSize
+            };
 
-            // Render circular background (round = half makes perfect circle)
-            g_pHyprOpenGL->renderRect(bgBox, CHyprColor{0.0, 0.0, 0.0, 0.7},
-                                      {.damage = &damage,
-                                       .round = (int)(circleSize / 2)});
+            g_pHyprOpenGL->renderRect(hLine, CHyprColor{1.0, 1.0, 1.0, 0.8}, {.damage = &damage});
+            g_pHyprOpenGL->renderRect(vLine, CHyprColor{1.0, 1.0, 1.0, 0.8}, {.damage = &damage});
+        } else {
+            // For existing workspaces, show the workspace number in top-left corner
+            int workspaceNum = image.workspaceID;
+            if (closing && selectedIndex >= 0 && selectedIndex != activeIndex &&
+                i == (size_t)activeIndex) {
+                // If rendering selected workspace in active position, show its number
+                workspaceNum = images[selectedIndex].workspaceID;
+            }
 
-            // Center text within the circular background
-            CBox textBox;
-            textBox.x = bgBox.x + (circleSize - textTexture->m_size.x) / 2;
-            textBox.y = bgBox.y + (circleSize - textTexture->m_size.y) / 2;
-            textBox.w = textTexture->m_size.x;
-            textBox.h = textTexture->m_size.y;
+            std::string numberText = std::to_string(workspaceNum);
+            auto textTexture = g_pHyprOpenGL->renderText(
+                numberText, CHyprColor{1.0, 1.0, 1.0, 1.0}, 16, false);
 
-            g_pHyprOpenGL->renderTexture(textTexture, textBox,
-                                         {.damage = &damage, .a = alpha});
+            if (textTexture) {
+                // Create a perfect circle background
+                const float bgPadding = 4.0f;
+
+                // Make the background a perfect circle using larger dimension
+                const float circleSize = std::max(textTexture->m_size.x,
+                                                  textTexture->m_size.y) +
+                                         bgPadding * 2;
+
+                CBox bgBox;
+                bgBox.x = scaledBox.x;
+                bgBox.y = scaledBox.y;
+                bgBox.w = circleSize;
+                bgBox.h = circleSize;
+
+                // Render circular background (round = half makes perfect circle)
+                g_pHyprOpenGL->renderRect(bgBox, CHyprColor{0.0, 0.0, 0.0, 0.7},
+                                          {.damage = &damage,
+                                           .round = (int)(circleSize / 2)});
+
+                // Center text within the circular background
+                CBox textBox;
+                textBox.x = bgBox.x + (circleSize - textTexture->m_size.x) / 2;
+                textBox.y = bgBox.y + (circleSize - textTexture->m_size.y) / 2;
+                textBox.w = textTexture->m_size.x;
+                textBox.h = textTexture->m_size.y;
+
+                g_pHyprOpenGL->renderTexture(textTexture, textBox,
+                                             {.damage = &damage, .a = alpha});
+            }
         }
     }
 
@@ -795,9 +868,25 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
     if (!window || targetWorkspaceIndex < 0 || targetWorkspaceIndex >= (int)images.size())
         return;
 
-    const auto& targetImage = images[targetWorkspaceIndex];
-    if (!targetImage.pWorkspace)
-        return;
+    auto& targetImage = images[targetWorkspaceIndex];
+
+    // Create workspace if it doesn't exist yet
+    if (!targetImage.pWorkspace) {
+        const int64_t workspaceID = targetImage.workspaceID;
+        const auto monitorID = pMonitor->m_id;
+
+        // Create the workspace on the overview's monitor
+        targetImage.pWorkspace = g_pCompositor->createNewWorkspace(workspaceID, monitorID);
+
+        if (!targetImage.pWorkspace) {
+            HyprlandAPI::addNotification(PHANDLE, "Failed to create workspace",
+                                        CHyprColor{0.8, 0.2, 0.2, 1.0}, 3000);
+            return;
+        }
+
+        // Trigger redraw to change plus sign to number
+        damage();
+    }
 
     // Don't move if it's already in the target workspace
     if (window->m_workspace == targetImage.pWorkspace)
