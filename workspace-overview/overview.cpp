@@ -60,12 +60,6 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
     // Sort workspace IDs
     std::sort(monitorWorkspaceIDs.begin(), monitorWorkspaceIDs.end());
 
-    // Remove the active workspace from the list
-    monitorWorkspaceIDs.erase(
-        std::remove(monitorWorkspaceIDs.begin(), monitorWorkspaceIDs.end(), currentID),
-        monitorWorkspaceIDs.end()
-    );
-
     // Determine how many workspaces to show on the left
     size_t numExisting = monitorWorkspaceIDs.size();
     size_t numToShow;
@@ -85,7 +79,8 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
     for (size_t i = 0; i < numExistingToShow; ++i) {
         auto& image = images[i];
         image.workspaceID = monitorWorkspaceIDs[i];
-        image.isActive = false;
+        // Mark if this is the active workspace
+        image.isActive = (monitorWorkspaceIDs[i] == currentID);
     }
 
     // Fill remaining slots with new workspace IDs (not assigned to any monitor)
@@ -119,13 +114,17 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
         }
     }
 
-    // Keep numToShow + active workspace
+    // Keep numToShow for left side + 1 for right side active workspace
     images.resize(numToShow + 1);
 
-    // Last image is for the active workspace (right side)
+    // Last image is for the active workspace (right side) - for real-time updates
     images[numToShow].workspaceID = currentID;
     images[numToShow].isActive    = true;
     activeIndex                   = numToShow;
+
+    // Note: The active workspace appears both in the left side (in its proper position)
+    // and on the right side (for real-time updates). The right side will be rendered
+    // from activeIndex, while the left side shows all workspaces including active.
 
     g_pHyprRenderer->makeEGLCurrent();
 
@@ -190,8 +189,9 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
             g_pHyprRenderer->renderWorkspace(PMONITOR, PWORKSPACE, Time::steadyNow(), monbox);
 
         // Calculate box positions for rendering
-        if (image.isActive) {
+        if (i == (size_t)activeIndex) {
             // Right side - active workspace (maximized with consistent margins)
+            // This is the last element, used for real-time updates
             image.box = {activeX, PADDING, activeMaxWidth, activeMaxHeight};
         } else {
             // Left side - workspace list (left margin = PADDING, same as top)
