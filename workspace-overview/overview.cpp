@@ -1,6 +1,7 @@
 #include "overview.hpp"
 #include <algorithm>
 #include <any>
+#include <fstream>
 #include <wayland-server.h>
 #define private public
 #include <hyprland/src/render/Renderer.hpp>
@@ -60,18 +61,9 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
     // Sort workspace IDs
     std::sort(monitorWorkspaceIDs.begin(), monitorWorkspaceIDs.end());
 
-    // Determine how many workspaces to show on the left
+    // Always show LEFT_WORKSPACES (4) slots on the left side
     size_t numExisting = monitorWorkspaceIDs.size();
-    size_t numToShow;
-
-    // If 0-3 existing workspaces, show them all plus 1 with plus sign
-    if (numExisting < LEFT_WORKSPACES) {
-        numToShow = numExisting + 1;  // Show existing + 1 with plus
-    }
-    // If 4 or more existing workspaces, show first 4
-    else {
-        numToShow = LEFT_WORKSPACES;
-    }
+    size_t numToShow = LEFT_WORKSPACES;
 
     // Populate left side workspaces
     size_t numExistingToShow = std::min(numToShow, numExisting);
@@ -582,8 +574,22 @@ void COverview::fullRender() {
     }
 
     // Render each workspace
+    // Track first placeholder for determining which ones to hide
+    int firstPlaceholderIndex = -1;
+    for (size_t i = 0; i < images.size() && i < (size_t)activeIndex; ++i) {
+        if (!images[i].pWorkspace) {
+            firstPlaceholderIndex = i;
+            break;
+        }
+    }
+
     for (size_t i = 0; i < images.size(); ++i) {
         auto& image = images[i];
+
+        // Skip rendering non-interactive placeholder workspaces (all placeholders except the first)
+        if (!image.pWorkspace && i < (size_t)activeIndex && firstPlaceholderIndex >= 0 && (int)i > firstPlaceholderIndex) {
+            continue;
+        }
 
         // During closing animation, if a different workspace was selected,
         // render the selected workspace in the active workspace position
@@ -894,6 +900,23 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
 
     auto& targetImage = images[targetWorkspaceIndex];
 
+    // Check if this is a non-interactive placeholder workspace
+    // Only the first placeholder workspace (with +) should be interactive
+    if (!targetImage.pWorkspace) {
+        // Count how many placeholder workspaces come before this one
+        int placeholderCount = 0;
+        for (int i = 0; i < targetWorkspaceIndex && i < activeIndex; ++i) {
+            if (!images[i].pWorkspace) {
+                placeholderCount++;
+            }
+        }
+
+        // If this is not the first placeholder, ignore the move
+        if (placeholderCount > 0) {
+            return;
+        }
+    }
+
     // Create workspace if it doesn't exist yet
     if (!targetImage.pWorkspace) {
         const int64_t workspaceID = targetImage.workspaceID;
@@ -908,7 +931,7 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
             return;
         }
 
-        // Trigger redraw to change plus sign to number
+        // Trigger redraw
         damage();
     }
 
