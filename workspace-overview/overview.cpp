@@ -648,6 +648,30 @@ void COverview::fullRender() {
                                               scaledBox,
                                               {.damage = &damage, .a = alpha});
 
+        // Draw border around active workspace on left side
+        if (i != (size_t)activeIndex && image.isActive) {
+            const float borderThickness = 4.0f;  // Half of plus sign thickness
+            const CHyprColor borderColor = CHyprColor{0.3, 0.5, 0.7, 1.0};  // Same as drag preview
+
+            // Top border
+            CBox topBorder = {scaledBox.x, scaledBox.y, scaledBox.w, borderThickness};
+            g_pHyprOpenGL->renderRect(topBorder, borderColor, {.damage = &damage});
+
+            // Bottom border
+            CBox bottomBorder = {scaledBox.x, scaledBox.y + scaledBox.h - borderThickness,
+                                scaledBox.w, borderThickness};
+            g_pHyprOpenGL->renderRect(bottomBorder, borderColor, {.damage = &damage});
+
+            // Left border
+            CBox leftBorder = {scaledBox.x, scaledBox.y, borderThickness, scaledBox.h};
+            g_pHyprOpenGL->renderRect(leftBorder, borderColor, {.damage = &damage});
+
+            // Right border
+            CBox rightBorder = {scaledBox.x + scaledBox.w - borderThickness, scaledBox.y,
+                               borderThickness, scaledBox.h};
+            g_pHyprOpenGL->renderRect(rightBorder, borderColor, {.damage = &damage});
+        }
+
         // Render workspace indicator (number or plus sign for new workspaces)
         bool isNewWorkspace = !image.pWorkspace;
 
