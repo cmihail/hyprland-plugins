@@ -77,11 +77,13 @@ class COverview {
 
     // Drag detection
     static constexpr float DRAG_THRESHOLD = 50.0f;
+    static constexpr float DRAG_PREVIEW_SCALE = 0.10f;  // Scale factor for drag preview
     bool                   mouseButtonPressed = false;
     Vector2D               mouseDownPos = Vector2D{};
     bool                   isDragging = false;
     PHLWINDOW              draggedWindow = nullptr;
     int                    sourceWorkspaceIndex = -1;
+    CFramebuffer           dragPreviewFB;  // Framebuffer for drag preview
 
     // Event hooks
     SP<HOOK_CALLBACK_FN> mouseButtonHook;

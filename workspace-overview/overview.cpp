@@ -240,6 +240,11 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
         lastMousePosLocal =
             g_pInputManager->getMouseCoordsInternal() - pMonitor->m_position;
 
+        // Trigger redraw during drag to update preview position
+        if (isDragging) {
+            damage();
+        }
+
         // Check if we're dragging (similar to Hyprland's drag detection)
         if (mouseButtonPressed && !isDragging) {
             const float distanceX = std::abs(lastMousePosLocal.x - mouseDownPos.x);
@@ -247,6 +252,35 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
 
             if (distanceX > DRAG_THRESHOLD || distanceY > DRAG_THRESHOLD) {
                 isDragging = true;
+
+                // Render drag preview if we have a window
+                if (draggedWindow) {
+                    const Vector2D windowSize = draggedWindow->m_realSize->value();
+
+                    // Allocate framebuffer for drag preview at window size
+                    if (dragPreviewFB.m_size != windowSize) {
+                        dragPreviewFB.release();
+                        dragPreviewFB.alloc(windowSize.x, windowSize.y,
+                                           pMonitor->m_output->state->state().drmFormat);
+                    }
+
+                    // Render window preview to framebuffer
+                    g_pHyprRenderer->makeEGLCurrent();
+
+                    CRegion fakeDamage{0, 0, INT16_MAX, INT16_MAX};
+                    g_pHyprRenderer->beginRender(pMonitor.lock(), fakeDamage,
+                                                RENDER_MODE_FULL_FAKE, nullptr, &dragPreviewFB);
+
+                    // Clear with semi-transparent background
+                    g_pHyprOpenGL->clear(CHyprColor{0.1, 0.1, 0.1, 0.8});
+
+                    // Render a placeholder colored rectangle
+                    CBox placeholderBox = {10, 10, windowSize.x - 20, windowSize.y - 20};
+                    g_pHyprOpenGL->renderRect(placeholderBox, CHyprColor{0.3, 0.5, 0.7, 1.0}, {});
+
+                    g_pHyprOpenGL->m_renderData.blockScreenShader = true;
+                    g_pHyprRenderer->endRender();
+                }
             }
         }
     };
@@ -261,11 +295,8 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
 
         auto e = std::any_cast<IPointer::SButtonEvent>(param);
 
-        // Any button except left click: close overview and stay on current workspace
+        // Any button except left click: consume event without doing anything
         if (e.button != BTN_LEFT) {
-            if (e.state == WL_POINTER_BUTTON_STATE_RELEASED) {
-                close();
-            }
             return;
         }
 
@@ -313,6 +344,12 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
             // Reset drag state
             draggedWindow = nullptr;
             sourceWorkspaceIndex = -1;
+            isDragging = false;
+
+            // Release drag preview framebuffer
+            if (dragPreviewFB.m_size.x > 0) {
+                dragPreviewFB.release();
+            }
         }
     };
 
@@ -611,6 +648,31 @@ void COverview::fullRender() {
             g_pHyprOpenGL->renderTexture(textTexture, textBox,
                                          {.damage = &damage, .a = alpha});
         }
+    }
+
+    // Render drag preview if dragging
+    if (isDragging && draggedWindow && dragPreviewFB.m_size.x > 0) {
+        const float monScale = pMonitor->m_scale;
+
+        // Scale down the preview size
+        const Vector2D fullSize = dragPreviewFB.m_size;
+        const Vector2D previewSize = fullSize * DRAG_PREVIEW_SCALE;
+
+        // Position preview at cursor location (centered on cursor)
+        CBox previewBox = {
+            lastMousePosLocal.x - previewSize.x / 2.0f,
+            lastMousePosLocal.y - previewSize.y / 2.0f,
+            previewSize.x,
+            previewSize.y
+        };
+
+        previewBox.scale(monScale);
+        previewBox.round();
+
+        CRegion damage{0, 0, INT16_MAX, INT16_MAX};
+        g_pHyprOpenGL->renderTextureInternal(dragPreviewFB.getTexture(),
+                                            previewBox,
+                                            {.damage = &damage, .a = 0.9f});
     }
 }
 

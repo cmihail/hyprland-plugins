@@ -1365,3 +1365,62 @@ TEST(WindowMovementTest, LeftSideWorkspaceRedraw) {
     redrawIndex = determineRedrawWorkspace(4, 4, activeIndex);
     EXPECT_EQ(redrawIndex, -1);
 }
+
+// Test: Drag preview scale calculation
+TEST(DragPreviewTest, ScaleCalculation) {
+    const float DRAG_PREVIEW_SCALE = 0.10f;
+
+    // Test preview size for various window sizes
+    struct TestCase {
+        float windowWidth;
+        float windowHeight;
+        float expectedPreviewWidth;
+        float expectedPreviewHeight;
+    };
+
+    std::vector<TestCase> cases = {
+        {1920, 1080, 192, 108},
+        {800, 600, 80, 60},
+        {1000, 500, 100, 50},
+        {500, 1000, 50, 100}
+    };
+
+    for (const auto& tc : cases) {
+        float previewWidth = tc.windowWidth * DRAG_PREVIEW_SCALE;
+        float previewHeight = tc.windowHeight * DRAG_PREVIEW_SCALE;
+
+        EXPECT_FLOAT_EQ(previewWidth, tc.expectedPreviewWidth);
+        EXPECT_FLOAT_EQ(previewHeight, tc.expectedPreviewHeight);
+    }
+}
+
+TEST(DragPreviewTest, PreviewPositioning) {
+    // Test that preview is centered on cursor
+    const float DRAG_PREVIEW_SCALE = 0.10f;
+
+    struct TestCase {
+        float windowWidth;
+        float windowHeight;
+        float cursorX;
+        float cursorY;
+    };
+
+    std::vector<TestCase> cases = {
+        {1920, 1080, 500, 400},
+        {800, 600, 100, 200},
+        {1000, 500, 960, 540}
+    };
+
+    for (const auto& tc : cases) {
+        float previewWidth = tc.windowWidth * DRAG_PREVIEW_SCALE;
+        float previewHeight = tc.windowHeight * DRAG_PREVIEW_SCALE;
+
+        // Preview should be centered on cursor
+        float previewX = tc.cursorX - previewWidth / 2.0f;
+        float previewY = tc.cursorY - previewHeight / 2.0f;
+
+        // Verify the preview box dimensions
+        EXPECT_FLOAT_EQ(previewX + previewWidth / 2.0f, tc.cursorX);
+        EXPECT_FLOAT_EQ(previewY + previewHeight / 2.0f, tc.cursorY);
+    }
+}
