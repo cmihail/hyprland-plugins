@@ -5,7 +5,7 @@ class COverview;
 
 class COverviewPassElement : public IPassElement {
   public:
-    COverviewPassElement();
+    COverviewPassElement(COverview* overview);
     virtual ~COverviewPassElement() = default;
 
     virtual void                draw(const CRegion& damage);
@@ -17,4 +17,7 @@ class COverviewPassElement : public IPassElement {
     virtual const char*         passName() {
         return "COverviewPassElement";
     }
+
+  private:
+    COverview* pOverview;
 };

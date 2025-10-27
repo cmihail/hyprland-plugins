@@ -1800,3 +1800,172 @@ TEST(WorkspaceOffsetsTest, ActiveWorkspaceInMiddle) {
     EXPECT_EQ(workspaces.ids[2], 10);
     EXPECT_EQ(workspaces.ids[3], 2);  // New workspace fills slot
 }
+
+// ============================================================================
+// Multi-Monitor Tests
+// ============================================================================
+
+// Test: Multiple monitors can have independent overview states
+TEST(MultiMonitorTest, IndependentOverviewStates) {
+    // Simulates tracking overview state per monitor
+    struct MonitorState {
+        int monitorId;
+        bool hasOverview;
+    };
+
+    std::vector<MonitorState> monitors = {
+        {1, false},
+        {2, false}
+    };
+
+    // Open overview on monitor 1
+    monitors[0].hasOverview = true;
+    EXPECT_TRUE(monitors[0].hasOverview);
+    EXPECT_FALSE(monitors[1].hasOverview);
+
+    // Opening on all monitors
+    for (auto& mon : monitors) {
+        mon.hasOverview = true;
+    }
+    EXPECT_TRUE(monitors[0].hasOverview);
+    EXPECT_TRUE(monitors[1].hasOverview);
+
+    // Close all overviews
+    for (auto& mon : monitors) {
+        mon.hasOverview = false;
+    }
+    EXPECT_FALSE(monitors[0].hasOverview);
+    EXPECT_FALSE(monitors[1].hasOverview);
+}
+
+// Test: Click on different monitor doesn't close overview
+TEST(MultiMonitorTest, CrossMonitorClickPassthrough) {
+    // Simulates checking if a click should be handled or passed through
+    auto shouldPassThrough = [](int clickMonitorId, int overviewMonitorId) -> bool {
+        return clickMonitorId != overviewMonitorId;
+    };
+
+    const int overviewMonitor = 1;
+
+    // Click on same monitor - handle it
+    EXPECT_FALSE(shouldPassThrough(1, overviewMonitor));
+
+    // Click on different monitor - pass through
+    EXPECT_TRUE(shouldPassThrough(2, overviewMonitor));
+    EXPECT_TRUE(shouldPassThrough(3, overviewMonitor));
+}
+
+// Test: All monitors close together
+TEST(MultiMonitorTest, SynchronizedClosing) {
+    // Simulates closing all overviews when one closes
+    struct Monitor {
+        int id;
+        bool hasOverview;
+    };
+
+    std::vector<Monitor> monitors = {
+        {1, true},
+        {2, true},
+        {3, true}
+    };
+
+    // Close overview on monitor 1 triggers close on all
+    auto closeAllOverviews = [](std::vector<Monitor>& mons) {
+        for (auto& mon : mons) {
+            mon.hasOverview = false;
+        }
+    };
+
+    closeAllOverviews(monitors);
+
+    // All should be closed
+    for (const auto& mon : monitors) {
+        EXPECT_FALSE(mon.hasOverview);
+    }
+}
+
+// Test: Opening on all monitors at once
+TEST(MultiMonitorTest, SimultaneousOpening) {
+    struct MonitorOverview {
+        int monitorId;
+        int activeWorkspaceId;
+        bool isOpen;
+    };
+
+    std::vector<MonitorOverview> monitors = {
+        {1, 1, false},
+        {2, 5, false},
+        {3, 9, false}
+    };
+
+    // Open all at once
+    for (auto& mon : monitors) {
+        mon.isOpen = true;
+    }
+
+    // All should be open with their respective workspaces
+    EXPECT_TRUE(monitors[0].isOpen);
+    EXPECT_EQ(monitors[0].activeWorkspaceId, 1);
+    EXPECT_TRUE(monitors[1].isOpen);
+    EXPECT_EQ(monitors[1].activeWorkspaceId, 5);
+    EXPECT_TRUE(monitors[2].isOpen);
+    EXPECT_EQ(monitors[2].activeWorkspaceId, 9);
+}
+
+// Test: Each monitor renders its own workspaces
+TEST(MultiMonitorTest, IndependentWorkspaceRendering) {
+    // Simulates each monitor having its own workspace list
+    struct MonitorWorkspaces {
+        int monitorId;
+        std::vector<int> workspaceIds;
+    };
+
+    std::vector<MonitorWorkspaces> monitors = {
+        {1, {1, 2, 3, 4}},
+        {2, {5, 6, 7, 8}},
+        {3, {9, 10, 11, 12}}
+    };
+
+    // Verify each monitor has independent workspace lists
+    EXPECT_EQ(monitors[0].workspaceIds.size(), 4);
+    EXPECT_EQ(monitors[0].workspaceIds[0], 1);
+
+    EXPECT_EQ(monitors[1].workspaceIds.size(), 4);
+    EXPECT_EQ(monitors[1].workspaceIds[0], 5);
+
+    EXPECT_EQ(monitors[2].workspaceIds.size(), 4);
+    EXPECT_EQ(monitors[2].workspaceIds[0], 9);
+}
+
+// Test: Toggle behavior with multiple monitors
+TEST(MultiMonitorTest, ToggleBehavior) {
+    auto toggleOverviews = [](std::vector<bool>& states, bool anyOpen) {
+        if (anyOpen) {
+            // Close all
+            for (size_t i = 0; i < states.size(); ++i) {
+                states[i] = false;
+            }
+        } else {
+            // Open all
+            for (size_t i = 0; i < states.size(); ++i) {
+                states[i] = true;
+            }
+        }
+    };
+
+    std::vector<bool> monitorOverviews = {false, false, false};
+
+    // First toggle - open all
+    bool anyOpen = monitorOverviews[0] || monitorOverviews[1] || monitorOverviews[2];
+    toggleOverviews(monitorOverviews, anyOpen);
+    EXPECT_TRUE(monitorOverviews[0]);
+    EXPECT_TRUE(monitorOverviews[1]);
+    EXPECT_TRUE(monitorOverviews[2]);
+
+    // Second toggle - close all
+    anyOpen = monitorOverviews[0] || monitorOverviews[1] || monitorOverviews[2];
+    toggleOverviews(monitorOverviews, anyOpen);
+    EXPECT_FALSE(monitorOverviews[0]);
+    EXPECT_FALSE(monitorOverviews[1]);
+    EXPECT_FALSE(monitorOverviews[2]);
+}

@@ -2,12 +2,13 @@
 #include <hyprland/src/render/OpenGL.hpp>
 #include "overview.hpp"
 
-COverviewPassElement::COverviewPassElement() {
+COverviewPassElement::COverviewPassElement(COverview* overview) : pOverview(overview) {
     ;
 }
 
 void COverviewPassElement::draw(const CRegion& damage) {
-    g_pOverview->fullRender();
+    if (pOverview)
+        pOverview->fullRender();
 }
 
 bool COverviewPassElement::needsLiveBlur() {
@@ -19,15 +20,23 @@ bool COverviewPassElement::needsPrecomputeBlur() {
 }
 
 std::optional<CBox> COverviewPassElement::boundingBox() {
-    if (!g_pOverview->pMonitor)
+    if (!pOverview || !pOverview->pMonitor)
         return std::nullopt;
 
-    return CBox{{}, g_pOverview->pMonitor->m_size};
+    auto monitor = pOverview->pMonitor.lock();
+    if (!monitor)
+        return std::nullopt;
+
+    return CBox{{}, monitor->m_size};
 }
 
 CRegion COverviewPassElement::opaqueRegion() {
-    if (!g_pOverview->pMonitor)
+    if (!pOverview || !pOverview->pMonitor)
         return CRegion{};
 
-    return CBox{{}, g_pOverview->pMonitor->m_size};
+    auto monitor = pOverview->pMonitor.lock();
+    if (!monitor)
+        return CRegion{};
+
+    return CBox{{}, monitor->m_size};
 }

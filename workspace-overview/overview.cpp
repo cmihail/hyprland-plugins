@@ -18,12 +18,18 @@
 #undef private
 #include "OverviewPassElement.hpp"
 
-static void damageMonitor(WP<Hyprutils::Animation::CBaseAnimatedVariable> thisptr) {
-    g_pOverview->damage();
+void damageMonitor(WP<Hyprutils::Animation::CBaseAnimatedVariable> thisptr) {
+    // Find the overview that owns this animation variable
+    for (auto& [monitor, overview] : g_pOverviews) {
+        if (overview && (overview->size.get() == thisptr.get() || overview->pos.get() == thisptr.get())) {
+            overview->damage();
+            return;
+        }
+    }
 }
 
-void removeOverview(WP<Hyprutils::Animation::CBaseAnimatedVariable> thisptr) {
-    g_pOverview.reset();
+void removeOverview(WP<Hyprutils::Animation::CBaseAnimatedVariable> thisptr, PHLMONITOR monitor) {
+    g_pOverviews.erase(monitor);
 }
 
 COverview::~COverview() {
@@ -295,6 +301,15 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
         if (closing)
             return;
 
+        // Check if click is on a different monitor than the overview
+        const Vector2D mousePos = g_pInputManager->getMouseCoordsInternal();
+        const auto clickedMonitor = g_pCompositor->getMonitorFromVector(mousePos);
+
+        // If clicked on a different monitor, allow the event to pass through
+        if (clickedMonitor && clickedMonitor != pMonitor.lock()) {
+            return;
+        }
+
         info.cancelled = true;
 
         auto e = std::any_cast<IPointer::SButtonEvent>(param);
@@ -466,6 +481,25 @@ void COverview::close() {
     if (closing)
         return;
 
+    // Close all overviews on all monitors
+    // Make a copy of all monitors to close, excluding this one
+    std::vector<PHLMONITOR> otherMonitorsToClose;
+    for (const auto& [mon, overview] : g_pOverviews) {
+        if (overview.get() != this && overview && !overview->closing) {
+            otherMonitorsToClose.push_back(mon);
+        }
+    }
+
+    // Close other overviews first (without workspace switching)
+    for (const auto& mon : otherMonitorsToClose) {
+        auto it = g_pOverviews.find(mon);
+        if (it != g_pOverviews.end() && it->second) {
+            it->second->closing = true;
+            it->second->startCloseAnimation();
+        }
+    }
+
+    // Now close this overview (with workspace switching if needed)
     // Always animate towards the active workspace position (right side)
     // This ensures a consistent zoom animation regardless of which workspace was clicked
     const auto& activeBox = images[activeIndex].box;
@@ -487,7 +521,8 @@ void COverview::close() {
     const Vector2D screenCenter = monitorSize / 2.0f;
     *pos = (screenCenter - activeCenter) * scale;
 
-    size->setCallbackOnEnd(removeOverview);
+    auto monitor = pMonitor.lock();
+    size->setCallbackOnEnd([monitor](auto var) { removeOverview(var, monitor); });
     closing = true;
     redrawAll();
 
@@ -519,6 +554,27 @@ void COverview::close() {
     }
 }
 
+void COverview::startCloseAnimation() {
+    // Start the closing animation without workspace switching
+    const auto& activeBox = images[activeIndex].box;
+    const Vector2D monitorSize = pMonitor->m_size;
+
+    const float scaleX = monitorSize.x / activeBox.w;
+    const float scaleY = monitorSize.y / activeBox.h;
+    const float scale = std::min(scaleX, scaleY);
+
+    *size = monitorSize * scale;
+
+    const Vector2D activeCenter = Vector2D{activeBox.x + activeBox.w / 2.0f,
+                                           activeBox.y + activeBox.h / 2.0f};
+    const Vector2D screenCenter = monitorSize / 2.0f;
+    *pos = (screenCenter - activeCenter) * scale;
+
+    auto monitor = pMonitor.lock();
+    size->setCallbackOnEnd([monitor](auto var) { removeOverview(var, monitor); });
+    redrawAll();
+}
+
 void COverview::onPreRender() {
     if (damageDirty) {
         damageDirty = false;
@@ -527,7 +583,7 @@ void COverview::onPreRender() {
 }
 
 void COverview::render() {
-    g_pHyprRenderer->m_renderPass.add(makeUnique<COverviewPassElement>());
+    g_pHyprRenderer->m_renderPass.add(makeUnique<COverviewPassElement>(this));
 }
 
 void COverview::fullRender() {
@@ -989,6 +1045,7 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
         std::vector<int> workspaceIndices;
         int tickCount;
         wl_event_source* timerSource;
+        PHLMONITOR monitor;
     };
 
     std::vector<int> workspacesToRefresh;
@@ -1004,18 +1061,22 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
     }
 
     if (!workspacesToRefresh.empty()) {
-        auto* timerData = new TimerData{workspacesToRefresh, 0, nullptr};
+        auto monitor = pMonitor.lock();
+        auto* timerData = new TimerData{workspacesToRefresh, 0, nullptr, monitor};
 
         auto* timer = wl_event_loop_add_timer(
             wl_display_get_event_loop(g_pCompositor->m_wlDisplay),
             [](void* data) -> int {
                 auto* td = static_cast<TimerData*>(data);
-                if (g_pOverview) {
+
+                // Check if overview still exists for this monitor
+                auto it = g_pOverviews.find(td->monitor);
+                if (it != g_pOverviews.end() && it->second) {
                     // Redraw all affected workspaces
                     for (int workspaceIndex : td->workspaceIndices) {
-                        g_pOverview->redrawID(workspaceIndex);
+                        it->second->redrawID(workspaceIndex);
                     }
-                    g_pOverview->damage();
+                    it->second->damage();
 
                     td->tickCount++;
                     // Redraw every 50ms for up to 1 second (20 ticks)

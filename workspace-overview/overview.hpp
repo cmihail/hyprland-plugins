@@ -8,6 +8,7 @@
 #include <hyprland/src/helpers/AnimatedVariable.hpp>
 #include <hyprland/src/managers/HookSystemManager.hpp>
 #include <vector>
+#include <unordered_map>
 
 class CMonitor;
 
@@ -22,6 +23,7 @@ class COverview {
     void onPreRender();
 
     void close();
+    void startCloseAnimation();
     void selectWorkspaceAtPosition(const Vector2D& pos);
 
     bool blockOverviewRendering = false;
@@ -90,7 +92,8 @@ class COverview {
     SP<HOOK_CALLBACK_FN> mouseMoveHook;
 
     friend class COverviewPassElement;
-    friend void removeOverview(WP<Hyprutils::Animation::CBaseAnimatedVariable>);
+    friend void removeOverview(WP<Hyprutils::Animation::CBaseAnimatedVariable>, PHLMONITOR);
+    friend void damageMonitor(WP<Hyprutils::Animation::CBaseAnimatedVariable>);
 };
 
-inline std::unique_ptr<COverview> g_pOverview;
+inline std::unordered_map<PHLMONITOR, std::unique_ptr<COverview>> g_pOverviews;

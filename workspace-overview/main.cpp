@@ -22,60 +22,120 @@ typedef void (*origAddDamageB)(void*, const pixman_region32_t*);
 static bool renderingOverview = false;
 
 static void hkRenderWorkspace(void* thisptr, PHLMONITOR pMonitor, PHLWORKSPACE pWorkspace, timespec* now, const CBox& geometry) {
-    if (!g_pOverview || renderingOverview || g_pOverview->blockOverviewRendering || g_pOverview->pMonitor != pMonitor)
+    auto it = g_pOverviews.find(pMonitor);
+    if (it == g_pOverviews.end() || renderingOverview || it->second->blockOverviewRendering)
         ((origRenderWorkspace)(g_pRenderWorkspaceHook->m_original))(thisptr, pMonitor, pWorkspace, now, geometry);
     else
-        g_pOverview->render();
+        it->second->render();
 }
 
 static void hkAddDamageA(void* thisptr, const CBox& box) {
     const auto PMONITOR = (CMonitor*)thisptr;
+    const auto PMONITORSHARED = PMONITOR->m_self.lock();
 
-    if (!g_pOverview || g_pOverview->pMonitor != PMONITOR->m_self || g_pOverview->blockDamageReporting) {
+    if (!PMONITORSHARED) {
         ((origAddDamageA)g_pAddDamageHookA->m_original)(thisptr, box);
         return;
     }
 
-    g_pOverview->onDamageReported();
+    auto it = g_pOverviews.find(PMONITORSHARED);
+    if (it == g_pOverviews.end() || it->second->blockDamageReporting) {
+        ((origAddDamageA)g_pAddDamageHookA->m_original)(thisptr, box);
+        return;
+    }
+
+    it->second->onDamageReported();
 }
 
 static void hkAddDamageB(void* thisptr, const pixman_region32_t* rg) {
     const auto PMONITOR = (CMonitor*)thisptr;
+    const auto PMONITORSHARED = PMONITOR->m_self.lock();
 
-    if (!g_pOverview || g_pOverview->pMonitor != PMONITOR->m_self || g_pOverview->blockDamageReporting) {
+    if (!PMONITORSHARED) {
         ((origAddDamageB)g_pAddDamageHookB->m_original)(thisptr, rg);
         return;
     }
 
-    g_pOverview->onDamageReported();
+    auto it = g_pOverviews.find(PMONITORSHARED);
+    if (it == g_pOverviews.end() || it->second->blockDamageReporting) {
+        ((origAddDamageB)g_pAddDamageHookB->m_original)(thisptr, rg);
+        return;
+    }
+
+    it->second->onDamageReported();
 }
 
 static SDispatchResult workspaceOverviewDispatch(std::string arg) {
     Debug::log(LOG, "[workspace-overview] Overview dispatch called with arg: {}", arg);
 
+    const auto PMONITOR = g_pCompositor->m_lastMonitor.lock();
+    if (!PMONITOR) {
+        Debug::log(ERR, "[workspace-overview] No monitor found");
+        return {};
+    }
+
     if (arg == "toggle") {
-        if (g_pOverview)
-            g_pOverview->close();
-        else {
-            renderingOverview = true;
-            g_pOverview       = std::make_unique<COverview>(g_pCompositor->m_lastMonitor->m_activeWorkspace);
-            renderingOverview = false;
+        auto it = g_pOverviews.find(PMONITOR);
+        if (it != g_pOverviews.end()) {
+            // Overview exists for focused monitor, close all overviews
+            // Make a copy of keys to avoid iterator invalidation during close()
+            std::vector<PHLMONITOR> monitorsToClose;
+            for (const auto& [mon, overview] : g_pOverviews) {
+                monitorsToClose.push_back(mon);
+            }
+            for (const auto& mon : monitorsToClose) {
+                auto monIt = g_pOverviews.find(mon);
+                if (monIt != g_pOverviews.end())
+                    monIt->second->close();
+            }
+        } else {
+            // No overview for focused monitor, create overview on all monitors
+            // Create them one at a time to avoid rendering conflicts
+            for (auto& monitor : g_pCompositor->m_monitors) {
+                if (!monitor || !monitor->m_activeWorkspace)
+                    continue;
+                // Set the last monitor so the overview constructor uses the correct monitor
+                g_pCompositor->m_lastMonitor = monitor;
+                renderingOverview = true;
+                g_pOverviews[monitor] = std::make_unique<COverview>(monitor->m_activeWorkspace);
+                renderingOverview = false;
+            }
+            // Restore the last monitor to the focused one
+            g_pCompositor->m_lastMonitor = PMONITOR;
         }
         return {};
     }
 
     if (arg == "close" || arg == "off") {
-        if (g_pOverview)
-            g_pOverview->close();
+        // Close all overviews
+        std::vector<PHLMONITOR> monitorsToClose;
+        for (const auto& [mon, overview] : g_pOverviews) {
+            monitorsToClose.push_back(mon);
+        }
+        for (const auto& mon : monitorsToClose) {
+            auto monIt = g_pOverviews.find(mon);
+            if (monIt != g_pOverviews.end())
+                monIt->second->close();
+        }
         return {};
     }
 
-    if (g_pOverview)
+    // Default: open on all monitors if not already open
+    if (!g_pOverviews.empty())
         return {};
 
-    renderingOverview = true;
-    g_pOverview       = std::make_unique<COverview>(g_pCompositor->m_lastMonitor->m_activeWorkspace);
-    renderingOverview = false;
+    // Create them one at a time to avoid rendering conflicts
+    for (auto& monitor : g_pCompositor->m_monitors) {
+        if (!monitor || !monitor->m_activeWorkspace)
+            continue;
+        // Set the last monitor so the overview constructor uses the correct monitor
+        g_pCompositor->m_lastMonitor = monitor;
+        renderingOverview = true;
+        g_pOverviews[monitor] = std::make_unique<COverview>(monitor->m_activeWorkspace);
+        renderingOverview = false;
+    }
+    // Restore the last monitor to the focused one
+    g_pCompositor->m_lastMonitor = PMONITOR;
     return {};
 }
 
@@ -131,9 +191,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     }
 
     static auto P = HyprlandAPI::registerCallbackDynamic(PHANDLE, "preRender", [](void* self, SCallbackInfo& info, std::any param) {
-        if (!g_pOverview)
-            return;
-        g_pOverview->onPreRender();
+        for (auto& [monitor, overview] : g_pOverviews) {
+            if (overview)
+                overview->onPreRender();
+        }
     });
 
     HyprlandAPI::addDispatcherV2(PHANDLE, "workspace-overview", workspaceOverviewDispatch);
