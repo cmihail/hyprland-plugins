@@ -21,7 +21,13 @@
 void damageMonitor(WP<Hyprutils::Animation::CBaseAnimatedVariable> thisptr) {
     // Find the overview that owns this animation variable
     for (auto& [monitor, overview] : g_pOverviews) {
-        if (overview && (overview->size.get() == thisptr.get() || overview->pos.get() == thisptr.get())) {
+        if (!overview)
+            continue;
+
+        bool isSizeAnim = overview->size.get() == thisptr.get();
+        bool isPosAnim = overview->pos.get() == thisptr.get();
+
+        if (isSizeAnim || isPosAnim) {
             overview->damage();
             return;
         }
@@ -247,30 +253,31 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
         if (closing)
             return;
 
-        lastMousePosLocal =
-            g_pInputManager->getMouseCoordsInternal() - pMonitor->m_position;
+        const Vector2D globalMousePos = g_pInputManager->getMouseCoordsInternal();
+        lastMousePosLocal = globalMousePos - pMonitor->m_position;
 
         // Trigger redraw during drag to update preview position
-        if (isDragging) {
+        if (g_dragState.isDragging) {
             damage();
         }
 
-        // Check if we're dragging (similar to Hyprland's drag detection)
-        if (mouseButtonPressed && !isDragging) {
-            const float distanceX = std::abs(lastMousePosLocal.x - mouseDownPos.x);
-            const float distanceY = std::abs(lastMousePosLocal.y - mouseDownPos.y);
+        // Check if we're dragging (only the overview where button was pressed detects this)
+        if (g_dragState.mouseButtonPressed && !g_dragState.isDragging) {
+            const float distanceX = std::abs(lastMousePosLocal.x - g_dragState.mouseDownPos.x);
+            const float distanceY = std::abs(lastMousePosLocal.y - g_dragState.mouseDownPos.y);
 
             if (distanceX > DRAG_THRESHOLD || distanceY > DRAG_THRESHOLD) {
-                isDragging = true;
+                g_dragState.isDragging = true;
+                // sourceOverview is already set when button was pressed
 
                 // Render drag preview if we have a window
-                if (draggedWindow) {
-                    const Vector2D windowSize = draggedWindow->m_realSize->value();
+                if (g_dragState.draggedWindow) {
+                    const Vector2D windowSize = g_dragState.draggedWindow->m_realSize->value();
 
                     // Allocate framebuffer for drag preview at window size
-                    if (dragPreviewFB.m_size != windowSize) {
-                        dragPreviewFB.release();
-                        dragPreviewFB.alloc(windowSize.x, windowSize.y,
+                    if (g_dragState.dragPreviewFB.m_size != windowSize) {
+                        g_dragState.dragPreviewFB.release();
+                        g_dragState.dragPreviewFB.alloc(windowSize.x, windowSize.y,
                                            pMonitor->m_output->state->state().drmFormat);
                     }
 
@@ -278,8 +285,11 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
                     g_pHyprRenderer->makeEGLCurrent();
 
                     CRegion fakeDamage{0, 0, INT16_MAX, INT16_MAX};
-                    g_pHyprRenderer->beginRender(pMonitor.lock(), fakeDamage,
-                                                RENDER_MODE_FULL_FAKE, nullptr, &dragPreviewFB);
+                    auto mon = pMonitor.lock();
+                    auto& fb = g_dragState.dragPreviewFB;
+                    g_pHyprRenderer->beginRender(mon, fakeDamage,
+                                                RENDER_MODE_FULL_FAKE,
+                                                nullptr, &fb);
 
                     // Clear with semi-transparent background
                     g_pHyprOpenGL->clear(CHyprColor{0.1, 0.1, 0.1, 0.8});
@@ -305,14 +315,20 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
         const Vector2D mousePos = g_pInputManager->getMouseCoordsInternal();
         const auto clickedMonitor = g_pCompositor->getMonitorFromVector(mousePos);
 
-        // If clicked on a different monitor, allow the event to pass through
-        if (clickedMonitor && clickedMonitor != pMonitor.lock()) {
+        auto e = std::any_cast<IPointer::SButtonEvent>(param);
+
+        // IMPORTANT: Always reset mouseButtonPressed on button release for ALL overviews
+        // This must happen before any early returns to avoid stuck drag states
+        if (e.state != WL_POINTER_BUTTON_STATE_PRESSED) {
+            g_dragState.mouseButtonPressed = false;
+        }
+
+        // If clicked on a different monitor and not dragging, allow the event to pass through
+        if (clickedMonitor && clickedMonitor != pMonitor.lock() && !g_dragState.isDragging) {
             return;
         }
 
         info.cancelled = true;
-
-        auto e = std::any_cast<IPointer::SButtonEvent>(param);
 
         // Any button except left click: consume event without doing anything
         if (e.button != BTN_LEFT) {
@@ -321,31 +337,66 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
 
         if (e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
             // Mouse button pressed - record position and find window
-            mouseButtonPressed = true;
-            mouseDownPos = lastMousePosLocal;
-            isDragging = false;
+            g_dragState.mouseButtonPressed = true;
+            g_dragState.mouseDownPos = lastMousePosLocal;
+            g_dragState.sourceOverview = this;  // Set source overview when button is pressed
 
             // Find which workspace was clicked
-            sourceWorkspaceIndex = findWorkspaceIndexAtPosition(mouseDownPos);
+            int clickedWsIndex = findWorkspaceIndexAtPosition(
+                lastMousePosLocal
+            );
 
             // Find window at click position in that workspace
-            draggedWindow = findWindowAtPosition(mouseDownPos, sourceWorkspaceIndex);
+            PHLWINDOW clickedWindow = findWindowAtPosition(
+                lastMousePosLocal, clickedWsIndex
+            );
+
+            g_dragState.sourceWorkspaceIndex = clickedWsIndex;
+            g_dragState.draggedWindow = clickedWindow;
         } else {
-            // Mouse button released
-            mouseButtonPressed = false;
+            // Mouse button released (mouseButtonPressed already set to false at the start)
 
-            if (isDragging) {
+            // Only the overview where the mouse is currently positioned should handle the release
+            if (clickedMonitor != pMonitor.lock()) {
+                return;
+            }
+
+            if (g_dragState.isDragging) {
                 // Dragging detected - handle window move
-                if (draggedWindow) {
+                if (g_dragState.draggedWindow) {
                     // Find target workspace at release position
-                    int targetIndex = findWorkspaceIndexAtPosition(lastMousePosLocal);
+                    auto [targetOverview, targetIndex] =
+                        findWorkspaceAtGlobalPosition(mousePos);
 
-                    if (targetIndex >= 0 && targetIndex != sourceWorkspaceIndex) {
-                        // Move window to different workspace
-                        moveWindowToWorkspace(draggedWindow, targetIndex);
-                    } else if (targetIndex == sourceWorkspaceIndex) {
-                        HyprlandAPI::addNotification(PHANDLE, "Same workspace",
-                                                     CHyprColor{0.8, 0.6, 0.2, 1.0}, 2000);
+                    if (targetOverview && targetIndex >= 0) {
+                        bool sameWs = (
+                            targetOverview == g_dragState.sourceOverview &&
+                            targetIndex == g_dragState.sourceWorkspaceIndex
+                        );
+
+                        if (!sameWs) {
+                            // Move window to target workspace
+                            auto draggedWin = g_dragState.draggedWindow;
+                            targetOverview->moveWindowToWorkspace(
+                                draggedWin, targetIndex
+                            );
+
+                            // For cross-monitor moves, redraw source
+                            bool isCrossMonitor = (
+                                g_dragState.sourceOverview &&
+                                g_dragState.sourceOverview != targetOverview
+                            );
+
+                            if (isCrossMonitor) {
+                                int srcIdx = g_dragState.sourceWorkspaceIndex;
+                                setupSourceWorkspaceRefreshTimer(
+                                    g_dragState.sourceOverview, srcIdx
+                                );
+                            }
+                        } else {
+                            HyprlandAPI::addNotification(PHANDLE, "Same workspace",
+                                                         CHyprColor{0.8, 0.6, 0.2, 1.0}, 2000);
+                        }
                     } else {
                         HyprlandAPI::addNotification(PHANDLE, "Outside workspace area",
                                                      CHyprColor{0.8, 0.6, 0.2, 1.0}, 2000);
@@ -354,20 +405,13 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
                     HyprlandAPI::addNotification(PHANDLE, "Drag (no window)",
                                                  CHyprColor{0.8, 0.4, 0.2, 1.0}, 2000);
                 }
+
+                // Reset global drag state
+                g_dragState.reset();
             } else {
                 // Click (not drag) - select workspace and close
                 selectWorkspaceAtPosition(lastMousePosLocal);
                 close();
-            }
-
-            // Reset drag state
-            draggedWindow = nullptr;
-            sourceWorkspaceIndex = -1;
-            isDragging = false;
-
-            // Release drag preview framebuffer
-            if (dragPreviewFB.m_size.x > 0) {
-                dragPreviewFB.release();
             }
         }
     };
@@ -642,8 +686,14 @@ void COverview::fullRender() {
     for (size_t i = 0; i < images.size(); ++i) {
         auto& image = images[i];
 
-        // Skip rendering non-interactive placeholder workspaces (all placeholders except the first)
-        if (!image.pWorkspace && i < (size_t)activeIndex && firstPlaceholderIndex >= 0 && (int)i > firstPlaceholderIndex) {
+        // Skip rendering non-interactive placeholder workspaces
+        bool isNonInteractivePlaceholder = (
+            !image.pWorkspace &&
+            i < (size_t)activeIndex &&
+            firstPlaceholderIndex >= 0 &&
+            (int)i > firstPlaceholderIndex
+        );
+        if (isNonInteractivePlaceholder) {
             continue;
         }
 
@@ -810,11 +860,16 @@ void COverview::fullRender() {
     }
 
     // Render drag preview if dragging
-    if (isDragging && draggedWindow && dragPreviewFB.m_size.x > 0) {
+    bool shouldRenderDragPreview = (
+        g_dragState.isDragging &&
+        g_dragState.draggedWindow &&
+        g_dragState.dragPreviewFB.m_size.x > 0
+    );
+    if (shouldRenderDragPreview) {
         const float monScale = pMonitor->m_scale;
 
         // Scale down the preview size
-        const Vector2D fullSize = dragPreviewFB.m_size;
+        const Vector2D fullSize = g_dragState.dragPreviewFB.m_size;
         const Vector2D previewSize = fullSize * DRAG_PREVIEW_SCALE;
 
         // Position preview at cursor location (centered on cursor)
@@ -829,7 +884,7 @@ void COverview::fullRender() {
         previewBox.round();
 
         CRegion damage{0, 0, INT16_MAX, INT16_MAX};
-        g_pHyprOpenGL->renderTextureInternal(dragPreviewFB.getTexture(),
+        g_pHyprOpenGL->renderTextureInternal(g_dragState.dragPreviewFB.getTexture(),
                                             previewBox,
                                             {.damage = &damage, .a = 0.9f});
     }
@@ -861,6 +916,82 @@ int COverview::findWorkspaceIndexAtPosition(const Vector2D& pos) {
         }
     }
     return -1;
+}
+
+std::pair<COverview*, int> COverview::findWorkspaceAtGlobalPosition(
+    const Vector2D& globalPos
+) {
+    // Find which monitor the position is on
+    const auto monitor = g_pCompositor->getMonitorFromVector(globalPos);
+    if (!monitor)
+        return {nullptr, -1};
+
+    // Check if that monitor has an overview
+    auto it = g_pOverviews.find(monitor);
+    if (it == g_pOverviews.end() || !it->second)
+        return {nullptr, -1};
+
+    COverview* overview = it->second.get();
+
+    // Convert global position to monitor-local position
+    Vector2D localPos = globalPos - monitor->m_position;
+
+    // Find workspace at that local position
+    int workspaceIndex = overview->findWorkspaceIndexAtPosition(localPos);
+
+    if (workspaceIndex >= 0)
+        return {overview, workspaceIndex};
+
+    return {nullptr, -1};
+}
+
+void COverview::setupSourceWorkspaceRefreshTimer(
+    COverview* sourceOverview,
+    int workspaceIndex
+) {
+    if (!sourceOverview || workspaceIndex < 0)
+        return;
+
+    struct TimerData {
+        std::vector<int> workspaceIndices;
+        int tickCount;
+        wl_event_source* timerSource;
+        PHLMONITOR monitor;
+    };
+
+    auto srcMon = sourceOverview->pMonitor.lock();
+    auto* timerData = new TimerData{{workspaceIndex}, 0, nullptr, srcMon};
+
+    auto* timer = wl_event_loop_add_timer(
+        wl_display_get_event_loop(g_pCompositor->m_wlDisplay),
+        [](void* data) -> int {
+            auto* td = static_cast<TimerData*>(data);
+
+            // Check if overview still exists for this monitor
+            auto it = g_pOverviews.find(td->monitor);
+            if (it != g_pOverviews.end() && it->second) {
+                // Redraw source workspace
+                for (int wsIdx : td->workspaceIndices) {
+                    it->second->redrawID(wsIdx);
+                }
+                it->second->damage();
+
+                td->tickCount++;
+                // Redraw every 50ms for up to 1 second (20 ticks)
+                if (td->tickCount < 20) {
+                    wl_event_source_timer_update(td->timerSource, 50);
+                    return 0;
+                }
+            }
+            // Clean up after 20 ticks or if overview is closed
+            delete td;
+            return 0;
+        },
+        timerData
+    );
+
+    timerData->timerSource = timer;
+    wl_event_source_timer_update(timer, 50);
 }
 
 PHLWINDOW COverview::findWindowAtPosition(const Vector2D& pos, int workspaceIndex) {
@@ -1005,39 +1136,9 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
         }
     }
 
-    // Exit fullscreen if needed
-    const bool wasFullscreen = window->isFullscreen();
-    if (wasFullscreen) {
-        g_pCompositor->setWindowFullscreenInternal(window, FSMODE_NONE);
-    }
-
-    // Store floating state
-    const bool wasFloating = window->m_isFloating;
-
-    // Remove from source layout
-    if (wasFloating) {
-        g_pLayoutManager->getCurrentLayout()->onWindowRemovedFloating(window);
-    } else {
-        g_pLayoutManager->getCurrentLayout()->onWindowRemovedTiling(window);
-    }
-
-    // Move window to target workspace
-    window->moveToWorkspace(targetImage.pWorkspace);
-
-    // Add to target workspace (preserve floating state)
-    if (wasFloating) {
-        g_pLayoutManager->getCurrentLayout()->onWindowCreatedFloating(window);
-    } else {
-        g_pLayoutManager->getCurrentLayout()->onWindowCreatedTiling(window);
-    }
-
-    // Recalculate layouts for both workspaces
-    if (sourceWorkspace) {
-        g_pLayoutManager->getCurrentLayout()->recalculateMonitor(
-            sourceWorkspace->monitorID());
-    }
-    g_pLayoutManager->getCurrentLayout()->recalculateMonitor(
-        targetImage.pWorkspace->monitorID());
+    // Use Hyprland's safe window move function
+    // This handles all the layout management, fullscreen, floating state, etc.
+    g_pCompositor->moveWindowToWorkspaceSafe(window, targetImage.pWorkspace);
 
     // Schedule repeating redraws for affected non-active workspaces
     // We need to refresh both source and target if they're not the active workspace

@@ -11,6 +11,32 @@
 #include <unordered_map>
 
 class CMonitor;
+class COverview;
+
+// Global drag state shared across all monitor overviews
+struct GlobalDragState {
+    bool isDragging = false;
+    bool mouseButtonPressed = false;  // Shared across all monitors
+    PHLWINDOW draggedWindow = nullptr;
+    int sourceWorkspaceIndex = -1;
+    COverview* sourceOverview = nullptr;
+    CFramebuffer dragPreviewFB;
+    Vector2D mouseDownPos = Vector2D{};
+
+    void reset() {
+        isDragging = false;
+        mouseButtonPressed = false;
+        draggedWindow = nullptr;
+        sourceWorkspaceIndex = -1;
+        sourceOverview = nullptr;
+        mouseDownPos = Vector2D{};
+        if (dragPreviewFB.m_size.x > 0) {
+            dragPreviewFB.release();
+        }
+    }
+};
+
+inline GlobalDragState g_dragState;
 
 class COverview {
   public:
@@ -49,6 +75,15 @@ class COverview {
     PHLWINDOW   findWindowAtPosition(const Vector2D& pos, int workspaceIndex);
     void        moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex);
 
+    // Cross-monitor helpers
+    static std::pair<COverview*, int> findWorkspaceAtGlobalPosition(
+        const Vector2D& globalPos
+    );
+    static void setupSourceWorkspaceRefreshTimer(
+        COverview* sourceOverview,
+        int workspaceIndex
+    );
+
     // Layout constants
     static constexpr int   LEFT_WORKSPACES     = 4;  // Number of workspaces in left list
     static constexpr float LEFT_WIDTH_RATIO    = 0.33f;  // Left side takes 1/3
@@ -80,12 +115,6 @@ class COverview {
     // Drag detection
     static constexpr float DRAG_THRESHOLD = 50.0f;
     static constexpr float DRAG_PREVIEW_SCALE = 0.10f;  // Scale factor for drag preview
-    bool                   mouseButtonPressed = false;
-    Vector2D               mouseDownPos = Vector2D{};
-    bool                   isDragging = false;
-    PHLWINDOW              draggedWindow = nullptr;
-    int                    sourceWorkspaceIndex = -1;
-    CFramebuffer           dragPreviewFB;  // Framebuffer for drag preview
 
     // Event hooks
     SP<HOOK_CALLBACK_FN> mouseButtonHook;
