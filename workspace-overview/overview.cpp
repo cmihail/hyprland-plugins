@@ -372,17 +372,8 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
                                     g_dragState.sourceOverview, srcIdx
                                 );
                             }
-                        } else {
-                            HyprlandAPI::addNotification(PHANDLE, "Same workspace",
-                                                         CHyprColor{0.8, 0.6, 0.2, 1.0}, 2000);
                         }
-                    } else {
-                        HyprlandAPI::addNotification(PHANDLE, "Outside workspace area",
-                                                     CHyprColor{0.8, 0.6, 0.2, 1.0}, 2000);
                     }
-                } else {
-                    HyprlandAPI::addNotification(PHANDLE, "Drag (no window)",
-                                                 CHyprColor{0.8, 0.4, 0.2, 1.0}, 2000);
                 }
 
                 // Reset global drag state
@@ -1134,8 +1125,12 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
         targetImage.pWorkspace = g_pCompositor->createNewWorkspace(workspaceID, monitorID);
 
         if (!targetImage.pWorkspace) {
-            HyprlandAPI::addNotification(PHANDLE, "Failed to create workspace",
-                                        CHyprColor{0.8, 0.2, 0.2, 1.0}, 3000);
+            HyprlandAPI::addNotification(
+                PHANDLE,
+                "Failed to create workspace",
+                CHyprColor{0.8, 0.2, 0.2, 1.0},
+                3000
+            );
             return;
         }
 
