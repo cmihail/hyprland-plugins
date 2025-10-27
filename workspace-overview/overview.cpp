@@ -87,34 +87,13 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
         image.isActive = (monitorWorkspaceIDs[i] == currentID);
     }
 
-    // Fill remaining slots with new workspace IDs (not assigned to any monitor)
+    // Fill remaining slots as placeholders (no workspace ID yet)
+    // IDs will be assigned dynamically when workspaces are actually created
     if (numExistingToShow < numToShow) {
-        // Collect all workspace IDs already in use (on any monitor)
-        std::vector<int64_t> allUsedIDs;
-        for (const auto& ws : allWorkspaces) {
-            if (!ws || ws->m_isSpecialWorkspace)
-                continue;
-            allUsedIDs.push_back(ws->m_id);
-        }
-        std::sort(allUsedIDs.begin(), allUsedIDs.end());
-
-        // Find new workspace IDs that aren't in use
-        int nextID = 1;
         for (size_t i = numExistingToShow; i < numToShow; ++i) {
-            // Find an ID that's not in use
-            while (std::find(allUsedIDs.begin(), allUsedIDs.end(), nextID) !=
-                   allUsedIDs.end()) {
-                nextID++;
-            }
-
             auto& image = images[i];
-            image.workspaceID = nextID;
+            image.workspaceID = -1;  // Placeholder, no ID assigned yet
             image.isActive = false;
-
-            // Mark this ID as used so we don't reuse it
-            allUsedIDs.push_back(nextID);
-            std::sort(allUsedIDs.begin(), allUsedIDs.end());
-            nextID++;
         }
     }
 
@@ -574,7 +553,9 @@ void COverview::close() {
     if (selectedIndex >= 0 && selectedIndex < (int)images.size()) {
         const auto& targetImage = images[selectedIndex];
 
-        if (targetImage.workspaceID != pMonitor->activeWorkspaceID()) {
+        // Skip if this is a placeholder (no workspace ID assigned yet)
+        if (targetImage.workspaceID > 0 &&
+            targetImage.workspaceID != pMonitor->activeWorkspaceID()) {
             pMonitor->setSpecialWorkspace(nullptr);
 
             const auto NEWIDWS =
@@ -813,7 +794,7 @@ void COverview::fullRender() {
 
             g_pHyprOpenGL->renderRect(hLine, CHyprColor{1.0, 1.0, 1.0, 0.8}, {.damage = &damage});
             g_pHyprOpenGL->renderRect(vLine, CHyprColor{1.0, 1.0, 1.0, 0.8}, {.damage = &damage});
-        } else {
+        } else if (image.workspaceID > 0) {
             // For existing workspaces, show the workspace number in top-left corner
             int workspaceNum = image.workspaceID;
             if (closing && selectedIndex >= 0 && selectedIndex != activeIndex &&
@@ -994,6 +975,42 @@ void COverview::setupSourceWorkspaceRefreshTimer(
     wl_event_source_timer_update(timer, 50);
 }
 
+int64_t COverview::findFirstAvailableWorkspaceID() {
+    // Collect all workspace IDs currently in use across all monitors
+    std::vector<int64_t> allUsedIDs;
+
+    // Check all existing workspaces
+    for (const auto& ws : g_pCompositor->m_workspaces) {
+        if (!ws || ws->m_isSpecialWorkspace)
+            continue;
+        allUsedIDs.push_back(ws->m_id);
+    }
+
+    // Check all workspace IDs that are planned in overview slots
+    for (const auto& [monitor, overview] : g_pOverviews) {
+        if (!overview)
+            continue;
+        for (const auto& image : overview->images) {
+            if (image.workspaceID > 0) {
+                allUsedIDs.push_back(image.workspaceID);
+            }
+        }
+    }
+
+    // Sort and find first available ID starting from 1
+    std::sort(allUsedIDs.begin(), allUsedIDs.end());
+    allUsedIDs.erase(std::unique(allUsedIDs.begin(), allUsedIDs.end()),
+                     allUsedIDs.end());
+
+    int64_t nextID = 1;
+    while (std::find(allUsedIDs.begin(), allUsedIDs.end(), nextID) !=
+           allUsedIDs.end()) {
+        nextID++;
+    }
+
+    return nextID;
+}
+
 PHLWINDOW COverview::findWindowAtPosition(const Vector2D& pos, int workspaceIndex) {
     if (workspaceIndex < 0 || workspaceIndex >= (int)images.size())
         return nullptr;
@@ -1106,8 +1123,12 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
 
     // Create workspace if it doesn't exist yet
     if (!targetImage.pWorkspace) {
-        const int64_t workspaceID = targetImage.workspaceID;
+        // Find first available workspace ID across all monitors
+        const int64_t workspaceID = findFirstAvailableWorkspaceID();
         const auto monitorID = pMonitor->m_id;
+
+        // Update the target image with the new workspace ID
+        targetImage.workspaceID = workspaceID;
 
         // Create the workspace on the overview's monitor
         targetImage.pWorkspace = g_pCompositor->createNewWorkspace(workspaceID, monitorID);

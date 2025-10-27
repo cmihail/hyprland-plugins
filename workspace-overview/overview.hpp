@@ -83,6 +83,7 @@ class COverview {
         COverview* sourceOverview,
         int workspaceIndex
     );
+    static int64_t findFirstAvailableWorkspaceID();
 
     // Layout constants
     static constexpr int   LEFT_WORKSPACES     = 4;  // Number of workspaces in left list

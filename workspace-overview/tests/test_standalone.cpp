@@ -11,7 +11,10 @@ struct WorkspaceIDs {
     int ids[4];
 };
 
-static WorkspaceIDs calculateWorkspaceIDs(int currentID, const std::vector<int>& monitorWorkspaces) {
+static WorkspaceIDs calculateWorkspaceIDs(
+    int currentID,
+    const std::vector<int>& monitorWorkspaces
+) {
     WorkspaceIDs result;
 
     // Create a copy of monitor workspaces and sort them (keep active workspace in the list)
@@ -79,8 +82,13 @@ struct LayoutBox {
     bool isActive;
 };
 
-static std::vector<LayoutBox> calculateLayout(float monitorWidth, float monitorHeight,
-                                               float leftWidthRatio, float gapWidth, float padding) {
+static std::vector<LayoutBox> calculateLayout(
+    float monitorWidth,
+    float monitorHeight,
+    float leftWidthRatio,
+    float gapWidth,
+    float padding
+) {
     std::vector<LayoutBox> boxes;
     const int LEFT_WORKSPACES = 4;
 
@@ -1763,7 +1771,8 @@ TEST(WorkspaceLayoutTest, EmptySlotCalculation) {
 
 // Test: Active workspace appears on left side in proper position
 TEST(WorkspaceOffsetsTest, ActiveWorkspaceOnLeftSide) {
-    // When active workspace is 3 out of workspaces {1, 2, 3, 4}, it should appear in position 2 (0-indexed)
+    // When active workspace is 3 out of workspaces {1, 2, 3, 4},
+    // it should appear in position 2 (0-indexed)
     auto workspaces = calculateWorkspaceIDs(3, {1, 2, 3, 4});
     EXPECT_EQ(workspaces.ids[0], 1);
     EXPECT_EQ(workspaces.ids[1], 2);
@@ -1968,4 +1977,134 @@ TEST(MultiMonitorTest, ToggleBehavior) {
     EXPECT_FALSE(monitorOverviews[0]);
     EXPECT_FALSE(monitorOverviews[1]);
     EXPECT_FALSE(monitorOverviews[2]);
+}
+
+// Test suite for workspace ID allocation across monitors
+class WorkspaceIDAllocationTest : public ::testing::Test {
+protected:
+    // Helper to find first available workspace ID
+    // Simulates findFirstAvailableWorkspaceID()
+    int64_t findFirstAvailableID(
+        const std::vector<int64_t>& existingWorkspaces,
+        const std::vector<std::vector<int64_t>>& plannedPerMonitor
+    ) {
+        std::vector<int64_t> allUsedIDs = existingWorkspaces;
+
+        // Add planned workspace IDs from all monitors
+        for (const auto& planned : plannedPerMonitor) {
+            for (int64_t id : planned) {
+                if (id > 0) {  // Only count non-placeholder IDs
+                    allUsedIDs.push_back(id);
+                }
+            }
+        }
+
+        // Sort and remove duplicates
+        std::sort(allUsedIDs.begin(), allUsedIDs.end());
+        allUsedIDs.erase(
+            std::unique(allUsedIDs.begin(), allUsedIDs.end()),
+            allUsedIDs.end()
+        );
+
+        // Find first available
+        int64_t nextID = 1;
+        while (std::find(allUsedIDs.begin(), allUsedIDs.end(), nextID) !=
+               allUsedIDs.end()) {
+            nextID++;
+        }
+
+        return nextID;
+    }
+};
+
+TEST_F(WorkspaceIDAllocationTest, FirstAvailableWithNoGaps) {
+    // Existing: 1, 2, 3, 4, 5, 6
+    // Expected: 7
+    std::vector<int64_t> existing = {1, 2, 3, 4, 5, 6};
+    std::vector<std::vector<int64_t>> planned = {};
+
+    int64_t result = findFirstAvailableID(existing, planned);
+    EXPECT_EQ(result, 7);
+}
+
+TEST_F(WorkspaceIDAllocationTest, FirstAvailableWithGaps) {
+    // Existing: 1, 2, 4, 5, 6
+    // Expected: 3 (fills the gap)
+    std::vector<int64_t> existing = {1, 2, 4, 5, 6};
+    std::vector<std::vector<int64_t>> planned = {};
+
+    int64_t result = findFirstAvailableID(existing, planned);
+    EXPECT_EQ(result, 3);
+}
+
+TEST_F(WorkspaceIDAllocationTest, SkipsPlaceholders) {
+    // Existing: 1, 2, 3, 4, 5, 6
+    // Monitor 1 planned: -1, -1 (placeholders)
+    // Monitor 2 planned: -1 (placeholder)
+    // Expected: 7 (placeholders with -1 are ignored)
+    std::vector<int64_t> existing = {1, 2, 3, 4, 5, 6};
+    std::vector<std::vector<int64_t>> planned = {
+        {-1, -1},  // Monitor 1 placeholders
+        {-1}       // Monitor 2 placeholder
+    };
+
+    int64_t result = findFirstAvailableID(existing, planned);
+    EXPECT_EQ(result, 7);
+}
+
+TEST_F(WorkspaceIDAllocationTest, ConsidersPlannedNonPlaceholders) {
+    // Existing: 1, 2, 3
+    // Monitor 1 planned: 4, 5, -1
+    // Monitor 2 planned: 6, -1
+    // Expected: 7 (4, 5, 6 are planned but not created yet)
+    std::vector<int64_t> existing = {1, 2, 3};
+    std::vector<std::vector<int64_t>> planned = {
+        {4, 5, -1},  // Monitor 1: two assigned, one placeholder
+        {6, -1}      // Monitor 2: one assigned, one placeholder
+    };
+
+    int64_t result = findFirstAvailableID(existing, planned);
+    EXPECT_EQ(result, 7);
+}
+
+TEST_F(WorkspaceIDAllocationTest, CrossMonitorAllocation) {
+    // Existing: 1, 2
+    // Monitor 1 planned: 3
+    // Monitor 2 creates new workspace, should get 4
+    // Monitor 3 creates new workspace, should get 5
+    std::vector<int64_t> existing = {1, 2};
+    std::vector<std::vector<int64_t>> planned1 = {{3}};
+
+    int64_t result1 = findFirstAvailableID(existing, planned1);
+    EXPECT_EQ(result1, 4);
+
+    // After monitor 2 plans to create workspace 4
+    std::vector<std::vector<int64_t>> planned2 = {{3}, {4}};
+    int64_t result2 = findFirstAvailableID(existing, planned2);
+    EXPECT_EQ(result2, 5);
+}
+
+TEST_F(WorkspaceIDAllocationTest, AllPlaceholders) {
+    // No existing workspaces
+    // Monitor 1 planned: -1, -1, -1
+    // Monitor 2 planned: -1, -1
+    // Expected: 1 (start from beginning when all are placeholders)
+    std::vector<int64_t> existing = {};
+    std::vector<std::vector<int64_t>> planned = {
+        {-1, -1, -1},
+        {-1, -1}
+    };
+
+    int64_t result = findFirstAvailableID(existing, planned);
+    EXPECT_EQ(result, 1);
+}
+
+TEST_F(WorkspaceIDAllocationTest, DuplicateHandling) {
+    // Existing: 1, 1, 2, 2, 3 (duplicates should be handled)
+    // Expected: 4
+    std::vector<int64_t> existing = {1, 1, 2, 2, 3};
+    std::vector<std::vector<int64_t>> planned = {};
+
+    int64_t result = findFirstAvailableID(existing, planned);
+    EXPECT_EQ(result, 4);
 }
