@@ -73,37 +73,27 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
     // Sort workspace IDs
     std::sort(monitorWorkspaceIDs.begin(), monitorWorkspaceIDs.end());
 
-    // Always show LEFT_WORKSPACES (4) slots on the left side
-    size_t numExisting = monitorWorkspaceIDs.size();
-    size_t numToShow = LEFT_WORKSPACES;
+    // Populate left side workspaces (up to LEFT_WORKSPACES)
+    size_t numToShow = std::min((size_t)LEFT_WORKSPACES, monitorWorkspaceIDs.size());
 
-    // Populate left side workspaces
-    size_t numExistingToShow = std::min(numToShow, numExisting);
-
-    for (size_t i = 0; i < numExistingToShow; ++i) {
+    for (size_t i = 0; i < numToShow; ++i) {
         auto& image = images[i];
         image.workspaceID = monitorWorkspaceIDs[i];
         // Mark if this is the active workspace
         image.isActive = (monitorWorkspaceIDs[i] == currentID);
     }
 
-    // Fill remaining slots as placeholders (no workspace ID yet)
-    // IDs will be assigned dynamically when workspaces are actually created
-    if (numExistingToShow < numToShow) {
-        for (size_t i = numExistingToShow; i < numToShow; ++i) {
-            auto& image = images[i];
-            image.workspaceID = -1;  // Placeholder, no ID assigned yet
-            image.isActive = false;
-        }
+    // Fill remaining left side slots as placeholders for new workspaces
+    for (size_t i = numToShow; i < LEFT_WORKSPACES; ++i) {
+        auto& image = images[i];
+        image.workspaceID = -1;  // Placeholder
+        image.isActive = false;
     }
 
-    // Keep numToShow for left side + 1 for right side active workspace
-    images.resize(numToShow + 1);
-
     // Last image is for the active workspace (right side) - for real-time updates
-    images[numToShow].workspaceID = currentID;
-    images[numToShow].isActive    = true;
-    activeIndex                   = numToShow;
+    images[LEFT_WORKSPACES].workspaceID = currentID;
+    images[LEFT_WORKSPACES].isActive    = true;
+    activeIndex                         = LEFT_WORKSPACES;
 
     // Note: The active workspace appears both in the left side (in its proper position)
     // and on the right side (for real-time updates). The right side will be rendered
@@ -112,15 +102,48 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
     g_pHyprRenderer->makeEGLCurrent();
 
     // Calculate layout with equal margins on left, top, and bottom for left workspaces
-    const Vector2D monitorSize       = pMonitor->m_size;
-    const float    availableHeight   = monitorSize.y - (2 * PADDING);
-    const float    totalGaps         = (LEFT_WORKSPACES - 1) * GAP_WIDTH;
-    const float    leftPreviewHeight = (availableHeight - totalGaps) / LEFT_WORKSPACES;
+    const Vector2D monitorSize = pMonitor->m_size;
+    const float availableHeight = monitorSize.y - (2 * PADDING);
+
+    // Calculate workspace height based on 4 workspaces (first 4 shown fully)
+    // We calculate for 4 workspaces even though we support up to 8
+    const int VISIBLE_WORKSPACES = 4;
+    const float totalGaps = (VISIBLE_WORKSPACES - 1) * GAP_WIDTH;
+    const float baseHeight = (availableHeight - totalGaps) / VISIBLE_WORKSPACES;
+
+    // Reduce height by 10% to make room for 5th workspace to peek at the bottom
+    this->leftPreviewHeight = baseHeight * 0.9f;
+
+    // Calculate max scroll offset based on existing workspaces + first placeholder
+    // Count how many non-placeholder workspaces exist on the left side
+    size_t numExistingWorkspaces = 0;
+    for (size_t i = 0; i < LEFT_WORKSPACES; ++i) {
+        if (images[i].workspaceID != -1) {
+            numExistingWorkspaces++;
+        }
+    }
+
+    // Include the first placeholder (with +) in scrolling calculation
+    // This allows users to scroll to see the + sign to create a new workspace
+    size_t numWorkspacesToShow = numExistingWorkspaces;
+    if (numExistingWorkspaces < LEFT_WORKSPACES) {
+        numWorkspacesToShow++; // Add 1 for the first placeholder
+    }
+
+    // Only allow scrolling if there are more than 4 workspaces to show
+    if (numWorkspacesToShow <= 4) {
+        this->maxScrollOffset = 0.0f;
+    } else {
+        // Calculate total height needed for workspaces + first placeholder
+        float totalWorkspacesHeight = numWorkspacesToShow * this->leftPreviewHeight +
+                                      (numWorkspacesToShow - 1) * GAP_WIDTH;
+        this->maxScrollOffset = std::max(0.0f, totalWorkspacesHeight - availableHeight);
+    }
 
     // Left workspaces: calculate width so that left margin = top/bottom margin = PADDING
     // The aspect ratio should match the monitor's aspect ratio for proper scaling
     const float monitorAspectRatio = monitorSize.x / monitorSize.y;
-    const float leftWorkspaceWidth = leftPreviewHeight * monitorAspectRatio;
+    const float leftWorkspaceWidth = this->leftPreviewHeight * monitorAspectRatio;
 
     // Active workspace: starts right after left section with PADDING gap
     const float activeX = PADDING + leftWorkspaceWidth + PADDING;  // left margin + left width + gap
@@ -178,8 +201,10 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
             image.box = {activeX, PADDING, activeMaxWidth, activeMaxHeight};
         } else {
             // Left side - workspace list (left margin = PADDING, same as top)
-            float yPos = PADDING + i * (leftPreviewHeight + GAP_WIDTH);
-            image.box = {PADDING, yPos, leftWorkspaceWidth, leftPreviewHeight};
+            // Apply scroll offset to shift workspaces up/down
+            float yPos = PADDING + i * (this->leftPreviewHeight + GAP_WIDTH) -
+                         scrollOffset;
+            image.box = {PADDING, yPos, leftWorkspaceWidth, this->leftPreviewHeight};
         }
 
         g_pHyprOpenGL->m_renderData.blockScreenShader = true;
@@ -387,6 +412,105 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
     };
 
     mouseButtonHook = g_pHookSystem->hookDynamic("mouseButton", onMouseButton);
+
+    // Setup mouse axis (scroll) hook to scroll workspace list
+    auto onMouseAxis = [this](void* self, SCallbackInfo& info, std::any param) {
+        std::ofstream logFile("/tmp/hyprland-debug", std::ios::app);
+        logFile << "[Overview] Scroll event triggered\n";
+        logFile.close();
+
+        Debug::log(LOG, "[Overview] Scroll event triggered");
+
+        if (closing) {
+            logFile.open("/tmp/hyprland-debug", std::ios::app);
+            logFile << "[Overview] Ignoring scroll - closing\n";
+            logFile.close();
+            return;
+        }
+
+        try {
+            logFile.open("/tmp/hyprland-debug", std::ios::app);
+            logFile << "[Overview] Extracting event\n";
+            logFile.close();
+
+            // Extract event from map
+            auto eventMap = std::any_cast<
+                std::unordered_map<std::string, std::any>
+            >(param);
+            auto e = std::any_cast<IPointer::SAxisEvent>(eventMap["event"]);
+
+            // Check if mouse is over the left side workspace area
+            const Vector2D monitorSize = pMonitor->m_size;
+            const float monitorAspectRatio = monitorSize.x / monitorSize.y;
+            const float leftWorkspaceWidth = this->leftPreviewHeight * monitorAspectRatio;
+            const float leftSideEndX = PADDING + leftWorkspaceWidth;
+
+            bool isOverLeftSide = (lastMousePosLocal.x >= PADDING &&
+                                   lastMousePosLocal.x <= leftSideEndX);
+
+            logFile.open("/tmp/hyprland-debug", std::ios::app);
+            logFile << "[Overview] Delta: " << e.delta << "\n";
+            logFile << "[Overview] Mouse X: " << lastMousePosLocal.x << "\n";
+            logFile << "[Overview] Left side bounds: " << PADDING << " to "
+                    << leftSideEndX << "\n";
+            logFile << "[Overview] Over left side: " << (isOverLeftSide ? "YES" : "NO") << "\n";
+            logFile.close();
+
+            // Only scroll if mouse is over the left side
+            if (isOverLeftSide) {
+                logFile.open("/tmp/hyprland-debug", std::ios::app);
+                logFile << "[Overview] ScrollOffset before: " << scrollOffset << "\n";
+                logFile << "[Overview] MaxScrollOffset: " << maxScrollOffset << "\n";
+                logFile.close();
+
+                // Adjust scroll offset based on scroll direction
+                // Positive delta = scroll down = show lower workspaces
+                // Negative delta = scroll up = show upper workspaces
+                const float SCROLL_SPEED = 30.0f;
+                scrollOffset += e.delta * SCROLL_SPEED;
+
+                // Clamp scroll offset to valid range [0, maxScrollOffset]
+                scrollOffset = std::clamp(scrollOffset, 0.0f, maxScrollOffset);
+
+                // Update box positions for all left-side workspaces to reflect new scroll
+                const Vector2D monitorSize = pMonitor->m_size;
+                const float monitorAspectRatio = monitorSize.x / monitorSize.y;
+                const float leftWorkspaceWidth = this->leftPreviewHeight * monitorAspectRatio;
+
+                for (size_t i = 0; i < images.size(); ++i) {
+                    if (i != (size_t)activeIndex) {
+                        float yPos = PADDING + i * (this->leftPreviewHeight + GAP_WIDTH) - scrollOffset;
+                        images[i].box = {PADDING, yPos, leftWorkspaceWidth, this->leftPreviewHeight};
+                    }
+                }
+
+                logFile.open("/tmp/hyprland-debug", std::ios::app);
+                logFile << "[Overview] ScrollOffset after: " << scrollOffset << "\n";
+                logFile.close();
+
+                // Trigger redraw
+                damage();
+
+                logFile.open("/tmp/hyprland-debug", std::ios::app);
+                logFile << "[Overview] Damage triggered\n";
+                logFile.close();
+            } else {
+                logFile.open("/tmp/hyprland-debug", std::ios::app);
+                logFile << "[Overview] Not over left side, scroll ignored\n";
+                logFile.close();
+            }
+
+        } catch (const std::exception& e) {
+            logFile.open("/tmp/hyprland-debug", std::ios::app);
+            logFile << "[Overview] Exception: " << e.what() << "\n";
+            logFile.close();
+        }
+
+        // Consume the scroll event to prevent it from propagating
+        info.cancelled = true;
+    };
+
+    mouseAxisHook = g_pHookSystem->hookDynamic("mouseAxis", onMouseAxis);
 }
 
 void COverview::redrawID(int id, bool forcelowres) {
@@ -542,20 +666,24 @@ void COverview::close() {
 
     // Switch workspace after starting the closing animation (exactly like hyprexpo)
     if (selectedIndex >= 0 && selectedIndex < (int)images.size()) {
-        const auto& targetImage = images[selectedIndex];
+        auto& targetImage = images[selectedIndex];
+        int64_t targetWorkspaceID = targetImage.workspaceID;
 
-        // Skip if this is a placeholder (no workspace ID assigned yet)
-        if (targetImage.workspaceID > 0 &&
-            targetImage.workspaceID != pMonitor->activeWorkspaceID()) {
+        // If this is a placeholder, create a new workspace
+        if (targetWorkspaceID == -1) {
+            targetWorkspaceID = findFirstAvailableWorkspaceID();
+            targetImage.workspaceID = targetWorkspaceID;
+        }
+
+        if (targetWorkspaceID > 0 &&
+            targetWorkspaceID != pMonitor->activeWorkspaceID()) {
             pMonitor->setSpecialWorkspace(nullptr);
 
-            const auto NEWIDWS =
-                g_pCompositor->getWorkspaceByID(targetImage.workspaceID);
+            const auto NEWIDWS = g_pCompositor->getWorkspaceByID(targetWorkspaceID);
             const auto OLDWS = pMonitor->m_activeWorkspace;
 
             if (!NEWIDWS)
-                g_pKeybindManager->changeworkspace(
-                    std::to_string(targetImage.workspaceID));
+                g_pKeybindManager->changeworkspace(std::to_string(targetWorkspaceID));
             else
                 g_pKeybindManager->changeworkspace(NEWIDWS->getConfigName());
 
@@ -672,6 +800,16 @@ void COverview::fullRender() {
         // During closing animation, if a different workspace was selected,
         // render the selected workspace in the active workspace position
         CBox texbox = image.box;
+
+        // For left side workspaces, recalculate position with scroll offset
+        if (i != (size_t)activeIndex) {
+            const float monitorAspectRatio = monitorSize.x / monitorSize.y;
+            const float leftWorkspaceWidth = this->leftPreviewHeight * monitorAspectRatio;
+            float yPos = PADDING + i * (this->leftPreviewHeight + GAP_WIDTH) -
+                         scrollOffset;
+            texbox = {PADDING, yPos, leftWorkspaceWidth, this->leftPreviewHeight};
+        }
+
         auto* fbToRender = &image.fb;
 
         if (closing && selectedIndex >= 0 && selectedIndex != activeIndex) {
@@ -871,7 +1009,16 @@ int COverview::findWorkspaceIndexAtPosition(const Vector2D& pos) {
 
     // Check if position is within any workspace box (with animation applied)
     for (size_t i = 0; i < images.size(); ++i) {
-        const auto& box = images[i].box;
+        CBox box = images[i].box;
+
+        // For left side workspaces, recalculate position with scroll offset
+        if (i != (size_t)activeIndex) {
+            const float monitorAspectRatio = monitorSize.x / monitorSize.y;
+            const float leftWorkspaceWidth = this->leftPreviewHeight * monitorAspectRatio;
+            float yPos = PADDING + i * (this->leftPreviewHeight + GAP_WIDTH) -
+                         scrollOffset;
+            box = {PADDING, yPos, leftWorkspaceWidth, this->leftPreviewHeight};
+        }
 
         // Apply same transformation as in fullRender()
         CBox transformedBox = box;
@@ -1016,8 +1163,18 @@ PHLWINDOW COverview::findWindowAtPosition(const Vector2D& pos, int workspaceInde
     const Vector2D currentPos  = this->pos->value();
     const float    zoomScale   = currentSize.x / monitorSize.x;
 
+    // Get the box, recalculating for left-side workspaces with scroll offset
+    CBox box = image.box;
+    if (workspaceIndex != activeIndex) {
+        const float monitorAspectRatio = monitorSize.x / monitorSize.y;
+        const float leftWorkspaceWidth = this->leftPreviewHeight * monitorAspectRatio;
+        float yPos = PADDING + workspaceIndex * (this->leftPreviewHeight + GAP_WIDTH) -
+                     scrollOffset;
+        box = {PADDING, yPos, leftWorkspaceWidth, this->leftPreviewHeight};
+    }
+
     // Apply same transformation as in fullRender()
-    CBox transformedBox = image.box;
+    CBox transformedBox = box;
     transformedBox.x = transformedBox.x * zoomScale + currentPos.x;
     transformedBox.y = transformedBox.y * zoomScale + currentPos.y;
     transformedBox.w = transformedBox.w * zoomScale;
@@ -1132,6 +1289,48 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
                 3000
             );
             return;
+        }
+
+        // Recalculate max scroll offset to allow scrolling to the new workspace + placeholder
+        // Count how many non-placeholder workspaces exist on the left side
+        size_t numExistingWorkspaces = 0;
+        for (size_t i = 0; i < LEFT_WORKSPACES; ++i) {
+            if (images[i].workspaceID != -1) {
+                numExistingWorkspaces++;
+            }
+        }
+
+        const Vector2D monitorSize = pMonitor->m_size;
+        const float availableHeight = monitorSize.y - (2 * PADDING);
+
+        // Include the first placeholder (with +) in scrolling calculation
+        size_t numWorkspacesToShow = numExistingWorkspaces;
+        if (numExistingWorkspaces < LEFT_WORKSPACES) {
+            numWorkspacesToShow++; // Add 1 for the first placeholder
+        }
+
+        // Only allow scrolling if there are more than 4 workspaces to show
+        if (numWorkspacesToShow <= 4) {
+            this->maxScrollOffset = 0.0f;
+        } else {
+            // Calculate total height needed for workspaces + first placeholder
+            float totalWorkspacesHeight = numWorkspacesToShow * this->leftPreviewHeight +
+                                          (numWorkspacesToShow - 1) * GAP_WIDTH;
+            this->maxScrollOffset = std::max(0.0f, totalWorkspacesHeight - availableHeight);
+        }
+
+        // Clamp current scroll offset to new bounds
+        scrollOffset = std::clamp(scrollOffset, 0.0f, maxScrollOffset);
+
+        // Update box positions for all left-side workspaces to reflect new scroll
+        const float monitorAspectRatio = monitorSize.x / monitorSize.y;
+        const float leftWorkspaceWidth = this->leftPreviewHeight * monitorAspectRatio;
+
+        for (size_t i = 0; i < images.size(); ++i) {
+            if (i != (size_t)activeIndex) {
+                float yPos = PADDING + i * (this->leftPreviewHeight + GAP_WIDTH) - scrollOffset;
+                images[i].box = {PADDING, yPos, leftWorkspaceWidth, this->leftPreviewHeight};
+            }
         }
 
         // Trigger redraw

@@ -2108,3 +2108,372 @@ TEST_F(WorkspaceIDAllocationTest, DuplicateHandling) {
     int64_t result = findFirstAvailableID(existing, planned);
     EXPECT_EQ(result, 4);
 }
+
+// Test helper: Calculate max scroll offset based on workspace configuration
+static float calculateMaxScrollOffset(
+    const std::vector<int64_t>& workspaceIDs,  // -1 = placeholder
+    float monitorHeight,
+    float padding,
+    float gapWidth
+) {
+    const int LEFT_WORKSPACES = 8;
+    const int VISIBLE_WORKSPACES = 4;
+
+    // Count non-placeholder workspaces
+    size_t numExistingWorkspaces = 0;
+    for (size_t i = 0; i < workspaceIDs.size() && i < LEFT_WORKSPACES; ++i) {
+        if (workspaceIDs[i] != -1) {
+            numExistingWorkspaces++;
+        }
+    }
+
+    // Include the first placeholder in scrolling calculation
+    size_t numWorkspacesToShow = numExistingWorkspaces;
+    if (numExistingWorkspaces < LEFT_WORKSPACES) {
+        numWorkspacesToShow++; // Add 1 for the first placeholder
+    }
+
+    // Only allow scrolling if there are more than 4 workspaces to show
+    if (numWorkspacesToShow <= 4) {
+        return 0.0f;
+    }
+
+    // Calculate workspace height (same as in the actual code)
+    const float availableHeight = monitorHeight - (2 * padding);
+    const float totalGaps = (VISIBLE_WORKSPACES - 1) * gapWidth;
+    const float baseHeight = (availableHeight - totalGaps) / VISIBLE_WORKSPACES;
+    const float leftPreviewHeight = baseHeight * 0.9f;  // 10% reduction
+
+    // Calculate total height needed for workspaces + first placeholder
+    float totalWorkspacesHeight = numWorkspacesToShow * leftPreviewHeight +
+                                  (numWorkspacesToShow - 1) * gapWidth;
+    return std::max(0.0f, totalWorkspacesHeight - availableHeight);
+}
+
+// Scrolling tests
+class ScrollingTest : public ::testing::Test {
+protected:
+    const float MONITOR_HEIGHT = 1080.0f;
+    const float PADDING = 20.0f;
+    const float GAP_WIDTH = 10.0f;
+};
+
+TEST_F(ScrollingTest, NoScrollingWithFourOrFewerWorkspaces) {
+    // With 1 workspace + 1 placeholder = 2 total, no scrolling
+    std::vector<int64_t> workspaces1 = {1, -1, -1, -1, -1, -1, -1, -1};
+    float maxScroll1 = calculateMaxScrollOffset(workspaces1, MONITOR_HEIGHT, PADDING, GAP_WIDTH);
+    EXPECT_FLOAT_EQ(maxScroll1, 0.0f);
+
+    // With 2 workspaces + 1 placeholder = 3 total, no scrolling
+    std::vector<int64_t> workspaces2 = {1, 2, -1, -1, -1, -1, -1, -1};
+    float maxScroll2 = calculateMaxScrollOffset(workspaces2, MONITOR_HEIGHT, PADDING, GAP_WIDTH);
+    EXPECT_FLOAT_EQ(maxScroll2, 0.0f);
+
+    // With 3 workspaces + 1 placeholder = 4 total, no scrolling
+    std::vector<int64_t> workspaces3 = {1, 2, 3, -1, -1, -1, -1, -1};
+    float maxScroll3 = calculateMaxScrollOffset(workspaces3, MONITOR_HEIGHT, PADDING, GAP_WIDTH);
+    EXPECT_FLOAT_EQ(maxScroll3, 0.0f);
+
+    // With 4 workspaces + 1 placeholder = 5 total, scrolling enabled
+    std::vector<int64_t> workspaces4 = {1, 2, 3, 4, -1, -1, -1, -1};
+    float maxScroll4 = calculateMaxScrollOffset(workspaces4, MONITOR_HEIGHT, PADDING, GAP_WIDTH);
+    EXPECT_GT(maxScroll4, 0.0f);  // Should allow scrolling
+}
+
+TEST_F(ScrollingTest, ScrollingWithFiveWorkspacesIncludesPlaceholder) {
+    // With 4 workspaces + 1 placeholder = 5 to show
+    std::vector<int64_t> workspaces = {1, 2, 3, 4, -1, -1, -1, -1};
+    float maxScroll = calculateMaxScrollOffset(workspaces, MONITOR_HEIGHT, PADDING, GAP_WIDTH);
+
+    // Should be > 0 to allow scrolling to the placeholder
+    EXPECT_GT(maxScroll, 0.0f);
+
+    // Calculate expected value
+    const float availableHeight = MONITOR_HEIGHT - (2 * PADDING);
+    const float totalGaps = 3 * GAP_WIDTH;  // 4 visible - 1
+    const float baseHeight = (availableHeight - totalGaps) / 4;
+    const float workspaceHeight = baseHeight * 0.9f;
+
+    // 5 workspaces to show (4 existing + 1 placeholder)
+    float totalHeight = 5 * workspaceHeight + 4 * GAP_WIDTH;
+    float expected = totalHeight - availableHeight;
+
+    EXPECT_FLOAT_EQ(maxScroll, expected);
+}
+
+TEST_F(ScrollingTest, ScrollingWithSixWorkspaces) {
+    // With 5 workspaces + 1 placeholder = 6 to show
+    std::vector<int64_t> workspaces = {1, 2, 3, 4, 5, -1, -1, -1};
+    float maxScroll = calculateMaxScrollOffset(workspaces, MONITOR_HEIGHT, PADDING, GAP_WIDTH);
+
+    EXPECT_GT(maxScroll, 0.0f);
+
+    // Calculate expected value
+    const float availableHeight = MONITOR_HEIGHT - (2 * PADDING);
+    const float totalGaps = 3 * GAP_WIDTH;
+    const float baseHeight = (availableHeight - totalGaps) / 4;
+    const float workspaceHeight = baseHeight * 0.9f;
+
+    // 6 workspaces to show (5 existing + 1 placeholder)
+    float totalHeight = 6 * workspaceHeight + 5 * GAP_WIDTH;
+    float expected = totalHeight - availableHeight;
+
+    EXPECT_FLOAT_EQ(maxScroll, expected);
+}
+
+TEST_F(ScrollingTest, ScrollingWithSevenWorkspaces) {
+    // With 6 workspaces + 1 placeholder = 7 to show
+    std::vector<int64_t> workspaces = {1, 2, 3, 4, 5, 6, -1, -1};
+    float maxScroll = calculateMaxScrollOffset(workspaces, MONITOR_HEIGHT, PADDING, GAP_WIDTH);
+
+    EXPECT_GT(maxScroll, 0.0f);
+
+    // Calculate expected value
+    const float availableHeight = MONITOR_HEIGHT - (2 * PADDING);
+    const float totalGaps = 3 * GAP_WIDTH;
+    const float baseHeight = (availableHeight - totalGaps) / 4;
+    const float workspaceHeight = baseHeight * 0.9f;
+
+    // 7 workspaces to show (6 existing + 1 placeholder)
+    float totalHeight = 7 * workspaceHeight + 6 * GAP_WIDTH;
+    float expected = totalHeight - availableHeight;
+
+    EXPECT_FLOAT_EQ(maxScroll, expected);
+}
+
+TEST_F(ScrollingTest, ScrollingWithEightWorkspacesFull) {
+    // With 7 workspaces + 1 placeholder = 8 to show (maximum)
+    std::vector<int64_t> workspaces = {1, 2, 3, 4, 5, 6, 7, -1};
+    float maxScroll = calculateMaxScrollOffset(workspaces, MONITOR_HEIGHT, PADDING, GAP_WIDTH);
+
+    EXPECT_GT(maxScroll, 0.0f);
+
+    // Calculate expected value
+    const float availableHeight = MONITOR_HEIGHT - (2 * PADDING);
+    const float totalGaps = 3 * GAP_WIDTH;
+    const float baseHeight = (availableHeight - totalGaps) / 4;
+    const float workspaceHeight = baseHeight * 0.9f;
+
+    // 8 workspaces to show (7 existing + 1 placeholder)
+    float totalHeight = 8 * workspaceHeight + 7 * GAP_WIDTH;
+    float expected = totalHeight - availableHeight;
+
+    EXPECT_FLOAT_EQ(maxScroll, expected);
+}
+
+TEST_F(ScrollingTest, NoPlaceholderWhenAllSlotsFilled) {
+    // All 8 slots filled, no placeholder to add
+    std::vector<int64_t> workspaces = {1, 2, 3, 4, 5, 6, 7, 8};
+    float maxScroll = calculateMaxScrollOffset(workspaces, MONITOR_HEIGHT, PADDING, GAP_WIDTH);
+
+    EXPECT_GT(maxScroll, 0.0f);
+
+    // Calculate expected value - only 8 workspaces, no placeholder
+    const float availableHeight = MONITOR_HEIGHT - (2 * PADDING);
+    const float totalGaps = 3 * GAP_WIDTH;
+    const float baseHeight = (availableHeight - totalGaps) / 4;
+    const float workspaceHeight = baseHeight * 0.9f;
+
+    // 8 workspaces to show (no room for placeholder)
+    float totalHeight = 8 * workspaceHeight + 7 * GAP_WIDTH;
+    float expected = totalHeight - availableHeight;
+
+    EXPECT_FLOAT_EQ(maxScroll, expected);
+}
+
+TEST_F(ScrollingTest, MaxScrollIncreasesWithMoreWorkspaces) {
+    // Verify that maxScroll increases as we add more workspaces
+    std::vector<int64_t> workspaces4 = {1, 2, 3, 4, -1, -1, -1, -1};
+    std::vector<int64_t> workspaces5 = {1, 2, 3, 4, 5, -1, -1, -1};
+    std::vector<int64_t> workspaces6 = {1, 2, 3, 4, 5, 6, -1, -1};
+    std::vector<int64_t> workspaces7 = {1, 2, 3, 4, 5, 6, 7, -1};
+
+    float maxScroll4 = calculateMaxScrollOffset(workspaces4, MONITOR_HEIGHT, PADDING, GAP_WIDTH);
+    float maxScroll5 = calculateMaxScrollOffset(workspaces5, MONITOR_HEIGHT, PADDING, GAP_WIDTH);
+    float maxScroll6 = calculateMaxScrollOffset(workspaces6, MONITOR_HEIGHT, PADDING, GAP_WIDTH);
+    float maxScroll7 = calculateMaxScrollOffset(workspaces7, MONITOR_HEIGHT, PADDING, GAP_WIDTH);
+
+    EXPECT_GT(maxScroll5, maxScroll4);
+    EXPECT_GT(maxScroll6, maxScroll5);
+    EXPECT_GT(maxScroll7, maxScroll6);
+}
+
+TEST_F(ScrollingTest, DifferentMonitorHeights) {
+    // Test with different monitor heights
+    std::vector<int64_t> workspaces = {1, 2, 3, 4, 5, -1, -1, -1};
+
+    float maxScroll720 = calculateMaxScrollOffset(workspaces, 720.0f, PADDING, GAP_WIDTH);
+    float maxScroll1080 = calculateMaxScrollOffset(workspaces, 1080.0f, PADDING, GAP_WIDTH);
+    float maxScroll1440 = calculateMaxScrollOffset(workspaces, 1440.0f, PADDING, GAP_WIDTH);
+
+    // All should allow scrolling
+    EXPECT_GT(maxScroll720, 0.0f);
+    EXPECT_GT(maxScroll1080, 0.0f);
+    EXPECT_GT(maxScroll1440, 0.0f);
+
+    // Higher resolution requires more scrolling (larger total workspace height)
+    EXPECT_LT(maxScroll720, maxScroll1080);
+    EXPECT_LT(maxScroll1080, maxScroll1440);
+}
+
+// Workspace selection after scrolling tests
+class WorkspaceSelectionWithScrollingTest : public ::testing::Test {
+protected:
+    const float MONITOR_HEIGHT = 1080.0f;
+    const float MONITOR_WIDTH = 1920.0f;
+    const float PADDING = 20.0f;
+    const float GAP_WIDTH = 10.0f;
+
+    // Helper to calculate workspace boxes with scroll offset
+    std::vector<LayoutBox> calculateWorkspaceBoxes(
+        int numWorkspaces,
+        float scrollOffset,
+        int activeIndex
+    ) {
+        const int VISIBLE_WORKSPACES = 4;
+        const float availableHeight = MONITOR_HEIGHT - (2 * PADDING);
+        const float totalGaps = (VISIBLE_WORKSPACES - 1) * GAP_WIDTH;
+        const float baseHeight = (availableHeight - totalGaps) / VISIBLE_WORKSPACES;
+        const float leftPreviewHeight = baseHeight * 0.9f;
+
+        const float monitorAspectRatio = MONITOR_WIDTH / MONITOR_HEIGHT;
+        const float leftWorkspaceWidth = leftPreviewHeight * monitorAspectRatio;
+
+        std::vector<LayoutBox> boxes;
+        for (int i = 0; i < numWorkspaces + 1; ++i) {
+            if (i == activeIndex) {
+                // Right side - active workspace (not scrollable)
+                const float activeX = PADDING + leftWorkspaceWidth + PADDING;
+                const float activeMaxWidth = MONITOR_WIDTH - activeX - PADDING;
+                const float activeMaxHeight = MONITOR_HEIGHT - (2 * PADDING);
+                boxes.push_back({activeX, PADDING, activeMaxWidth, activeMaxHeight, true});
+            } else {
+                // Left side - workspace list (scrollable)
+                float yPos = PADDING + i * (leftPreviewHeight + GAP_WIDTH) - scrollOffset;
+                boxes.push_back({PADDING, yPos, leftWorkspaceWidth, leftPreviewHeight, false});
+            }
+        }
+        return boxes;
+    }
+
+    // Helper to find which workspace was clicked
+    int findClickedWorkspace(float posX, float posY, const std::vector<LayoutBox>& boxes) {
+        for (size_t i = 0; i < boxes.size(); ++i) {
+            const auto& box = boxes[i];
+            if (posX >= box.x && posX <= box.x + box.w &&
+                posY >= box.y && posY <= box.y + box.h) {
+                return i;
+            }
+        }
+        return -1;
+    }
+};
+
+TEST_F(WorkspaceSelectionWithScrollingTest, ClickFirstWorkspaceNoScroll) {
+    // With 5 workspaces (indices 0-4) and active at index 4, no scrolling
+    std::vector<LayoutBox> boxes = calculateWorkspaceBoxes(4, 0.0f, 4);
+
+    // Click on the first workspace (top of left side)
+    int selected = findClickedWorkspace(PADDING + 10.0f, PADDING + 50.0f, boxes);
+
+    EXPECT_EQ(selected, 0);
+}
+
+TEST_F(WorkspaceSelectionWithScrollingTest, ClickSecondWorkspaceAfterScroll) {
+    // With 6 workspaces and scrolled down by 200 pixels
+    const float scrollOffset = 200.0f;
+    std::vector<LayoutBox> boxes = calculateWorkspaceBoxes(5, scrollOffset, 5);
+
+    // The second workspace (index 1) should now be at the top
+    // Click near the top of the visible area
+    int selected = findClickedWorkspace(PADDING + 10.0f, PADDING + 10.0f, boxes);
+
+    // We should hit workspace at index 1 or 2 depending on exact scroll amount
+    EXPECT_GE(selected, 0);
+    EXPECT_LE(selected, 5);
+}
+
+TEST_F(WorkspaceSelectionWithScrollingTest, ClickWorkspacePartiallyOffScreen) {
+    // With 6 workspaces and scrolled down, the first workspace is partially off-screen
+    const float scrollOffset = 100.0f;
+    std::vector<LayoutBox> boxes = calculateWorkspaceBoxes(5, scrollOffset, 5);
+
+    // Try to click on workspace 0 which is now partially above the visible area
+    int selected = findClickedWorkspace(PADDING + 10.0f, PADDING - 50.0f, boxes);
+
+    // Should not select anything (click is outside monitor bounds)
+    // Or might select workspace 0 if its box extends above visible area
+    // The key is that the box position should be updated correctly
+    EXPECT_TRUE(selected == -1 || selected == 0);
+}
+
+TEST_F(WorkspaceSelectionWithScrollingTest, ClickBottomWorkspaceAfterMaxScroll) {
+    // With 8 workspaces, scroll to maximum to see the last ones
+    const int LEFT_WORKSPACES = 8;
+    const int VISIBLE_WORKSPACES = 4;
+    const float availableHeight = MONITOR_HEIGHT - (2 * PADDING);
+    const float totalGaps = (VISIBLE_WORKSPACES - 1) * GAP_WIDTH;
+    const float baseHeight = (availableHeight - totalGaps) / VISIBLE_WORKSPACES;
+    const float leftPreviewHeight = baseHeight * 0.9f;
+
+    // Calculate max scroll for 8 workspaces
+    float totalWorkspacesHeight = LEFT_WORKSPACES * leftPreviewHeight +
+                                  (LEFT_WORKSPACES - 1) * GAP_WIDTH;
+    float maxScrollOffset = std::max(0.0f, totalWorkspacesHeight - availableHeight);
+
+    std::vector<LayoutBox> boxes = calculateWorkspaceBoxes(7, maxScrollOffset, 8);
+
+    // Click near the bottom of the visible area (should be workspace 7)
+    int selected = findClickedWorkspace(PADDING + 10.0f, MONITOR_HEIGHT - PADDING - 50.0f, boxes);
+
+    // Should select one of the last workspaces (6 or 7)
+    EXPECT_GE(selected, 5);
+    EXPECT_LE(selected, 7);
+}
+
+TEST_F(WorkspaceSelectionWithScrollingTest, ClickActiveWorkspaceNotAffectedByScroll) {
+    // The active workspace on the right should not be affected by scrolling
+    const float scrollOffset = 200.0f;
+    std::vector<LayoutBox> boxes = calculateWorkspaceBoxes(5, scrollOffset, 5);
+
+    // Click on the right side where the active workspace is
+    const float monitorAspectRatio = MONITOR_WIDTH / MONITOR_HEIGHT;
+    const int VISIBLE_WORKSPACES = 4;
+    const float availableHeight = MONITOR_HEIGHT - (2 * PADDING);
+    const float totalGaps = (VISIBLE_WORKSPACES - 1) * GAP_WIDTH;
+    const float baseHeight = (availableHeight - totalGaps) / VISIBLE_WORKSPACES;
+    const float leftPreviewHeight = baseHeight * 0.9f;
+    const float leftWorkspaceWidth = leftPreviewHeight * monitorAspectRatio;
+    const float activeX = PADDING + leftWorkspaceWidth + PADDING;
+
+    int selected = findClickedWorkspace(activeX + 100.0f, MONITOR_HEIGHT / 2.0f, boxes);
+
+    // Should select the active workspace (index 5)
+    EXPECT_EQ(selected, 5);
+}
+
+TEST_F(WorkspaceSelectionWithScrollingTest, MultipleScrollUpdatesBoxPositions) {
+    // Simulate multiple scroll operations
+    std::vector<float> scrollOffsets = {0.0f, 100.0f, 200.0f, 150.0f, 50.0f};
+
+    for (float scrollOffset : scrollOffsets) {
+        std::vector<LayoutBox> boxes = calculateWorkspaceBoxes(5, scrollOffset, 5);
+
+        // Verify that the first workspace's Y position is correctly offset
+        EXPECT_FLOAT_EQ(boxes[0].y, PADDING - scrollOffset);
+
+        // Verify that workspace box positions are consistent with scroll offset
+        for (size_t i = 0; i < 5; ++i) {
+            if (i != 5) {  // Skip active workspace
+                const int VISIBLE_WORKSPACES = 4;
+                const float availableHeight = MONITOR_HEIGHT - (2 * PADDING);
+                const float totalGaps = (VISIBLE_WORKSPACES - 1) * GAP_WIDTH;
+                const float baseHeight = (availableHeight - totalGaps) / VISIBLE_WORKSPACES;
+                const float leftPreviewHeight = baseHeight * 0.9f;
+
+                float expectedY = PADDING + i * (leftPreviewHeight + GAP_WIDTH) - scrollOffset;
+                EXPECT_FLOAT_EQ(boxes[i].y, expectedY);
+            }
+        }
+    }
+}

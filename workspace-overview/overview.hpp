@@ -86,7 +86,7 @@ class COverview {
     static int64_t findFirstAvailableWorkspaceID();
 
     // Layout constants
-    static constexpr int   LEFT_WORKSPACES     = 4;  // Number of workspaces in left list
+    static constexpr int   LEFT_WORKSPACES     = 8;  // Number of workspaces in left list
     static constexpr float LEFT_WIDTH_RATIO    = 0.33f;  // Left side takes 1/3
     static constexpr float GAP_WIDTH           = 10.0f;
     static constexpr float PADDING             = 20.0f;
@@ -113,6 +113,11 @@ class COverview {
     bool     closing = false;
     Vector2D lastMousePosLocal = Vector2D{};
 
+    // Scroll offset for workspace list
+    float scrollOffset = 0.0f;
+    float maxScrollOffset = 0.0f;
+    float leftPreviewHeight = 0.0f;
+
     // Drag detection
     static constexpr float DRAG_THRESHOLD = 50.0f;
     static constexpr float DRAG_PREVIEW_SCALE = 0.10f;  // Scale factor for drag preview
@@ -120,6 +125,7 @@ class COverview {
     // Event hooks
     SP<HOOK_CALLBACK_FN> mouseButtonHook;
     SP<HOOK_CALLBACK_FN> mouseMoveHook;
+    SP<HOOK_CALLBACK_FN> mouseAxisHook;
 
     friend class COverviewPassElement;
     friend void removeOverview(WP<Hyprutils::Animation::CBaseAnimatedVariable>, PHLMONITOR);
