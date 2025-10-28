@@ -65,6 +65,8 @@ class COverview {
     // Helper functions for constructor
     void setupWorkspaceIDs(int currentID);
     void calculateLayoutBoxes(const Vector2D& monitorSize);
+    void setInitialScrollPosition(float availableHeight);
+    void adjustScrollForEqualPartialVisibility(float availableHeight);
     void renderWorkspacesToFramebuffers(PHLMONITOR monitor,
                                         PHLWORKSPACE openSpecial);
     void setupAnimations(const Vector2D& monitorSize);

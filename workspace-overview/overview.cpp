@@ -140,6 +140,12 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
         this->maxScrollOffset = std::max(0.0f, totalWorkspacesHeight - availableHeight);
     }
 
+    // Set initial scroll position to center active workspace
+    setInitialScrollPosition(availableHeight);
+
+    // Adjust scroll position for equal partial visibility at top and bottom
+    adjustScrollForEqualPartialVisibility(availableHeight);
+
     // Left workspaces: calculate width so that left margin = top/bottom margin = PADDING
     // The aspect ratio should match the monitor's aspect ratio for proper scaling
     const float monitorAspectRatio = monitorSize.x / monitorSize.y;
@@ -415,24 +421,11 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
 
     // Setup mouse axis (scroll) hook to scroll workspace list
     auto onMouseAxis = [this](void* self, SCallbackInfo& info, std::any param) {
-        std::ofstream logFile("/tmp/hyprland-debug", std::ios::app);
-        logFile << "[Overview] Scroll event triggered\n";
-        logFile.close();
-
-        Debug::log(LOG, "[Overview] Scroll event triggered");
-
         if (closing) {
-            logFile.open("/tmp/hyprland-debug", std::ios::app);
-            logFile << "[Overview] Ignoring scroll - closing\n";
-            logFile.close();
             return;
         }
 
         try {
-            logFile.open("/tmp/hyprland-debug", std::ios::app);
-            logFile << "[Overview] Extracting event\n";
-            logFile.close();
-
             // Extract event from map
             auto eventMap = std::any_cast<
                 std::unordered_map<std::string, std::any>
@@ -448,24 +441,9 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
             bool isOverLeftSide = (lastMousePosLocal.x >= PADDING &&
                                    lastMousePosLocal.x <= leftSideEndX);
 
-            logFile.open("/tmp/hyprland-debug", std::ios::app);
-            logFile << "[Overview] Delta: " << e.delta << "\n";
-            logFile << "[Overview] Mouse X: " << lastMousePosLocal.x << "\n";
-            logFile << "[Overview] Left side bounds: " << PADDING << " to "
-                    << leftSideEndX << "\n";
-            logFile << "[Overview] Over left side: " << (isOverLeftSide ? "YES" : "NO") << "\n";
-            logFile.close();
-
             // Only scroll if mouse is over the left side
             if (isOverLeftSide) {
-                logFile.open("/tmp/hyprland-debug", std::ios::app);
-                logFile << "[Overview] ScrollOffset before: " << scrollOffset << "\n";
-                logFile << "[Overview] MaxScrollOffset: " << maxScrollOffset << "\n";
-                logFile.close();
-
                 // Adjust scroll offset based on scroll direction
-                // Positive delta = scroll down = show lower workspaces
-                // Negative delta = scroll up = show upper workspaces
                 const float SCROLL_SPEED = 30.0f;
                 scrollOffset += e.delta * SCROLL_SPEED;
 
@@ -473,10 +451,6 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
                 scrollOffset = std::clamp(scrollOffset, 0.0f, maxScrollOffset);
 
                 // Update box positions for all left-side workspaces to reflect new scroll
-                const Vector2D monitorSize = pMonitor->m_size;
-                const float monitorAspectRatio = monitorSize.x / monitorSize.y;
-                const float leftWorkspaceWidth = this->leftPreviewHeight * monitorAspectRatio;
-
                 for (size_t i = 0; i < images.size(); ++i) {
                     if (i != (size_t)activeIndex) {
                         float yPos = PADDING + i * (this->leftPreviewHeight + GAP_WIDTH) - scrollOffset;
@@ -484,26 +458,12 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
                     }
                 }
 
-                logFile.open("/tmp/hyprland-debug", std::ios::app);
-                logFile << "[Overview] ScrollOffset after: " << scrollOffset << "\n";
-                logFile.close();
-
                 // Trigger redraw
                 damage();
-
-                logFile.open("/tmp/hyprland-debug", std::ios::app);
-                logFile << "[Overview] Damage triggered\n";
-                logFile.close();
-            } else {
-                logFile.open("/tmp/hyprland-debug", std::ios::app);
-                logFile << "[Overview] Not over left side, scroll ignored\n";
-                logFile.close();
             }
 
         } catch (const std::exception& e) {
-            logFile.open("/tmp/hyprland-debug", std::ios::app);
-            logFile << "[Overview] Exception: " << e.what() << "\n";
-            logFile.close();
+            Debug::log(ERR, "[Overview] Exception in scroll handler: {}", e.what());
         }
 
         // Consume the scroll event to prevent it from propagating
@@ -511,6 +471,86 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
     };
 
     mouseAxisHook = g_pHookSystem->hookDynamic("mouseAxis", onMouseAxis);
+}
+
+void COverview::setInitialScrollPosition(float availableHeight) {
+    // Find the active workspace on the left side
+    int activeLeftIndex = -1;
+    for (size_t i = 0; i < LEFT_WORKSPACES; ++i) {
+        if (images[i].isActive) {
+            activeLeftIndex = i;
+            break;
+        }
+    }
+
+    if (activeLeftIndex < 0) {
+        // Active workspace not found on left side, keep scrollOffset at 0
+        return;
+    }
+
+    // Calculate scroll offset to center the active workspace
+    float panelCenter = availableHeight / 2.0f;
+    float workspaceTopWithoutScroll = activeLeftIndex * (this->leftPreviewHeight + GAP_WIDTH);
+    float workspaceCenterOffset = this->leftPreviewHeight / 2.0f;
+
+    scrollOffset = workspaceTopWithoutScroll + workspaceCenterOffset - panelCenter;
+
+    // Clamp to valid range to ensure we don't scroll beyond boundaries
+    scrollOffset = std::clamp(scrollOffset, 0.0f, maxScrollOffset);
+}
+
+void COverview::adjustScrollForEqualPartialVisibility(float availableHeight) {
+    // Only adjust if we're not at the very top or very bottom
+    if (scrollOffset <= 0.0f || scrollOffset >= maxScrollOffset) {
+        return;
+    }
+
+    // Count total number of workspaces (including placeholders) to display
+    int numWorkspacesToShow = 0;
+    for (size_t i = 0; i < LEFT_WORKSPACES; ++i) {
+        if (images[i].workspaceID != -1) {
+            numWorkspacesToShow = i + 1;
+        }
+    }
+
+    // Add 1 for first placeholder if not all slots are filled
+    if (numWorkspacesToShow < LEFT_WORKSPACES) {
+        numWorkspacesToShow++;
+    }
+
+    // Only adjust if there are more than 4 workspaces (scrolling is enabled)
+    if (numWorkspacesToShow <= 4) {
+        return;
+    }
+
+    // Calculate positions of first and last workspaces
+    int firstIndex = 0;
+    int lastIndex = numWorkspacesToShow - 1;
+
+    float firstYPos = PADDING + firstIndex * (this->leftPreviewHeight + GAP_WIDTH) - scrollOffset;
+    float lastYPos = PADDING + lastIndex * (this->leftPreviewHeight + GAP_WIDTH) - scrollOffset;
+
+    // Check if both first and last are partially visible
+    // Partially visible means: cut off but still showing some part
+    bool firstPartiallyVisible = (firstYPos < PADDING) &&
+                                  ((firstYPos + this->leftPreviewHeight) > PADDING);
+    bool lastPartiallyVisible = ((lastYPos + this->leftPreviewHeight) > (PADDING + availableHeight)) &&
+                                 (lastYPos < (PADDING + availableHeight));
+
+    if (!firstPartiallyVisible || !lastPartiallyVisible) {
+        return;
+    }
+
+    // Calculate how much of each is visible
+    float topPartial = (firstYPos + this->leftPreviewHeight) - PADDING;
+    float bottomPartial = (PADDING + availableHeight) - lastYPos;
+
+    // Adjust scroll offset to equalize the partial visibility
+    float difference = bottomPartial - topPartial;
+    scrollOffset -= difference / 2.0f;
+
+    // Clamp again after adjustment
+    scrollOffset = std::clamp(scrollOffset, 0.0f, maxScrollOffset);
 }
 
 void COverview::redrawID(int id, bool forcelowres) {

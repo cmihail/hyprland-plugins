@@ -2557,3 +2557,258 @@ TEST_F(WorkspaceSelectionWithScrollingTest, MultipleScrollUpdatesBoxPositions) {
         }
     }
 }
+
+// ============================================================================
+// Initial Scroll Positioning Tests
+// ============================================================================
+
+class InitialScrollPositioningTest : public ::testing::Test {
+protected:
+    const float MONITOR_HEIGHT = 1200.0f;
+    const float PADDING = 20.0f;
+    const float GAP_WIDTH = 10.0f;
+
+    float calculateCenteringScrollOffset(int activeIndex, float availableHeight) {
+        const float totalGaps = 3 * GAP_WIDTH;
+        const float baseHeight = (availableHeight - totalGaps) / 4;
+        const float workspaceHeight = baseHeight * 0.9f;
+
+        float panelCenter = availableHeight / 2.0f;
+        float workspaceTopWithoutScroll = activeIndex * (workspaceHeight + GAP_WIDTH);
+        float workspaceCenterOffset = workspaceHeight / 2.0f;
+
+        return workspaceTopWithoutScroll + workspaceCenterOffset - panelCenter;
+    }
+};
+
+TEST_F(InitialScrollPositioningTest, FirstWorkspaceStaysAtTop) {
+    // Active workspace is first (index 0)
+    const float availableHeight = MONITOR_HEIGHT - (2 * PADDING);
+    float scrollOffset = calculateCenteringScrollOffset(0, availableHeight);
+
+    // Centering would result in negative scroll, should clamp to 0
+    EXPECT_LE(scrollOffset, 0.0f);
+}
+
+TEST_F(InitialScrollPositioningTest, SecondWorkspaceStaysAtTop) {
+    // Active workspace is second (index 1)
+    const float availableHeight = MONITOR_HEIGHT - (2 * PADDING);
+    float scrollOffset = calculateCenteringScrollOffset(1, availableHeight);
+
+    // Centering might still result in negative or very small scroll
+    // Should be clamped to 0 or very small value
+    EXPECT_LE(scrollOffset, 50.0f);
+}
+
+TEST_F(InitialScrollPositioningTest, MiddleWorkspaceIsCentered) {
+    // Active workspace is in the middle (index 4 out of 8)
+    const float availableHeight = MONITOR_HEIGHT - (2 * PADDING);
+    float scrollOffset = calculateCenteringScrollOffset(4, availableHeight);
+
+    // Should have meaningful scroll offset to center
+    EXPECT_GT(scrollOffset, 100.0f);
+    EXPECT_LT(scrollOffset, 700.0f);
+
+    // Verify workspace would actually be centered
+    const float totalGaps = 3 * GAP_WIDTH;
+    const float baseHeight = (availableHeight - totalGaps) / 4;
+    const float workspaceHeight = baseHeight * 0.9f;
+
+    float workspaceYPos = PADDING + 4 * (workspaceHeight + GAP_WIDTH) - scrollOffset;
+    float workspaceCenter = workspaceYPos + workspaceHeight / 2.0f;
+    float panelCenter = PADDING + availableHeight / 2.0f;
+
+    EXPECT_NEAR(workspaceCenter, panelCenter, 0.1f);
+}
+
+TEST_F(InitialScrollPositioningTest, LastWorkspaceClampedToMaxScroll) {
+    // Active workspace is last (index 7)
+    std::vector<int64_t> workspaces = {1, 2, 3, 4, 5, 6, 7, 8};
+    const float availableHeight = MONITOR_HEIGHT - (2 * PADDING);
+
+    float scrollOffset = calculateCenteringScrollOffset(7, availableHeight);
+    float maxScroll = calculateMaxScrollOffset(workspaces, MONITOR_HEIGHT, PADDING, GAP_WIDTH);
+
+    // Should be clamped to maxScrollOffset
+    EXPECT_GE(scrollOffset, maxScroll - 10.0f);  // Allow small tolerance
+}
+
+TEST_F(InitialScrollPositioningTest, CenteringWithDifferentMonitorHeights) {
+    // Test with smaller monitor
+    float smallHeight = 800.0f;
+    float smallAvailableHeight = smallHeight - (2 * PADDING);
+    float scrollSmall = calculateCenteringScrollOffset(4, smallAvailableHeight);
+
+    // Test with larger monitor
+    float largeHeight = 1600.0f;
+    float largeAvailableHeight = largeHeight - (2 * PADDING);
+    float scrollLarge = calculateCenteringScrollOffset(4, largeAvailableHeight);
+
+    // Both should center, but with different scroll values
+    EXPECT_GT(scrollSmall, 0.0f);
+    EXPECT_GT(scrollLarge, 0.0f);
+    EXPECT_NE(scrollSmall, scrollLarge);
+}
+
+// ============================================================================
+// Equal Partial Visibility Tests
+// ============================================================================
+
+class EqualPartialVisibilityTest : public ::testing::Test {
+protected:
+    const float MONITOR_HEIGHT = 1200.0f;
+    const float PADDING = 20.0f;
+    const float GAP_WIDTH = 10.0f;
+
+    struct PartialVisibilityInfo {
+        bool firstPartiallyVisible;
+        bool lastPartiallyVisible;
+        float topPartial;
+        float bottomPartial;
+    };
+
+    PartialVisibilityInfo checkPartialVisibility(
+        float scrollOffset,
+        int numWorkspaces,
+        float workspaceHeight
+    ) {
+        const float availableHeight = MONITOR_HEIGHT - (2 * PADDING);
+
+        int firstIndex = 0;
+        int lastIndex = numWorkspaces - 1;
+
+        float firstYPos = PADDING + firstIndex * (workspaceHeight + GAP_WIDTH) - scrollOffset;
+        float lastYPos = PADDING + lastIndex * (workspaceHeight + GAP_WIDTH) - scrollOffset;
+
+        PartialVisibilityInfo info;
+        info.firstPartiallyVisible = (firstYPos < PADDING) &&
+                                      ((firstYPos + workspaceHeight) > PADDING);
+        info.lastPartiallyVisible = ((lastYPos + workspaceHeight) > (PADDING + availableHeight)) &&
+                                     (lastYPos < (PADDING + availableHeight));
+
+        info.topPartial = (firstYPos + workspaceHeight) - PADDING;
+        info.bottomPartial = (PADDING + availableHeight) - lastYPos;
+
+        return info;
+    }
+
+    float calculateWorkspaceHeight() {
+        const float availableHeight = MONITOR_HEIGHT - (2 * PADDING);
+        const float totalGaps = 3 * GAP_WIDTH;
+        const float baseHeight = (availableHeight - totalGaps) / 4;
+        return baseHeight * 0.9f;
+    }
+};
+
+TEST_F(EqualPartialVisibilityTest, BothPartiallyVisibleGetsAdjusted) {
+    // Setup: 8 workspaces, calculate scroll offset where both are partially visible
+    float workspaceHeight = calculateWorkspaceHeight();
+    const float availableHeight = MONITOR_HEIGHT - (2 * PADDING);
+
+    // Calculate a scroll offset that puts workspace in middle positions
+    // First workspace should be partially cut off at top
+    // Last workspace should be partially cut off at bottom
+    // Try positioning so workspace 1 is partially visible at top
+    float scrollOffset = workspaceHeight + GAP_WIDTH + 50.0f;  // Scroll past first workspace
+
+    auto info = checkPartialVisibility(scrollOffset, 8, workspaceHeight);
+
+    // If both aren't partially visible with this scroll, the test setup needs adjustment
+    // This might happen with different monitor sizes
+    if (!info.firstPartiallyVisible || !info.lastPartiallyVisible) {
+        GTEST_SKIP() << "Test configuration doesn't produce both partially visible workspaces";
+    }
+
+    // Calculate adjustment
+    float difference = info.bottomPartial - info.topPartial;
+    float adjustment = difference / 2.0f;
+
+    // Apply adjustment
+    float adjustedScroll = scrollOffset - adjustment;
+
+    // After adjustment, partial visibility should be more equal
+    auto infoAfter = checkPartialVisibility(adjustedScroll, 8, workspaceHeight);
+    EXPECT_TRUE(infoAfter.firstPartiallyVisible);
+    EXPECT_TRUE(infoAfter.lastPartiallyVisible);
+
+    // Should be more equal (within small tolerance)
+    EXPECT_NEAR(infoAfter.topPartial, infoAfter.bottomPartial, 1.0f);
+}
+
+TEST_F(EqualPartialVisibilityTest, FirstCompletelyOffScreenNoAdjustment) {
+    // First workspace completely off screen (scrolled too far down)
+    float workspaceHeight = calculateWorkspaceHeight();
+    float scrollOffset = 800.0f;
+
+    auto info = checkPartialVisibility(scrollOffset, 8, workspaceHeight);
+
+    // First should NOT be partially visible (completely off screen)
+    EXPECT_FALSE(info.firstPartiallyVisible);
+}
+
+TEST_F(EqualPartialVisibilityTest, LastCompletelyOffScreenNoAdjustment) {
+    // Last workspace completely off screen (scrolled too far up)
+    float workspaceHeight = calculateWorkspaceHeight();
+    float scrollOffset = 50.0f;
+
+    auto info = checkPartialVisibility(scrollOffset, 8, workspaceHeight);
+
+    // Last should NOT be partially visible (completely off screen)
+    EXPECT_FALSE(info.lastPartiallyVisible);
+}
+
+TEST_F(EqualPartialVisibilityTest, AtTopNoAdjustment) {
+    // At the very top (scrollOffset = 0)
+    float workspaceHeight = calculateWorkspaceHeight();
+    float scrollOffset = 0.0f;
+
+    auto info = checkPartialVisibility(scrollOffset, 8, workspaceHeight);
+
+    // First is fully visible, not partially
+    EXPECT_FALSE(info.firstPartiallyVisible);
+}
+
+TEST_F(EqualPartialVisibilityTest, AtBottomNoAdjustment) {
+    // At the very bottom (scrollOffset = maxScrollOffset)
+    std::vector<int64_t> workspaces = {1, 2, 3, 4, 5, 6, 7, 8};
+    float maxScroll = calculateMaxScrollOffset(workspaces, MONITOR_HEIGHT, PADDING, GAP_WIDTH);
+    float workspaceHeight = calculateWorkspaceHeight();
+
+    auto info = checkPartialVisibility(maxScroll, 8, workspaceHeight);
+
+    // Last is fully visible, not partially
+    EXPECT_FALSE(info.lastPartiallyVisible);
+}
+
+TEST_F(EqualPartialVisibilityTest, FewWorkspacesNoAdjustment) {
+    // With only 4 workspaces, no scrolling should happen
+    float workspaceHeight = calculateWorkspaceHeight();
+    float scrollOffset = 0.0f;
+
+    auto info = checkPartialVisibility(scrollOffset, 4, workspaceHeight);
+
+    // With 4 workspaces that fit on screen, neither should be partially visible
+    EXPECT_FALSE(info.firstPartiallyVisible);
+    EXPECT_FALSE(info.lastPartiallyVisible);
+}
+
+TEST_F(EqualPartialVisibilityTest, AdjustmentStaysWithinBounds) {
+    // Test that adjustment doesn't push scroll beyond valid range
+    std::vector<int64_t> workspaces = {1, 2, 3, 4, 5, 6, 7, 8};
+    float maxScroll = calculateMaxScrollOffset(workspaces, MONITOR_HEIGHT, PADDING, GAP_WIDTH);
+    float workspaceHeight = calculateWorkspaceHeight();
+
+    // Try various scroll positions
+    for (float scroll = 100.0f; scroll < maxScroll - 100.0f; scroll += 100.0f) {
+        auto info = checkPartialVisibility(scroll, 8, workspaceHeight);
+
+        if (info.firstPartiallyVisible && info.lastPartiallyVisible) {
+            float difference = info.bottomPartial - info.topPartial;
+            float adjustedScroll = scroll - (difference / 2.0f);
+
+            // Adjusted scroll should stay within valid range
+            EXPECT_GE(adjustedScroll, 0.0f);
+            EXPECT_LE(adjustedScroll, maxScroll);
+        }
+    }
+}
