@@ -1519,6 +1519,86 @@ TEST(WorkspaceRefreshTest, NoRefreshForActiveToActive) {
     EXPECT_EQ(workspacesToRefresh.size(), 0);
 }
 
+TEST(WorkspaceRefreshTest, RefreshLeftSideActiveWorkspace) {
+    // When moving to/from the active workspace (right side),
+    // the left-side representation of the active workspace should also be refreshed
+
+    const int activeIndex = 8;  // Right side active workspace (index 8)
+    const int leftSideActiveIndex = 2;  // Left side representation of active workspace
+
+    // Simulate the images array with isActive flags
+    struct MockWorkspaceImage {
+        bool isActive;
+    };
+    std::vector<MockWorkspaceImage> images(9);
+    images[2].isActive = true;  // Left side active workspace
+    images[8].isActive = true;  // Right side active workspace
+
+    // Test case 1: Move from left workspace to active workspace (right side)
+    {
+        const int sourceIndex = 1;  // Non-active left workspace
+        const int targetIndex = 8;  // Active workspace (right side)
+        std::vector<int> workspacesToRefresh;
+
+        // Find left-side active index
+        int foundLeftSideActiveIndex = -1;
+        for (size_t i = 0; i < (size_t)activeIndex; ++i) {
+            if (images[i].isActive) {
+                foundLeftSideActiveIndex = i;
+                break;
+            }
+        }
+
+        if (sourceIndex >= 0 && sourceIndex != activeIndex) {
+            workspacesToRefresh.push_back(sourceIndex);
+        }
+        if (targetIndex != activeIndex && targetIndex != sourceIndex) {
+            workspacesToRefresh.push_back(targetIndex);
+        }
+        if (foundLeftSideActiveIndex >= 0 &&
+            (sourceIndex == activeIndex || targetIndex == activeIndex)) {
+            workspacesToRefresh.push_back(foundLeftSideActiveIndex);
+        }
+
+        // Should refresh: source (1) and left-side active (2)
+        EXPECT_EQ(workspacesToRefresh.size(), 2);
+        EXPECT_EQ(workspacesToRefresh[0], sourceIndex);
+        EXPECT_EQ(workspacesToRefresh[1], leftSideActiveIndex);
+    }
+
+    // Test case 2: Move from active workspace (right side) to left workspace
+    {
+        const int sourceIndex = 8;  // Active workspace (right side)
+        const int targetIndex = 3;  // Non-active left workspace
+        std::vector<int> workspacesToRefresh;
+
+        // Find left-side active index
+        int foundLeftSideActiveIndex = -1;
+        for (size_t i = 0; i < (size_t)activeIndex; ++i) {
+            if (images[i].isActive) {
+                foundLeftSideActiveIndex = i;
+                break;
+            }
+        }
+
+        if (sourceIndex >= 0 && sourceIndex != activeIndex) {
+            workspacesToRefresh.push_back(sourceIndex);
+        }
+        if (targetIndex != activeIndex && targetIndex != sourceIndex) {
+            workspacesToRefresh.push_back(targetIndex);
+        }
+        if (foundLeftSideActiveIndex >= 0 &&
+            (sourceIndex == activeIndex || targetIndex == activeIndex)) {
+            workspacesToRefresh.push_back(foundLeftSideActiveIndex);
+        }
+
+        // Should refresh: target (3) and left-side active (2)
+        EXPECT_EQ(workspacesToRefresh.size(), 2);
+        EXPECT_EQ(workspacesToRefresh[0], targetIndex);
+        EXPECT_EQ(workspacesToRefresh[1], leftSideActiveIndex);
+    }
+}
+
 // Test: Workspace creation for non-existent workspaces
 TEST(WorkspaceCreationTest, CreateWorkspaceBeforeMove) {
     // Test that we handle the case where target workspace doesn't exist yet

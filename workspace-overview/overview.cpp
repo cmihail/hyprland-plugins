@@ -1366,6 +1366,15 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
 
     std::vector<int> workspacesToRefresh;
 
+    // Find the left-side index of the active workspace
+    int leftSideActiveIndex = -1;
+    for (size_t i = 0; i < (size_t)activeIndex; ++i) {
+        if (images[i].isActive) {
+            leftSideActiveIndex = i;
+            break;
+        }
+    }
+
     // Add source workspace if it's not the active workspace
     if (sourceIndex >= 0 && sourceIndex != activeIndex) {
         workspacesToRefresh.push_back(sourceIndex);
@@ -1374,6 +1383,12 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
     // Add target workspace if it's not the active workspace and different from source
     if (targetWorkspaceIndex != activeIndex && targetWorkspaceIndex != sourceIndex) {
         workspacesToRefresh.push_back(targetWorkspaceIndex);
+    }
+
+    // If we moved to/from the active workspace, also refresh its left-side representation
+    if (leftSideActiveIndex >= 0 &&
+        (sourceIndex == activeIndex || targetWorkspaceIndex == activeIndex)) {
+        workspacesToRefresh.push_back(leftSideActiveIndex);
     }
 
     if (!workspacesToRefresh.empty()) {
