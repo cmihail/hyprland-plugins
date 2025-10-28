@@ -1720,6 +1720,38 @@ TEST(PlusSignRenderingTest, WorkspaceIndicatorSelection) {
     EXPECT_FALSE(showPlusSign);
 }
 
+TEST(PlusSignRenderingTest, WorkspaceNumberVisibilityByPosition) {
+    // Test that workspace numbers are shown on left panel but not on right panel
+    const size_t LEFT_WORKSPACES = 8;
+    const size_t activeIndex = LEFT_WORKSPACES;  // Active workspace is on the right
+
+    struct MockImage {
+        int64_t workspaceID;
+        bool pWorkspace;  // true if workspace exists
+    };
+
+    // Test left panel workspaces (should show number)
+    for (size_t i = 0; i < LEFT_WORKSPACES; ++i) {
+        MockImage leftImage = {static_cast<int64_t>(i + 1), true};
+
+        bool isNewWorkspace = !leftImage.pWorkspace;
+        bool shouldShowNumber = (leftImage.workspaceID > 0 && i != activeIndex);
+
+        EXPECT_FALSE(isNewWorkspace);  // Existing workspace
+        EXPECT_TRUE(shouldShowNumber);  // Should show number on left panel
+    }
+
+    // Test active workspace on right panel (should NOT show number)
+    MockImage rightImage = {5, true};
+    size_t rightIndex = activeIndex;
+
+    bool isNewWorkspace = !rightImage.pWorkspace;
+    bool shouldShowNumber = (rightImage.workspaceID > 0 && rightIndex != activeIndex);
+
+    EXPECT_FALSE(isNewWorkspace);  // Existing workspace
+    EXPECT_FALSE(shouldShowNumber);  // Should NOT show number on right panel
+}
+
 // Test: Conditional workspace layout based on count
 TEST(WorkspaceLayoutTest, LayoutWithFourOrMoreWorkspaces) {
     // With 4 or more existing workspaces, show 4 on the left

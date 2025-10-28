@@ -963,8 +963,8 @@ void COverview::fullRender() {
 
             g_pHyprOpenGL->renderRect(hLine, CHyprColor{1.0, 1.0, 1.0, 0.8}, {.damage = &damage});
             g_pHyprOpenGL->renderRect(vLine, CHyprColor{1.0, 1.0, 1.0, 0.8}, {.damage = &damage});
-        } else if (image.workspaceID > 0) {
-            // For existing workspaces, show the workspace number in top-left corner
+        } else if (image.workspaceID > 0 && i != (size_t)activeIndex) {
+            // For existing workspaces on the left panel, show the workspace number in top-left corner
             int workspaceNum = image.workspaceID;
             if (closing && selectedIndex >= 0 && selectedIndex != activeIndex &&
                 i == (size_t)activeIndex) {
