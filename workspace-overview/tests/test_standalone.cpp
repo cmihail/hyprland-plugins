@@ -3372,3 +3372,107 @@ TEST(DynamicWorkspaceCountTest, ScalingBehavior) {
         EXPECT_EQ(count, existing + 5);
     }
 }
+
+// Test helper: Calculate drag preview region
+struct DragPreviewRegion {
+    float x, y, w, h;
+};
+
+static DragPreviewRegion calculateDragPreviewRegion(
+    float winPosX, float winPosY,
+    float winSizeX, float winSizeY,
+    float monPosX, float monPosY,
+    float monSizeX, float monSizeY,
+    float fbSizeX, float fbSizeY
+) {
+    float relX = (winPosX - monPosX) / monSizeX;
+    float relY = (winPosY - monPosY) / monSizeY;
+    float relW = winSizeX / monSizeX;
+    float relH = winSizeY / monSizeY;
+
+    DragPreviewRegion region;
+    region.x = relX * fbSizeX;
+    region.y = relY * fbSizeY;
+    region.w = relW * fbSizeX;
+    region.h = relH * fbSizeY;
+
+    region.x = std::max(0.0f, region.x);
+    region.y = std::max(0.0f, region.y);
+    region.w = std::min(region.w, fbSizeX - region.x);
+    region.h = std::min(region.h, fbSizeY - region.y);
+
+    return region;
+}
+
+TEST(DragPreviewTest, SimpleWindowAtOrigin) {
+    auto region = calculateDragPreviewRegion(
+        5, 5, 100, 100, 0, 0, 1920, 1080, 1920, 1080
+    );
+
+    EXPECT_FLOAT_EQ(region.x, 5.0f);
+    EXPECT_FLOAT_EQ(region.y, 5.0f);
+    EXPECT_FLOAT_EQ(region.w, 100.0f);
+    EXPECT_FLOAT_EQ(region.h, 100.0f);
+}
+
+TEST(DragPreviewTest, WindowInCenter) {
+    auto region = calculateDragPreviewRegion(
+        910, 490, 100, 100, 0, 0, 1920, 1080, 1920, 1080
+    );
+
+    EXPECT_FLOAT_EQ(region.x, 910.0f);
+    EXPECT_FLOAT_EQ(region.y, 490.0f);
+    EXPECT_FLOAT_EQ(region.w, 100.0f);
+    EXPECT_FLOAT_EQ(region.h, 100.0f);
+}
+
+TEST(DragPreviewTest, FullscreenWindow) {
+    auto region = calculateDragPreviewRegion(
+        0, 0, 1920, 1080, 0, 0, 1920, 1080, 1920, 1080
+    );
+
+    EXPECT_FLOAT_EQ(region.x, 0.0f);
+    EXPECT_FLOAT_EQ(region.y, 0.0f);
+    EXPECT_FLOAT_EQ(region.w, 1920.0f);
+    EXPECT_FLOAT_EQ(region.h, 1080.0f);
+}
+
+TEST(DragPreviewTest, SecondMonitorOffset) {
+    auto region = calculateDragPreviewRegion(
+        1920 + 100, 100, 200, 150, 1920, 0, 1920, 1080, 1920, 1080
+    );
+
+    EXPECT_FLOAT_EQ(region.x, 100.0f);
+    EXPECT_FLOAT_EQ(region.y, 100.0f);
+    EXPECT_FLOAT_EQ(region.w, 200.0f);
+    EXPECT_FLOAT_EQ(region.h, 150.0f);
+}
+
+TEST(DragPreviewTest, DifferentMonitorResolution) {
+    auto region = calculateDragPreviewRegion(
+        5, 5, 1910, 1190, 0, 0, 1920, 1200, 1920, 1080
+    );
+
+    float expectedH = (1190.0f / 1200.0f) * 1080.0f;
+    EXPECT_FLOAT_EQ(region.h, expectedH);
+}
+
+TEST(DragPreviewTest, WindowPartiallyOffScreen) {
+    auto region = calculateDragPreviewRegion(
+        1850, 100, 200, 150, 0, 0, 1920, 1080, 1920, 1080
+    );
+
+    EXPECT_FLOAT_EQ(region.x, 1850.0f);
+    EXPECT_FLOAT_EQ(region.y, 100.0f);
+    EXPECT_FLOAT_EQ(region.w, 70.0f);
+    EXPECT_FLOAT_EQ(region.h, 150.0f);
+}
+
+TEST(DragPreviewTest, ClampNegativeCoordinates) {
+    auto region = calculateDragPreviewRegion(
+        -10, -5, 100, 100, 0, 0, 1920, 1080, 1920, 1080
+    );
+
+    EXPECT_FLOAT_EQ(region.x, 0.0f);
+    EXPECT_FLOAT_EQ(region.y, 0.0f);
+}

@@ -84,6 +84,7 @@ class COverview {
     int         findWorkspaceIndexAtPosition(const Vector2D& pos);
     PHLWINDOW   findWindowAtPosition(const Vector2D& pos, int workspaceIndex);
     void        moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex);
+    void        renderDragPreview();
 
     // Cross-monitor helpers
     static std::pair<COverview*, int> findWorkspaceAtGlobalPosition(

@@ -293,38 +293,8 @@ void COverview::setupMouseMoveHook() {
 
             if (distanceX > DRAG_THRESHOLD || distanceY > DRAG_THRESHOLD) {
                 g_dragState.isDragging = true;
-                // sourceOverview is already set when button was pressed
-
-                // Render drag preview if we have a window
                 if (g_dragState.draggedWindow) {
-                    const Vector2D windowSize = g_dragState.draggedWindow->m_realSize->value();
-
-                    // Allocate framebuffer for drag preview at window size
-                    if (g_dragState.dragPreviewFB.m_size != windowSize) {
-                        g_dragState.dragPreviewFB.release();
-                        g_dragState.dragPreviewFB.alloc(windowSize.x, windowSize.y,
-                                           pMonitor->m_output->state->state().drmFormat);
-                    }
-
-                    // Render window preview to framebuffer
-                    g_pHyprRenderer->makeEGLCurrent();
-
-                    CRegion fakeDamage{0, 0, INT16_MAX, INT16_MAX};
-                    auto mon = pMonitor.lock();
-                    auto& fb = g_dragState.dragPreviewFB;
-                    g_pHyprRenderer->beginRender(mon, fakeDamage,
-                                                RENDER_MODE_FULL_FAKE,
-                                                nullptr, &fb);
-
-                    // Clear with semi-transparent background
-                    g_pHyprOpenGL->clear(CHyprColor{0.1, 0.1, 0.1, 0.8});
-
-                    // Render a placeholder colored rectangle
-                    CBox placeholderBox = {10, 10, windowSize.x - 20, windowSize.y - 20};
-                    g_pHyprOpenGL->renderRect(placeholderBox, CHyprColor{0.3, 0.5, 0.7, 1.0}, {});
-
-                    g_pHyprOpenGL->m_renderData.blockScreenShader = true;
-                    g_pHyprRenderer->endRender();
+                    renderDragPreview();
                 }
             }
         }
@@ -1290,6 +1260,83 @@ void COverview::refreshSourceWorkspacesAfterCrossMonitorMove(
     }
 
     setupSourceWorkspaceRefreshTimer(sourceOverview, workspacesToRefresh);
+}
+
+void COverview::renderDragPreview() {
+    int srcIdx = g_dragState.sourceWorkspaceIndex;
+    auto* srcOverview = g_dragState.sourceOverview;
+
+    if (!srcOverview)
+        return;
+
+    if (srcIdx < 0 || srcIdx >= (int)srcOverview->images.size())
+        return;
+
+    auto& sourceImage = srcOverview->images[srcIdx];
+    const Vector2D winPos =
+        g_dragState.draggedWindow->m_realPosition->value();
+    const Vector2D winSize =
+        g_dragState.draggedWindow->m_realSize->value();
+
+    // Calculate window position in workspace framebuffer coordinates
+    auto srcMon = g_dragState.sourceOverview->pMonitor.lock();
+    float relX = (winPos.x - srcMon->m_position.x) / srcMon->m_size.x;
+    float relY = (winPos.y - srcMon->m_position.y) / srcMon->m_size.y;
+    float relW = winSize.x / srcMon->m_size.x;
+    float relH = winSize.y / srcMon->m_size.y;
+
+    // Convert to framebuffer pixel coordinates
+    CBox sourceRegion = {
+        relX * sourceImage.fb.m_size.x,
+        relY * sourceImage.fb.m_size.y,
+        relW * sourceImage.fb.m_size.x,
+        relH * sourceImage.fb.m_size.y
+    };
+
+    // Clamp to FB bounds
+    sourceRegion.x = std::max(0.0, sourceRegion.x);
+    sourceRegion.y = std::max(0.0, sourceRegion.y);
+    sourceRegion.w = std::min(
+        sourceRegion.w, sourceImage.fb.m_size.x - sourceRegion.x
+    );
+    sourceRegion.h = std::min(
+        sourceRegion.h, sourceImage.fb.m_size.y - sourceRegion.y
+    );
+
+    // Allocate FB at the exact size of window in workspace preview
+    Vector2D previewSize = {sourceRegion.w, sourceRegion.h};
+    if (g_dragState.dragPreviewFB.m_size != previewSize) {
+        g_dragState.dragPreviewFB.release();
+        g_dragState.dragPreviewFB.alloc(
+            previewSize.x, previewSize.y,
+            pMonitor->m_output->state->state().drmFormat
+        );
+    }
+
+    g_pHyprRenderer->makeEGLCurrent();
+
+    CRegion fakeDamage{0, 0, INT16_MAX, INT16_MAX};
+    auto& fb = g_dragState.dragPreviewFB;
+    g_pHyprRenderer->beginRender(
+        pMonitor.lock(), fakeDamage, RENDER_MODE_FULL_FAKE, nullptr, &fb
+    );
+
+    g_pHyprOpenGL->clear(CHyprColor{0, 0, 0, 0});
+
+    // Render workspace texture with offset to show only window region
+    CBox destBox = {
+        -sourceRegion.x,
+        -sourceRegion.y,
+        (double)sourceImage.fb.m_size.x,
+        (double)sourceImage.fb.m_size.y
+    };
+
+    g_pHyprOpenGL->renderTexturePrimitive(
+        sourceImage.fb.getTexture(), destBox
+    );
+
+    g_pHyprOpenGL->m_renderData.blockScreenShader = true;
+    g_pHyprRenderer->endRender();
 }
 
 int64_t COverview::findFirstAvailableWorkspaceID() {
