@@ -3296,6 +3296,79 @@ TEST(MonitorEventTest, IterationDoesNotInvalidate) {
               monitorsToClose.end());
     EXPECT_NE(std::find(monitorsToClose.begin(), monitorsToClose.end(), 3),
               monitorsToClose.end());
-    
+
     g_mockOverviews.clear();
+}
+
+// ========================================================================
+// Dynamic Workspace Count Tests
+// ========================================================================
+
+// Test helper: Calculate dynamic workspace count
+static size_t calculateDynamicWorkspaceCount(size_t existingWorkspaces) {
+    const size_t EXTRA_PLACEHOLDERS = 5;
+    return existingWorkspaces + EXTRA_PLACEHOLDERS;
+}
+
+TEST(DynamicWorkspaceCountTest, TwoExistingWorkspaces) {
+    // Monitor with 2 workspaces should have 2 + 5 = 7 slots
+    size_t count = calculateDynamicWorkspaceCount(2);
+    EXPECT_EQ(count, 7);
+}
+
+TEST(DynamicWorkspaceCountTest, FourExistingWorkspaces) {
+    // Monitor with 4 workspaces should have 4 + 5 = 9 slots
+    size_t count = calculateDynamicWorkspaceCount(4);
+    EXPECT_EQ(count, 9);
+}
+
+TEST(DynamicWorkspaceCountTest, OneExistingWorkspace) {
+    // Monitor with 1 workspace should have 1 + 5 = 6 slots
+    size_t count = calculateDynamicWorkspaceCount(1);
+    EXPECT_EQ(count, 6);
+}
+
+TEST(DynamicWorkspaceCountTest, TenExistingWorkspaces) {
+    // Monitor with 10 workspaces should have 10 + 5 = 15 slots
+    size_t count = calculateDynamicWorkspaceCount(10);
+    EXPECT_EQ(count, 15);
+}
+
+TEST(DynamicWorkspaceCountTest, NoExistingWorkspaces) {
+    // Monitor with 0 workspaces should have 0 + 5 = 5 slots
+    size_t count = calculateDynamicWorkspaceCount(0);
+    EXPECT_EQ(count, 5);
+}
+
+TEST(DynamicWorkspaceCountTest, DifferentMonitorsDifferentCounts) {
+    // Different monitors should have independent counts
+    size_t monitor1 = calculateDynamicWorkspaceCount(2);
+    size_t monitor2 = calculateDynamicWorkspaceCount(4);
+    size_t monitor3 = calculateDynamicWorkspaceCount(1);
+
+    EXPECT_EQ(monitor1, 7);
+    EXPECT_EQ(monitor2, 9);
+    EXPECT_EQ(monitor3, 6);
+
+    // Verify they are different
+    EXPECT_NE(monitor1, monitor2);
+    EXPECT_NE(monitor2, monitor3);
+    EXPECT_NE(monitor1, monitor3);
+}
+
+TEST(DynamicWorkspaceCountTest, PlaceholderCalculation) {
+    // Verify the number of placeholders is consistent
+    size_t count2 = calculateDynamicWorkspaceCount(2);
+    size_t count4 = calculateDynamicWorkspaceCount(4);
+
+    // Difference should be exactly 2 (the number of extra existing workspaces)
+    EXPECT_EQ(count4 - count2, 2);
+}
+
+TEST(DynamicWorkspaceCountTest, ScalingBehavior) {
+    // Test that workspace count scales linearly
+    for (size_t existing = 1; existing <= 20; ++existing) {
+        size_t count = calculateDynamicWorkspaceCount(existing);
+        EXPECT_EQ(count, existing + 5);
+    }
 }

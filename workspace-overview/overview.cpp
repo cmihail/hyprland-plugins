@@ -48,9 +48,6 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
     const auto PMONITOR = g_pCompositor->m_lastMonitor.lock();
     pMonitor            = PMONITOR;
 
-    // We need LEFT_WORKSPACES + 1 (for the active workspace on the right)
-    images.resize(LEFT_WORKSPACES + 1);
-
     // Get current workspace ID
     int currentID = pMonitor->activeWorkspaceID();
 
@@ -73,8 +70,14 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
     // Sort workspace IDs
     std::sort(monitorWorkspaceIDs.begin(), monitorWorkspaceIDs.end());
 
-    // Populate left side workspaces (up to LEFT_WORKSPACES)
-    size_t numToShow = std::min((size_t)LEFT_WORKSPACES, monitorWorkspaceIDs.size());
+    // Calculate dynamic workspace count: existing workspaces + EXTRA_PLACEHOLDERS
+    leftWorkspaceCount = monitorWorkspaceIDs.size() + EXTRA_PLACEHOLDERS;
+
+    // We need leftWorkspaceCount + 1 (for the active workspace on the right)
+    images.resize(leftWorkspaceCount + 1);
+
+    // Populate left side workspaces (up to leftWorkspaceCount)
+    size_t numToShow = std::min((size_t)leftWorkspaceCount, monitorWorkspaceIDs.size());
 
     for (size_t i = 0; i < numToShow; ++i) {
         auto& image = images[i];
@@ -84,16 +87,16 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
     }
 
     // Fill remaining left side slots as placeholders for new workspaces
-    for (size_t i = numToShow; i < LEFT_WORKSPACES; ++i) {
+    for (size_t i = numToShow; i < leftWorkspaceCount; ++i) {
         auto& image = images[i];
         image.workspaceID = -1;  // Placeholder
         image.isActive = false;
     }
 
     // Last image is for the active workspace (right side) - for real-time updates
-    images[LEFT_WORKSPACES].workspaceID = currentID;
-    images[LEFT_WORKSPACES].isActive    = true;
-    activeIndex                         = LEFT_WORKSPACES;
+    images[leftWorkspaceCount].workspaceID = currentID;
+    images[leftWorkspaceCount].isActive    = true;
+    activeIndex                            = leftWorkspaceCount;
 
     // Note: The active workspace appears both in the left side (in its proper position)
     // and on the right side (for real-time updates). The right side will be rendered
@@ -117,7 +120,7 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
     // Calculate max scroll offset based on existing workspaces + first placeholder
     // Count how many non-placeholder workspaces exist on the left side
     size_t numExistingWorkspaces = 0;
-    for (size_t i = 0; i < LEFT_WORKSPACES; ++i) {
+    for (size_t i = 0; i < leftWorkspaceCount; ++i) {
         if (images[i].workspaceID != -1) {
             numExistingWorkspaces++;
         }
@@ -126,7 +129,7 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
     // Include the first placeholder (with +) in scrolling calculation
     // This allows users to scroll to see the + sign to create a new workspace
     size_t numWorkspacesToShow = numExistingWorkspaces;
-    if (numExistingWorkspaces < LEFT_WORKSPACES) {
+    if (numExistingWorkspaces < leftWorkspaceCount) {
         numWorkspacesToShow++; // Add 1 for the first placeholder
     }
 
@@ -517,7 +520,7 @@ void COverview::setupMonitorHooks() {
 void COverview::setInitialScrollPosition(float availableHeight) {
     // Find the active workspace on the left side
     int activeLeftIndex = -1;
-    for (size_t i = 0; i < LEFT_WORKSPACES; ++i) {
+    for (size_t i = 0; i < leftWorkspaceCount; ++i) {
         if (images[i].isActive) {
             activeLeftIndex = i;
             break;
@@ -584,15 +587,15 @@ void COverview::adjustScrollForEqualPartialVisibility(float availableHeight) {
     }
 
     // Count total number of workspaces (including placeholders) to display
-    int numWorkspacesToShow = 0;
-    for (size_t i = 0; i < LEFT_WORKSPACES; ++i) {
+    size_t numWorkspacesToShow = 0;
+    for (size_t i = 0; i < leftWorkspaceCount; ++i) {
         if (images[i].workspaceID != -1) {
             numWorkspacesToShow = i + 1;
         }
     }
 
     // Add 1 for first placeholder if not all slots are filled
-    if (numWorkspacesToShow < LEFT_WORKSPACES) {
+    if (numWorkspacesToShow < leftWorkspaceCount) {
         numWorkspacesToShow++;
     }
 
@@ -602,8 +605,8 @@ void COverview::adjustScrollForEqualPartialVisibility(float availableHeight) {
     }
 
     // Calculate positions of first and last workspaces
-    int firstIndex = 0;
-    int lastIndex = numWorkspacesToShow - 1;
+    size_t firstIndex = 0;
+    size_t lastIndex = numWorkspacesToShow - 1;
 
     float firstYPos = PADDING + firstIndex * (this->leftPreviewHeight + GAP_WIDTH) - scrollOffset;
     float lastYPos = PADDING + lastIndex * (this->leftPreviewHeight + GAP_WIDTH) - scrollOffset;
@@ -893,17 +896,17 @@ void COverview::fullRender() {
     const float zoomScale = currentSize.x / monitorSize.x;
 
     // Fill empty workspace slots with background color
-    // This happens when we have fewer than LEFT_WORKSPACES displayed
+    // This happens when we have fewer than leftWorkspaceCount displayed
     size_t numLeftWorkspaces = images.size() - 1;  // Exclude active workspace
-    if (numLeftWorkspaces < LEFT_WORKSPACES) {
+    if (numLeftWorkspaces < leftWorkspaceCount) {
         const float availableHeight   = monitorSize.y - (2 * PADDING);
-        const float totalGaps         = (LEFT_WORKSPACES - 1) * GAP_WIDTH;
-        const float leftPreviewHeight = (availableHeight - totalGaps) / LEFT_WORKSPACES;
+        const float totalGaps         = (leftWorkspaceCount - 1) * GAP_WIDTH;
+        const float leftPreviewHeight = (availableHeight - totalGaps) / leftWorkspaceCount;
         const float monitorAspectRatio = monitorSize.x / monitorSize.y;
         const float leftWorkspaceWidth = leftPreviewHeight * monitorAspectRatio;
 
         // Fill slots after the displayed workspaces
-        for (size_t i = numLeftWorkspaces; i < LEFT_WORKSPACES; ++i) {
+        for (size_t i = numLeftWorkspaces; i < leftWorkspaceCount; ++i) {
             float yPos = PADDING + i * (leftPreviewHeight + GAP_WIDTH);
             CBox emptyBox = {PADDING, yPos, leftWorkspaceWidth, leftPreviewHeight};
 
@@ -1470,7 +1473,7 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
         // Recalculate max scroll offset to allow scrolling to the new workspace + placeholder
         // Count how many non-placeholder workspaces exist on the left side
         size_t numExistingWorkspaces = 0;
-        for (size_t i = 0; i < LEFT_WORKSPACES; ++i) {
+        for (size_t i = 0; i < leftWorkspaceCount; ++i) {
             if (images[i].workspaceID != -1) {
                 numExistingWorkspaces++;
             }
@@ -1481,7 +1484,7 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
 
         // Include the first placeholder (with +) in scrolling calculation
         size_t numWorkspacesToShow = numExistingWorkspaces;
-        if (numExistingWorkspaces < LEFT_WORKSPACES) {
+        if (numExistingWorkspaces < leftWorkspaceCount) {
             numWorkspacesToShow++; // Add 1 for the first placeholder
         }
 
