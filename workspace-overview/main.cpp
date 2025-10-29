@@ -203,6 +203,41 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:background_path",
                                  Hyprlang::STRING{""});
 
+    // Register config change callback to reload background image
+    static auto bgCallback = HyprlandAPI::registerCallbackDynamic(
+        PHANDLE, "configReloaded", [](void* self, SCallbackInfo& info, std::any param) {
+            auto* const PBACKGROUNDPATH =
+                HyprlandAPI::getConfigValue(PHANDLE,
+                                            "plugin:workspace_overview:background_path");
+            if (PBACKGROUNDPATH) {
+                try {
+                    auto pathValue = PBACKGROUNDPATH->getValue();
+                    std::string pathStr = std::any_cast<Hyprlang::STRING>(pathValue);
+                    loadBackgroundImage(pathStr);
+                } catch (const std::bad_any_cast& e) {
+                    Debug::log(ERR,
+                               "[workspace-overview] Failed to read background_path: {}",
+                               e.what());
+                }
+            }
+        });
+
+    // Load background image on startup
+    auto* const PBACKGROUNDPATH =
+        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:background_path");
+    if (PBACKGROUNDPATH) {
+        try {
+            auto pathValue = PBACKGROUNDPATH->getValue();
+            std::string pathStr = std::any_cast<Hyprlang::STRING>(pathValue);
+            if (!pathStr.empty()) {
+                loadBackgroundImage(pathStr);
+            }
+        } catch (const std::bad_any_cast& e) {
+            Debug::log(ERR, "[workspace-overview] Failed to read background_path: {}",
+                       e.what());
+        }
+    }
+
     Debug::log(LOG, "[workspace-overview] Plugin initialized successfully");
 
     return {"workspace-overview", "Workspace overview plugin for Hyprland", "cmihail", "1.0"};
@@ -211,4 +246,5 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 APICALL EXPORT void PLUGIN_EXIT() {
     Debug::log(LOG, "[workspace-overview] Plugin exiting");
     g_pHyprRenderer->m_renderPass.removeAllOfType("COverviewPassElement");
+    g_pBackgroundTexture.reset();
 }

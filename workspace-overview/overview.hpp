@@ -64,9 +64,6 @@ class COverview {
     void redrawID(int id, bool forcelowres = false);
     void redrawAll(bool forcelowres = false);
     void fullRender();
-    void loadBackgroundImage(const std::string& path);
-    std::vector<uint8_t> convertPixelDataToRGBA(const guchar* pixels, int width,
-                                                  int height, int channels, int stride);
 
     // Helper functions for constructor
     void setupWorkspaceIDs(int currentID);
@@ -139,12 +136,16 @@ class COverview {
     SP<HOOK_CALLBACK_FN> mouseMoveHook;
     SP<HOOK_CALLBACK_FN> mouseAxisHook;
 
-    // Background image
-    SP<CTexture> backgroundTexture;
-
     friend class COverviewPassElement;
     friend void removeOverview(WP<Hyprutils::Animation::CBaseAnimatedVariable>, PHLMONITOR);
     friend void damageMonitor(WP<Hyprutils::Animation::CBaseAnimatedVariable>);
 };
 
 inline std::unordered_map<PHLMONITOR, std::unique_ptr<COverview>> g_pOverviews;
+
+// Background image loading functions
+void loadBackgroundImage(const std::string& path);
+std::vector<uint8_t> convertPixelDataToRGBA(const guchar* pixels, int width,
+                                              int height, int channels, int stride);
+bool createTextureFromPixelData(const std::vector<uint8_t>& pixelData,
+                                 int width, int height);

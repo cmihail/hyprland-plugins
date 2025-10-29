@@ -258,22 +258,6 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
 
     size->setCallbackOnEnd([this](auto) { redrawAll(true); });
 
-    // Load background image if configured
-    auto* const PBACKGROUNDPATH =
-        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:background_path");
-    if (PBACKGROUNDPATH) {
-        try {
-            auto pathValue = PBACKGROUNDPATH->getValue();
-            std::string pathStr = std::any_cast<Hyprlang::STRING>(pathValue);
-            if (!pathStr.empty()) {
-                loadBackgroundImage(pathStr);
-            }
-        } catch (const std::bad_any_cast& e) {
-            Debug::log(ERR, "[workspace-overview] Failed to read background_path config: {}",
-                       e.what());
-        }
-    }
-
     // Setup mouse move hook to track cursor position and detect dragging
     auto onMouseMove = [this](void* self, SCallbackInfo& info, std::any param) {
         if (closing)
@@ -793,8 +777,8 @@ void COverview::fullRender() {
     const float    monScale    = pMonitor->m_scale;
 
     // Render background image if loaded
-    if (backgroundTexture && backgroundTexture->m_texID != 0) {
-        const Vector2D texSize = backgroundTexture->m_size;
+    if (g_pBackgroundTexture && g_pBackgroundTexture->m_texID != 0) {
+        const Vector2D texSize = g_pBackgroundTexture->m_size;
         CBox bgBox = {{0, 0}, monitorSize};
 
         // Scale background to cover the entire monitor while maintaining aspect ratio
@@ -818,7 +802,7 @@ void COverview::fullRender() {
         bgBox.scale(monScale);
         bgBox.round();
 
-        g_pHyprOpenGL->renderTexture(backgroundTexture, bgBox, {});
+        g_pHyprOpenGL->renderTexture(g_pBackgroundTexture, bgBox, {});
     }
 
     // Get animation values
@@ -1501,9 +1485,8 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
     }
 }
 
-std::vector<uint8_t> COverview::convertPixelDataToRGBA(const guchar* pixels, int width,
-                                                        int height, int channels,
-                                                        int stride) {
+std::vector<uint8_t> convertPixelDataToRGBA(const guchar* pixels, int width, int height,
+                                             int channels, int stride) {
     std::vector<uint8_t> pixelData(width * height * 4);
 
     for (int y = 0; y < height; y++) {
@@ -1530,9 +1513,29 @@ std::vector<uint8_t> COverview::convertPixelDataToRGBA(const guchar* pixels, int
     return pixelData;
 }
 
-void COverview::loadBackgroundImage(const std::string& path) {
-    if (path.empty())
+bool createTextureFromPixelData(const std::vector<uint8_t>& pixelData,
+                                 int width, int height) {
+    const uint32_t drmFormat = DRM_FORMAT_ABGR8888;
+    const uint32_t textureStride = width * 4;
+
+    try {
+        auto* pixels = const_cast<uint8_t*>(pixelData.data());
+        g_pBackgroundTexture = makeShared<CTexture>(drmFormat, pixels, textureStride,
+                                                     Vector2D{(double)width, (double)height},
+                                                     true);
+        return true;
+    } catch (const std::exception& e) {
+        Debug::log(ERR, "[workspace-overview] Failed to create texture: {}", e.what());
+        g_pBackgroundTexture.reset();
+        return false;
+    }
+}
+
+void loadBackgroundImage(const std::string& path) {
+    if (path.empty()) {
+        g_pBackgroundTexture.reset();
         return;
+    }
 
     GError* error = nullptr;
     GdkPixbuf* pixbuf = gdk_pixbuf_new_from_file(path.c_str(), &error);
@@ -1542,6 +1545,7 @@ void COverview::loadBackgroundImage(const std::string& path) {
                    error ? error->message : "unknown error");
         if (error)
             g_error_free(error);
+        g_pBackgroundTexture.reset();
         return;
     }
 
@@ -1553,6 +1557,7 @@ void COverview::loadBackgroundImage(const std::string& path) {
         Debug::log(ERR, "[workspace-overview] Unsupported image channel count: {}",
                    channels);
         g_object_unref(pixbuf);
+        g_pBackgroundTexture.reset();
         return;
     }
 
@@ -1562,17 +1567,8 @@ void COverview::loadBackgroundImage(const std::string& path) {
     auto pixelData = convertPixelDataToRGBA(pixels, width, height, channels, stride);
     g_object_unref(pixbuf);
 
-    // Create texture using Hyprland's CTexture constructor
-    const uint32_t drmFormat = DRM_FORMAT_ABGR8888;
-    const uint32_t textureStride = width * 4;
-
-    try {
-        backgroundTexture = makeShared<CTexture>(drmFormat, pixelData.data(), textureStride,
-                                                  Vector2D{(double)width, (double)height},
-                                                  true);
+    if (createTextureFromPixelData(pixelData, width, height)) {
         Debug::log(LOG, "[workspace-overview] Loaded background image: {} ({}x{})",
                    path, width, height);
-    } catch (const std::exception& e) {
-        Debug::log(ERR, "[workspace-overview] Failed to create texture: {}", e.what());
     }
 }
