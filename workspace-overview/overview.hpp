@@ -89,7 +89,11 @@ class COverview {
     );
     static void setupSourceWorkspaceRefreshTimer(
         COverview* sourceOverview,
-        int workspaceIndex
+        const std::vector<int>& workspaceIndices
+    );
+    static void refreshSourceWorkspacesAfterCrossMonitorMove(
+        COverview* sourceOverview,
+        int sourceWorkspaceIndex
     );
     static int64_t findFirstAvailableWorkspaceID();
 

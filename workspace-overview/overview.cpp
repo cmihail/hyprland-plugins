@@ -414,9 +414,9 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
                             );
 
                             if (isCrossMonitor) {
-                                int srcIdx = g_dragState.sourceWorkspaceIndex;
-                                setupSourceWorkspaceRefreshTimer(
-                                    g_dragState.sourceOverview, srcIdx
+                                refreshSourceWorkspacesAfterCrossMonitorMove(
+                                    g_dragState.sourceOverview,
+                                    g_dragState.sourceWorkspaceIndex
                                 );
                             }
                         }
@@ -1151,9 +1151,9 @@ std::pair<COverview*, int> COverview::findWorkspaceAtGlobalPosition(
 
 void COverview::setupSourceWorkspaceRefreshTimer(
     COverview* sourceOverview,
-    int workspaceIndex
+    const std::vector<int>& workspaceIndices
 ) {
-    if (!sourceOverview || workspaceIndex < 0)
+    if (!sourceOverview || workspaceIndices.empty())
         return;
 
     struct TimerData {
@@ -1164,7 +1164,7 @@ void COverview::setupSourceWorkspaceRefreshTimer(
     };
 
     auto srcMon = sourceOverview->pMonitor.lock();
-    auto* timerData = new TimerData{{workspaceIndex}, 0, nullptr, srcMon};
+    auto* timerData = new TimerData{workspaceIndices, 0, nullptr, srcMon};
 
     auto* timer = wl_event_loop_add_timer(
         wl_display_get_event_loop(g_pCompositor->m_wlDisplay),
@@ -1196,6 +1196,33 @@ void COverview::setupSourceWorkspaceRefreshTimer(
 
     timerData->timerSource = timer;
     wl_event_source_timer_update(timer, 50);
+}
+
+void COverview::refreshSourceWorkspacesAfterCrossMonitorMove(
+    COverview* sourceOverview,
+    int sourceWorkspaceIndex
+) {
+    if (!sourceOverview || sourceWorkspaceIndex < 0)
+        return;
+
+    std::vector<int> workspacesToRefresh;
+    workspacesToRefresh.push_back(sourceWorkspaceIndex);
+
+    // If moving from active workspace, also refresh left-side
+    if (sourceWorkspaceIndex == sourceOverview->activeIndex) {
+        int leftSideActiveIndex = -1;
+        for (size_t i = 0; i < (size_t)sourceOverview->activeIndex; ++i) {
+            if (sourceOverview->images[i].isActive) {
+                leftSideActiveIndex = i;
+                break;
+            }
+        }
+        if (leftSideActiveIndex >= 0) {
+            workspacesToRefresh.push_back(leftSideActiveIndex);
+        }
+    }
+
+    setupSourceWorkspaceRefreshTimer(sourceOverview, workspacesToRefresh);
 }
 
 int64_t COverview::findFirstAvailableWorkspaceID() {
@@ -1442,13 +1469,6 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
 
     // Schedule repeating redraws for affected non-active workspaces
     // We need to refresh both source and target if they're not the active workspace
-    struct TimerData {
-        std::vector<int> workspaceIndices;
-        int tickCount;
-        wl_event_source* timerSource;
-        PHLMONITOR monitor;
-    };
-
     std::vector<int> workspacesToRefresh;
 
     // Find the left-side index of the active workspace
@@ -1477,38 +1497,7 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
     }
 
     if (!workspacesToRefresh.empty()) {
-        auto monitor = pMonitor.lock();
-        auto* timerData = new TimerData{workspacesToRefresh, 0, nullptr, monitor};
-
-        auto* timer = wl_event_loop_add_timer(
-            wl_display_get_event_loop(g_pCompositor->m_wlDisplay),
-            [](void* data) -> int {
-                auto* td = static_cast<TimerData*>(data);
-
-                // Check if overview still exists for this monitor
-                auto it = g_pOverviews.find(td->monitor);
-                if (it != g_pOverviews.end() && it->second) {
-                    // Redraw all affected workspaces
-                    for (int workspaceIndex : td->workspaceIndices) {
-                        it->second->redrawID(workspaceIndex);
-                    }
-                    it->second->damage();
-
-                    td->tickCount++;
-                    // Redraw every 50ms for up to 1 second (20 ticks)
-                    if (td->tickCount < 20) {
-                        wl_event_source_timer_update(td->timerSource, 50);
-                        return 0;
-                    }
-                }
-                // Clean up after 20 ticks or if overview is closed
-                delete td;
-                return 0;
-            },
-            timerData);
-
-        timerData->timerSource = timer;
-        wl_event_source_timer_update(timer, 50);
+        setupSourceWorkspaceRefreshTimer(this, workspacesToRefresh);
     }
 }
 

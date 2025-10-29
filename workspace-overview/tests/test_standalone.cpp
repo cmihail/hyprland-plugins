@@ -1599,6 +1599,81 @@ TEST(WorkspaceRefreshTest, RefreshLeftSideActiveWorkspace) {
     }
 }
 
+TEST(WorkspaceRefreshTest, CrossMonitorMoveFromActiveWorkspace) {
+    // When moving a window from the active workspace to another monitor,
+    // both the source active workspace and its left-side representation
+    // should be refreshed
+
+    const int sourceActiveIndex = 8;  // Right side active workspace
+    const int sourceWorkspaceIndex = 8;  // Moving from active workspace
+
+    // Simulate the source overview's images array
+    struct MockWorkspaceImage {
+        bool isActive;
+    };
+    std::vector<MockWorkspaceImage> sourceImages(9);
+    sourceImages[2].isActive = true;  // Left side active workspace
+    sourceImages[8].isActive = true;  // Right side active workspace
+
+    // Determine which workspaces to refresh on source monitor
+    std::vector<int> workspacesToRefresh;
+    workspacesToRefresh.push_back(sourceWorkspaceIndex);
+
+    // If moving from active workspace, also refresh left-side
+    if (sourceWorkspaceIndex == sourceActiveIndex) {
+        int leftSideActiveIndex = -1;
+        for (size_t i = 0; i < (size_t)sourceActiveIndex; ++i) {
+            if (sourceImages[i].isActive) {
+                leftSideActiveIndex = i;
+                break;
+            }
+        }
+        if (leftSideActiveIndex >= 0) {
+            workspacesToRefresh.push_back(leftSideActiveIndex);
+        }
+    }
+
+    // Should refresh both the active workspace and left-side
+    EXPECT_EQ(workspacesToRefresh.size(), 2);
+    EXPECT_EQ(workspacesToRefresh[0], sourceWorkspaceIndex);
+    EXPECT_EQ(workspacesToRefresh[1], 2);
+}
+
+TEST(WorkspaceRefreshTest, CrossMonitorMoveFromNonActiveWorkspace) {
+    // When moving from non-active workspace to another monitor,
+    // only the source workspace should be refreshed
+
+    const int sourceActiveIndex = 8;
+    const int sourceWorkspaceIndex = 1;  // Non-active workspace
+
+    struct MockWorkspaceImage {
+        bool isActive;
+    };
+    std::vector<MockWorkspaceImage> sourceImages(9);
+    sourceImages[2].isActive = true;
+    sourceImages[8].isActive = true;
+
+    std::vector<int> workspacesToRefresh;
+    workspacesToRefresh.push_back(sourceWorkspaceIndex);
+
+    if (sourceWorkspaceIndex == sourceActiveIndex) {
+        int leftSideActiveIndex = -1;
+        for (size_t i = 0; i < (size_t)sourceActiveIndex; ++i) {
+            if (sourceImages[i].isActive) {
+                leftSideActiveIndex = i;
+                break;
+            }
+        }
+        if (leftSideActiveIndex >= 0) {
+            workspacesToRefresh.push_back(leftSideActiveIndex);
+        }
+    }
+
+    // Should refresh only the source workspace
+    EXPECT_EQ(workspacesToRefresh.size(), 1);
+    EXPECT_EQ(workspacesToRefresh[0], sourceWorkspaceIndex);
+}
+
 // Test: Workspace creation for non-existent workspaces
 TEST(WorkspaceCreationTest, CreateWorkspaceBeforeMove) {
     // Test that we handle the case where target workspace doesn't exist yet
