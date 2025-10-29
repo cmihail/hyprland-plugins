@@ -74,6 +74,7 @@ class COverview {
                                         PHLWORKSPACE openSpecial);
     void setupAnimations(const Vector2D& monitorSize);
     void setupEventHooks();
+    void renderBackgroundForLeftPanel(const CBox& monbox, float leftPreviewHeight);
     void setupMouseMoveHook();
     void setupMouseButtonHook();
     void setupMouseAxisHook();

@@ -64,8 +64,8 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
 
         auto wsMonitor = ws->m_monitor.lock();
 
-        // Include workspaces that belong to this monitor OR are unassigned
-        if (!wsMonitor || wsMonitor == pMonitor) {
+        // Include only workspaces that belong to this monitor
+        if (wsMonitor == pMonitor) {
             monitorWorkspaceIDs.push_back(ws->m_id);
         }
     }
@@ -174,11 +174,11 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
         g_pHyprRenderer->beginRender(PMONITOR, fakeDamage, RENDER_MODE_FULL_FAKE,
                                       nullptr, &image.fb);
 
-        g_pHyprOpenGL->clear(CHyprColor{0, 0, 0, 1.0});
-
         const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(image.workspaceID);
 
         if (PWORKSPACE) {
+            g_pHyprOpenGL->clear(CHyprColor{0, 0, 0, 1.0});
+
             image.pWorkspace            = PWORKSPACE;
             PMONITOR->m_activeWorkspace = PWORKSPACE;
             g_pDesktopAnimationManager->startAnimation(
@@ -197,8 +197,10 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
 
             if (PWORKSPACE == startedOn)
                 PMONITOR->m_activeSpecialWorkspace.reset();
-        } else
-            g_pHyprRenderer->renderWorkspace(PMONITOR, PWORKSPACE, Time::steadyNow(), monbox);
+        } else {
+            // Render background image for placeholder workspaces
+            renderBackgroundForLeftPanel(monbox, this->leftPreviewHeight);
+        }
 
         // Calculate box positions for rendering
         if (i == (size_t)activeIndex) {
@@ -538,6 +540,43 @@ void COverview::setInitialScrollPosition(float availableHeight) {
     scrollOffset = std::clamp(scrollOffset, 0.0f, maxScrollOffset);
 }
 
+void COverview::renderBackgroundForLeftPanel(const CBox& monbox, float leftPreviewHeight) {
+    if (!g_pBackgroundTexture || g_pBackgroundTexture->m_texID == 0) {
+        // No background image loaded, just clear to black
+        g_pHyprOpenGL->clear(CHyprColor{0, 0, 0, 1.0});
+        return;
+    }
+
+    // Clear first
+    g_pHyprOpenGL->clear(CHyprColor{0, 0, 0, 1.0});
+
+    const Vector2D texSize = g_pBackgroundTexture->m_size;
+
+    // Scale background to cover the entire framebuffer while maintaining aspect ratio
+    const float monboxAspect = (float)monbox.w / monbox.h;
+    const float textureAspect = texSize.x / texSize.y;
+
+    CBox bgBox = monbox;
+
+    if (textureAspect > monboxAspect) {
+        // Texture is wider, scale by height
+        const float scale = monbox.h / texSize.y;
+        const float scaledWidth = texSize.x * scale;
+        bgBox.x = -(scaledWidth - monbox.w) / 2.0f;
+        bgBox.w = scaledWidth;
+    } else {
+        // Texture is taller, scale by width
+        const float scale = monbox.w / texSize.x;
+        const float scaledHeight = texSize.y * scale;
+        bgBox.y = -(scaledHeight - monbox.h) / 2.0f;
+        bgBox.h = scaledHeight;
+    }
+
+    bgBox.round();
+
+    g_pHyprOpenGL->renderTexture(g_pBackgroundTexture, bgBox, {});
+}
+
 void COverview::adjustScrollForEqualPartialVisibility(float availableHeight) {
     // Only adjust if we're not at the very top or very bottom
     if (scrollOffset <= 0.0f || scrollOffset >= maxScrollOffset) {
@@ -616,8 +655,6 @@ void COverview::redrawID(int id, bool forcelowres) {
     g_pHyprRenderer->beginRender(pMonitor.lock(), fakeDamage,
                                   RENDER_MODE_FULL_FAKE, nullptr, &image.fb);
 
-    g_pHyprOpenGL->clear(CHyprColor{0, 0, 0, 1.0});
-
     const auto   PWORKSPACE  = image.pWorkspace;
     PHLWORKSPACE openSpecial = pMonitor->m_activeSpecialWorkspace;
 
@@ -627,6 +664,8 @@ void COverview::redrawID(int id, bool forcelowres) {
     startedOn->m_visible = false;
 
     if (PWORKSPACE) {
+        g_pHyprOpenGL->clear(CHyprColor{0, 0, 0, 1.0});
+
         pMonitor->m_activeWorkspace = PWORKSPACE;
         g_pDesktopAnimationManager->startAnimation(
             PWORKSPACE, CDesktopAnimationManager::ANIMATION_TYPE_IN, true, true);
@@ -644,9 +683,10 @@ void COverview::redrawID(int id, bool forcelowres) {
 
         if (PWORKSPACE == startedOn)
             pMonitor->m_activeSpecialWorkspace.reset();
-    } else
-        g_pHyprRenderer->renderWorkspace(pMonitor.lock(), PWORKSPACE,
-                                         Time::steadyNow(), monbox);
+    } else {
+        // Render background image for placeholder workspaces
+        renderBackgroundForLeftPanel(monbox, this->leftPreviewHeight);
+    }
 
     g_pHyprOpenGL->m_renderData.blockScreenShader = true;
     g_pHyprRenderer->endRender();
