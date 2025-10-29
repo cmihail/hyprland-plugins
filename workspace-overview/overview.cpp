@@ -258,7 +258,17 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
 
     size->setCallbackOnEnd([this](auto) { redrawAll(true); });
 
-    // Setup mouse move hook to track cursor position and detect dragging
+    setupEventHooks();
+}
+
+void COverview::setupEventHooks() {
+    setupMouseMoveHook();
+    setupMouseButtonHook();
+    setupMouseAxisHook();
+    setupMonitorHooks();
+}
+
+void COverview::setupMouseMoveHook() {
     auto onMouseMove = [this](void* self, SCallbackInfo& info, std::any param) {
         if (closing)
             return;
@@ -315,8 +325,9 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
         }
     };
     mouseMoveHook = g_pHookSystem->hookDynamic("mouseMove", onMouseMove);
+}
 
-    // Setup mouse button hook to detect workspace clicks vs drags
+void COverview::setupMouseButtonHook() {
     auto onMouseButton = [this](void* self, SCallbackInfo& info, std::any param) {
         if (closing)
             return;
@@ -418,8 +429,9 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
     };
 
     mouseButtonHook = g_pHookSystem->hookDynamic("mouseButton", onMouseButton);
+}
 
-    // Setup mouse axis (scroll) hook to scroll workspace list
+void COverview::setupMouseAxisHook() {
     auto onMouseAxis = [this](void* self, SCallbackInfo& info, std::any param) {
         if (closing) {
             return;
@@ -453,8 +465,10 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
                 // Update box positions for all left-side workspaces to reflect new scroll
                 for (size_t i = 0; i < images.size(); ++i) {
                     if (i != (size_t)activeIndex) {
-                        float yPos = PADDING + i * (this->leftPreviewHeight + GAP_WIDTH) - scrollOffset;
-                        images[i].box = {PADDING, yPos, leftWorkspaceWidth, this->leftPreviewHeight};
+                        float yPos = PADDING + i * (this->leftPreviewHeight + GAP_WIDTH)
+                                     - scrollOffset;
+                        images[i].box = {PADDING, yPos, leftWorkspaceWidth,
+                                         this->leftPreviewHeight};
                     }
                 }
 
@@ -471,6 +485,31 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
     };
 
     mouseAxisHook = g_pHookSystem->hookDynamic("mouseAxis", onMouseAxis);
+}
+
+void COverview::closeAllOverviews() {
+    std::vector<PHLMONITOR> monitorsToClose;
+    for (const auto& [mon, overview] : g_pOverviews) {
+        monitorsToClose.push_back(mon);
+    }
+    for (const auto& mon : monitorsToClose) {
+        auto monIt = g_pOverviews.find(mon);
+        if (monIt != g_pOverviews.end())
+            monIt->second->close();
+    }
+}
+
+void COverview::setupMonitorHooks() {
+    auto onMonitorAdded = [](void* self, SCallbackInfo& info, std::any param) {
+        closeAllOverviews();
+    };
+
+    auto onMonitorRemoved = [](void* self, SCallbackInfo& info, std::any param) {
+        closeAllOverviews();
+    };
+
+    monitorAddedHook = g_pHookSystem->hookDynamic("monitorAdded", onMonitorAdded);
+    monitorRemovedHook = g_pHookSystem->hookDynamic("monitorRemoved", onMonitorRemoved);
 }
 
 void COverview::setInitialScrollPosition(float availableHeight) {
@@ -534,8 +573,9 @@ void COverview::adjustScrollForEqualPartialVisibility(float availableHeight) {
     // Partially visible means: cut off but still showing some part
     bool firstPartiallyVisible = (firstYPos < PADDING) &&
                                   ((firstYPos + this->leftPreviewHeight) > PADDING);
-    bool lastPartiallyVisible = ((lastYPos + this->leftPreviewHeight) > (PADDING + availableHeight)) &&
-                                 (lastYPos < (PADDING + availableHeight));
+    bool lastPartiallyVisible =
+        ((lastYPos + this->leftPreviewHeight) > (PADDING + availableHeight)) &&
+        (lastYPos < (PADDING + availableHeight));
 
     if (!firstPartiallyVisible || !lastPartiallyVisible) {
         return;
@@ -993,7 +1033,7 @@ void COverview::fullRender() {
             g_pHyprOpenGL->renderRect(hLine, CHyprColor{1.0, 1.0, 1.0, 0.8}, {.damage = &damage});
             g_pHyprOpenGL->renderRect(vLine, CHyprColor{1.0, 1.0, 1.0, 0.8}, {.damage = &damage});
         } else if (image.workspaceID > 0 && i != (size_t)activeIndex) {
-            // For existing workspaces on the left panel, show the workspace number in top-left corner
+            // Show workspace number in top-left corner for left panel workspaces
             int workspaceNum = image.workspaceID;
             if (closing && selectedIndex >= 0 && selectedIndex != activeIndex &&
                 i == (size_t)activeIndex) {

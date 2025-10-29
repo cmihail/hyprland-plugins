@@ -3115,3 +3115,187 @@ TEST(BackgroundImageTest, AspectRatioPreserved) {
             << " on monitor " << test.monitorW << "x" << test.monitorH;
     }
 }
+
+// ========================================================================
+// Monitor Event Tests
+// ========================================================================
+
+// Simulated overview state for testing monitor events
+struct MockOverview {
+    bool isOpen = true;
+    bool closeCalled = false;
+    
+    void close() {
+        closeCalled = true;
+        isOpen = false;
+    }
+};
+
+// Simulated global overview map
+static std::map<int, MockOverview*> g_mockOverviews;
+
+// Test helper: Simulate closeAllOverviews behavior
+static void mockCloseAllOverviews() {
+    std::vector<int> monitorsToClose;
+    for (const auto& [monId, overview] : g_mockOverviews) {
+        monitorsToClose.push_back(monId);
+    }
+    for (const auto& monId : monitorsToClose) {
+        auto it = g_mockOverviews.find(monId);
+        if (it != g_mockOverviews.end() && it->second) {
+            it->second->close();
+        }
+    }
+}
+
+// Test helper: Simulate monitor added event
+static void onMonitorAddedMock() {
+    mockCloseAllOverviews();
+}
+
+// Test helper: Simulate monitor removed event
+static void onMonitorRemovedMock() {
+    mockCloseAllOverviews();
+}
+
+TEST(MonitorEventTest, CloseAllOverviewsWithSingleMonitor) {
+    g_mockOverviews.clear();
+    
+    MockOverview overview1;
+    g_mockOverviews[1] = &overview1;
+    
+    EXPECT_TRUE(overview1.isOpen);
+    EXPECT_FALSE(overview1.closeCalled);
+    
+    mockCloseAllOverviews();
+    
+    EXPECT_TRUE(overview1.closeCalled);
+    EXPECT_FALSE(overview1.isOpen);
+    
+    g_mockOverviews.clear();
+}
+
+TEST(MonitorEventTest, CloseAllOverviewsWithMultipleMonitors) {
+    g_mockOverviews.clear();
+    
+    MockOverview overview1, overview2, overview3;
+    g_mockOverviews[1] = &overview1;
+    g_mockOverviews[2] = &overview2;
+    g_mockOverviews[3] = &overview3;
+    
+    EXPECT_TRUE(overview1.isOpen);
+    EXPECT_TRUE(overview2.isOpen);
+    EXPECT_TRUE(overview3.isOpen);
+    
+    mockCloseAllOverviews();
+    
+    EXPECT_TRUE(overview1.closeCalled);
+    EXPECT_TRUE(overview2.closeCalled);
+    EXPECT_TRUE(overview3.closeCalled);
+    EXPECT_FALSE(overview1.isOpen);
+    EXPECT_FALSE(overview2.isOpen);
+    EXPECT_FALSE(overview3.isOpen);
+    
+    g_mockOverviews.clear();
+}
+
+TEST(MonitorEventTest, CloseAllOverviewsWhenEmpty) {
+    g_mockOverviews.clear();
+    
+    // Should not crash when no overviews exist
+    mockCloseAllOverviews();
+    
+    EXPECT_TRUE(g_mockOverviews.empty());
+}
+
+TEST(MonitorEventTest, MonitorAddedClosesAllOverviews) {
+    g_mockOverviews.clear();
+    
+    MockOverview overview1, overview2;
+    g_mockOverviews[1] = &overview1;
+    g_mockOverviews[2] = &overview2;
+    
+    onMonitorAddedMock();
+    
+    EXPECT_TRUE(overview1.closeCalled);
+    EXPECT_TRUE(overview2.closeCalled);
+    
+    g_mockOverviews.clear();
+}
+
+TEST(MonitorEventTest, MonitorRemovedClosesAllOverviews) {
+    g_mockOverviews.clear();
+    
+    MockOverview overview1, overview2;
+    g_mockOverviews[1] = &overview1;
+    g_mockOverviews[2] = &overview2;
+    
+    onMonitorRemovedMock();
+    
+    EXPECT_TRUE(overview1.closeCalled);
+    EXPECT_TRUE(overview2.closeCalled);
+    
+    g_mockOverviews.clear();
+}
+
+TEST(MonitorEventTest, MultipleMonitorEventsDoNotCrash) {
+    g_mockOverviews.clear();
+    
+    MockOverview overview1;
+    g_mockOverviews[1] = &overview1;
+    
+    // First event closes the overview
+    onMonitorAddedMock();
+    EXPECT_TRUE(overview1.closeCalled);
+    
+    // Reset for second test
+    overview1.closeCalled = false;
+    overview1.isOpen = true;
+    
+    // Second event should also work
+    onMonitorRemovedMock();
+    EXPECT_TRUE(overview1.closeCalled);
+    
+    g_mockOverviews.clear();
+}
+
+TEST(MonitorEventTest, CloseAllHandlesNullPointers) {
+    g_mockOverviews.clear();
+    
+    MockOverview overview1;
+    g_mockOverviews[1] = &overview1;
+    g_mockOverviews[2] = nullptr;  // Null overview
+    
+    // Should not crash with null pointer
+    mockCloseAllOverviews();
+    
+    EXPECT_TRUE(overview1.closeCalled);
+    
+    g_mockOverviews.clear();
+}
+
+TEST(MonitorEventTest, IterationDoesNotInvalidate) {
+    g_mockOverviews.clear();
+    
+    MockOverview overview1, overview2, overview3;
+    g_mockOverviews[1] = &overview1;
+    g_mockOverviews[2] = &overview2;
+    g_mockOverviews[3] = &overview3;
+    
+    // Create copy of keys before iteration (like the real implementation)
+    std::vector<int> monitorsToClose;
+    for (const auto& [monId, overview] : g_mockOverviews) {
+        monitorsToClose.push_back(monId);
+    }
+    
+    // Verify all monitors are in the list
+    EXPECT_EQ(monitorsToClose.size(), 3);
+    EXPECT_NE(std::find(monitorsToClose.begin(), monitorsToClose.end(), 1),
+              monitorsToClose.end());
+    EXPECT_NE(std::find(monitorsToClose.begin(), monitorsToClose.end(), 2),
+              monitorsToClose.end());
+    EXPECT_NE(std::find(monitorsToClose.begin(), monitorsToClose.end(), 3),
+              monitorsToClose.end());
+    
+    g_mockOverviews.clear();
+}

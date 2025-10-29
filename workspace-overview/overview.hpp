@@ -74,6 +74,10 @@ class COverview {
                                         PHLWORKSPACE openSpecial);
     void setupAnimations(const Vector2D& monitorSize);
     void setupEventHooks();
+    void setupMouseMoveHook();
+    void setupMouseButtonHook();
+    void setupMouseAxisHook();
+    void setupMonitorHooks();
 
     // Helper functions for drag and drop
     int         findWorkspaceIndexAtPosition(const Vector2D& pos);
@@ -93,6 +97,7 @@ class COverview {
         int sourceWorkspaceIndex
     );
     static int64_t findFirstAvailableWorkspaceID();
+    static void closeAllOverviews();
 
     // Layout constants
     static constexpr int   LEFT_WORKSPACES     = 8;  // Number of workspaces in left list
@@ -135,6 +140,8 @@ class COverview {
     SP<HOOK_CALLBACK_FN> mouseButtonHook;
     SP<HOOK_CALLBACK_FN> mouseMoveHook;
     SP<HOOK_CALLBACK_FN> mouseAxisHook;
+    SP<HOOK_CALLBACK_FN> monitorAddedHook;
+    SP<HOOK_CALLBACK_FN> monitorRemovedHook;
 
     friend class COverviewPassElement;
     friend void removeOverview(WP<Hyprutils::Animation::CBaseAnimatedVariable>, PHLMONITOR);
