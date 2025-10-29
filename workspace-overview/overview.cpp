@@ -258,6 +258,22 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
 
     size->setCallbackOnEnd([this](auto) { redrawAll(true); });
 
+    // Load background image if configured
+    auto* const PBACKGROUNDPATH =
+        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:background_path");
+    if (PBACKGROUNDPATH) {
+        try {
+            auto pathValue = PBACKGROUNDPATH->getValue();
+            std::string pathStr = std::any_cast<Hyprlang::STRING>(pathValue);
+            if (!pathStr.empty()) {
+                loadBackgroundImage(pathStr);
+            }
+        } catch (const std::bad_any_cast& e) {
+            Debug::log(ERR, "[workspace-overview] Failed to read background_path config: {}",
+                       e.what());
+        }
+    }
+
     // Setup mouse move hook to track cursor position and detect dragging
     auto onMouseMove = [this](void* self, SCallbackInfo& info, std::any param) {
         if (closing)
@@ -775,6 +791,35 @@ void COverview::fullRender() {
 
     const Vector2D monitorSize = pMonitor->m_size;
     const float    monScale    = pMonitor->m_scale;
+
+    // Render background image if loaded
+    if (backgroundTexture && backgroundTexture->m_texID != 0) {
+        const Vector2D texSize = backgroundTexture->m_size;
+        CBox bgBox = {{0, 0}, monitorSize};
+
+        // Scale background to cover the entire monitor while maintaining aspect ratio
+        const float monitorAspect = monitorSize.x / monitorSize.y;
+        const float textureAspect = texSize.x / texSize.y;
+
+        if (textureAspect > monitorAspect) {
+            // Texture is wider, scale by height
+            const float scale = monitorSize.y / texSize.y;
+            const float scaledWidth = texSize.x * scale;
+            bgBox.x = -(scaledWidth - monitorSize.x) / 2.0f;
+            bgBox.w = scaledWidth;
+        } else {
+            // Texture is taller, scale by width
+            const float scale = monitorSize.x / texSize.x;
+            const float scaledHeight = texSize.y * scale;
+            bgBox.y = -(scaledHeight - monitorSize.y) / 2.0f;
+            bgBox.h = scaledHeight;
+        }
+
+        bgBox.scale(monScale);
+        bgBox.round();
+
+        g_pHyprOpenGL->renderTexture(backgroundTexture, bgBox, {});
+    }
 
     // Get animation values
     const Vector2D currentSize = size->value();
@@ -1464,5 +1509,81 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
 
         timerData->timerSource = timer;
         wl_event_source_timer_update(timer, 50);
+    }
+}
+
+std::vector<uint8_t> COverview::convertPixelDataToRGBA(const guchar* pixels, int width,
+                                                        int height, int channels,
+                                                        int stride) {
+    std::vector<uint8_t> pixelData(width * height * 4);
+
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            const guchar* src = pixels + y * stride + x * channels;
+            uint8_t* dst = pixelData.data() + (y * width + x) * 4;
+
+            if (channels == 4) {
+                // RGBA format
+                dst[0] = src[0];  // R
+                dst[1] = src[1];  // G
+                dst[2] = src[2];  // B
+                dst[3] = src[3];  // A
+            } else if (channels == 3) {
+                // RGB format - add alpha channel
+                dst[0] = src[0];  // R
+                dst[1] = src[1];  // G
+                dst[2] = src[2];  // B
+                dst[3] = 255;     // A (fully opaque)
+            }
+        }
+    }
+
+    return pixelData;
+}
+
+void COverview::loadBackgroundImage(const std::string& path) {
+    if (path.empty())
+        return;
+
+    GError* error = nullptr;
+    GdkPixbuf* pixbuf = gdk_pixbuf_new_from_file(path.c_str(), &error);
+
+    if (!pixbuf) {
+        Debug::log(ERR, "[workspace-overview] Failed to load background image: {}",
+                   error ? error->message : "unknown error");
+        if (error)
+            g_error_free(error);
+        return;
+    }
+
+    const int width = gdk_pixbuf_get_width(pixbuf);
+    const int height = gdk_pixbuf_get_height(pixbuf);
+    const int channels = gdk_pixbuf_get_n_channels(pixbuf);
+
+    if (channels != 3 && channels != 4) {
+        Debug::log(ERR, "[workspace-overview] Unsupported image channel count: {}",
+                   channels);
+        g_object_unref(pixbuf);
+        return;
+    }
+
+    const int stride = gdk_pixbuf_get_rowstride(pixbuf);
+    const guchar* pixels = gdk_pixbuf_get_pixels(pixbuf);
+
+    auto pixelData = convertPixelDataToRGBA(pixels, width, height, channels, stride);
+    g_object_unref(pixbuf);
+
+    // Create texture using Hyprland's CTexture constructor
+    const uint32_t drmFormat = DRM_FORMAT_ABGR8888;
+    const uint32_t textureStride = width * 4;
+
+    try {
+        backgroundTexture = makeShared<CTexture>(drmFormat, pixelData.data(), textureStride,
+                                                  Vector2D{(double)width, (double)height},
+                                                  true);
+        Debug::log(LOG, "[workspace-overview] Loaded background image: {} ({}x{})",
+                   path, width, height);
+    } catch (const std::exception& e) {
+        Debug::log(ERR, "[workspace-overview] Failed to create texture: {}", e.what());
     }
 }

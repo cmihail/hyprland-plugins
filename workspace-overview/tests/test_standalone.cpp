@@ -2844,3 +2844,199 @@ TEST_F(EqualPartialVisibilityTest, AdjustmentStaysWithinBounds) {
         }
     }
 }
+
+// Test helper: Calculate background image scaling to cover monitor
+struct BackgroundBox {
+    float x, y, w, h;
+};
+
+static BackgroundBox calculateBackgroundCover(
+    float monitorWidth,
+    float monitorHeight,
+    float imageWidth,
+    float imageHeight
+) {
+    const float monitorAspect = monitorWidth / monitorHeight;
+    const float imageAspect = imageWidth / imageHeight;
+
+    BackgroundBox result = {0, 0, monitorWidth, monitorHeight};
+
+    if (imageAspect > monitorAspect) {
+        // Image is wider, scale by height
+        const float scale = monitorHeight / imageHeight;
+        const float scaledWidth = imageWidth * scale;
+        result.x = -(scaledWidth - monitorWidth) / 2.0f;
+        result.w = scaledWidth;
+    } else {
+        // Image is taller, scale by width
+        const float scale = monitorWidth / imageWidth;
+        const float scaledHeight = imageHeight * scale;
+        result.y = -(scaledHeight - monitorHeight) / 2.0f;
+        result.h = scaledHeight;
+    }
+
+    return result;
+}
+
+// ============================================================================
+// Background Image Scaling Tests
+// ============================================================================
+
+TEST(BackgroundImageTest, SquareImageOnSquareMonitor) {
+    // Square image on square monitor should fit exactly
+    auto box = calculateBackgroundCover(1000, 1000, 500, 500);
+
+    EXPECT_FLOAT_EQ(box.x, 0.0f);
+    EXPECT_FLOAT_EQ(box.y, 0.0f);
+    EXPECT_FLOAT_EQ(box.w, 1000.0f);
+    EXPECT_FLOAT_EQ(box.h, 1000.0f);
+}
+
+TEST(BackgroundImageTest, WideImageOnSquareMonitor) {
+    // Wide image (16:9) on square monitor (1:1)
+    // Should scale by height and crop sides
+    auto box = calculateBackgroundCover(1000, 1000, 1920, 1080);
+
+    EXPECT_FLOAT_EQ(box.y, 0.0f);
+    EXPECT_FLOAT_EQ(box.h, 1000.0f);
+    EXPECT_LT(box.x, 0.0f); // Negative x means cropped on sides
+    EXPECT_GT(box.w, 1000.0f); // Width larger than monitor
+}
+
+TEST(BackgroundImageTest, TallImageOnSquareMonitor) {
+    // Tall image (9:16) on square monitor (1:1)
+    // Should scale by width and crop top/bottom
+    auto box = calculateBackgroundCover(1000, 1000, 1080, 1920);
+
+    EXPECT_FLOAT_EQ(box.x, 0.0f);
+    EXPECT_FLOAT_EQ(box.w, 1000.0f);
+    EXPECT_LT(box.y, 0.0f); // Negative y means cropped on top/bottom
+    EXPECT_GT(box.h, 1000.0f); // Height larger than monitor
+}
+
+TEST(BackgroundImageTest, WideImageOnWideMonitor) {
+    // 16:9 image on 16:9 monitor should fit exactly
+    auto box = calculateBackgroundCover(1920, 1080, 3840, 2160);
+
+    EXPECT_FLOAT_EQ(box.x, 0.0f);
+    EXPECT_FLOAT_EQ(box.y, 0.0f);
+    EXPECT_FLOAT_EQ(box.w, 1920.0f);
+    EXPECT_FLOAT_EQ(box.h, 1080.0f);
+}
+
+TEST(BackgroundImageTest, UltraWideImageOnStandardMonitor) {
+    // 21:9 image on 16:9 monitor
+    // Should scale by height and crop sides
+    auto box = calculateBackgroundCover(1920, 1080, 2560, 1080);
+
+    EXPECT_FLOAT_EQ(box.y, 0.0f);
+    EXPECT_FLOAT_EQ(box.h, 1080.0f);
+    EXPECT_LT(box.x, 0.0f); // Cropped on sides
+    EXPECT_GT(box.w, 1920.0f);
+}
+
+TEST(BackgroundImageTest, PortraitImageOnLandscapeMonitor) {
+    // Portrait image (9:16) on landscape monitor (16:9)
+    // Should scale by width and crop top/bottom significantly
+    auto box = calculateBackgroundCover(1920, 1080, 1080, 1920);
+
+    EXPECT_FLOAT_EQ(box.x, 0.0f);
+    EXPECT_FLOAT_EQ(box.w, 1920.0f);
+    EXPECT_LT(box.y, 0.0f);
+    EXPECT_GT(box.h, 1080.0f);
+}
+
+TEST(BackgroundImageTest, SmallImageScalesUp) {
+    // Small image should scale up to cover monitor
+    auto box = calculateBackgroundCover(1920, 1080, 640, 480);
+
+    // Image should be scaled up
+    EXPECT_GT(box.w, 640.0f);
+    EXPECT_GT(box.h, 480.0f);
+
+    // Should maintain aspect ratio and cover entire monitor
+    float scaledAspect = box.w / box.h;
+    float originalAspect = 640.0f / 480.0f;
+    EXPECT_NEAR(scaledAspect, originalAspect, 0.01f);
+}
+
+TEST(BackgroundImageTest, LargeImageScalesDown) {
+    // Large image should scale down to cover monitor
+    auto box = calculateBackgroundCover(1920, 1080, 7680, 4320);
+
+    // At least one dimension should equal monitor size
+    bool widthMatches = std::abs(box.w - 1920.0f) < 0.01f;
+    bool heightMatches = std::abs(box.h - 1080.0f) < 0.01f;
+    EXPECT_TRUE(widthMatches || heightMatches);
+}
+
+TEST(BackgroundImageTest, BackgroundCoversEntireMonitor) {
+    // Test with various aspect ratios
+    struct TestCase {
+        float monitorW, monitorH;
+        float imageW, imageH;
+    };
+
+    std::vector<TestCase> cases = {
+        {1920, 1080, 1920, 1080},   // 16:9 on 16:9
+        {1920, 1080, 3840, 2160},   // 16:9 on 16:9 (different size)
+        {2560, 1440, 1920, 1080},   // 16:9 on 16:9 (different res)
+        {3440, 1440, 1920, 1080},   // 21:9 monitor with 16:9 image
+        {1920, 1080, 2560, 1080},   // 16:9 monitor with 21:9 image
+        {1920, 1200, 1920, 1080},   // 16:10 monitor with 16:9 image
+    };
+
+    for (const auto& test : cases) {
+        auto box = calculateBackgroundCover(test.monitorW, test.monitorH,
+                                           test.imageW, test.imageH);
+
+        // Background should completely cover the monitor
+        // Either width matches and height is larger, or height matches and width is larger
+        bool widthCovers = (std::abs(box.w - test.monitorW) < 0.01f && box.h >= test.monitorH) ||
+                          (box.w >= test.monitorW);
+        bool heightCovers = (std::abs(box.h - test.monitorH) < 0.01f && box.w >= test.monitorW) ||
+                           (box.h >= test.monitorH);
+
+        EXPECT_TRUE(widthCovers && heightCovers)
+            << "Failed for monitor " << test.monitorW << "x" << test.monitorH
+            << " with image " << test.imageW << "x" << test.imageH;
+    }
+}
+
+TEST(BackgroundImageTest, CenteredCropping) {
+    // Verify that cropping is centered (equal amount cropped from both sides)
+    auto box = calculateBackgroundCover(1920, 1080, 2560, 1080);
+
+    // Image is wider, so should be centered horizontally
+    float leftCrop = -box.x;
+    float rightCrop = box.w - 1920.0f - leftCrop;
+
+    EXPECT_NEAR(leftCrop, rightCrop, 0.01f);
+}
+
+TEST(BackgroundImageTest, AspectRatioPreserved) {
+    // Test that aspect ratio is preserved during scaling
+    struct TestCase {
+        float monitorW, monitorH;
+        float imageW, imageH;
+    };
+
+    std::vector<TestCase> cases = {
+        {1920, 1080, 3840, 2160},
+        {1920, 1080, 1280, 720},
+        {2560, 1440, 1920, 1080},
+        {3440, 1440, 2560, 1080},
+    };
+
+    for (const auto& test : cases) {
+        auto box = calculateBackgroundCover(test.monitorW, test.monitorH,
+                                           test.imageW, test.imageH);
+
+        float originalAspect = test.imageW / test.imageH;
+        float scaledAspect = box.w / box.h;
+
+        EXPECT_NEAR(originalAspect, scaledAspect, 0.01f)
+            << "Aspect ratio not preserved for image " << test.imageW << "x" << test.imageH
+            << " on monitor " << test.monitorW << "x" << test.monitorH;
+    }
+}

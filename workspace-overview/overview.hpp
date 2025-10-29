@@ -5,10 +5,13 @@
 #include "globals.hpp"
 #include <hyprland/src/desktop/DesktopTypes.hpp>
 #include <hyprland/src/render/Framebuffer.hpp>
+#include <hyprland/src/render/Texture.hpp>
 #include <hyprland/src/helpers/AnimatedVariable.hpp>
 #include <hyprland/src/managers/HookSystemManager.hpp>
 #include <vector>
 #include <unordered_map>
+#include <gdk-pixbuf/gdk-pixbuf.h>
+#include <cairo/cairo.h>
 
 class CMonitor;
 class COverview;
@@ -61,6 +64,9 @@ class COverview {
     void redrawID(int id, bool forcelowres = false);
     void redrawAll(bool forcelowres = false);
     void fullRender();
+    void loadBackgroundImage(const std::string& path);
+    std::vector<uint8_t> convertPixelDataToRGBA(const guchar* pixels, int width,
+                                                  int height, int channels, int stride);
 
     // Helper functions for constructor
     void setupWorkspaceIDs(int currentID);
@@ -128,6 +134,9 @@ class COverview {
     SP<HOOK_CALLBACK_FN> mouseButtonHook;
     SP<HOOK_CALLBACK_FN> mouseMoveHook;
     SP<HOOK_CALLBACK_FN> mouseAxisHook;
+
+    // Background image
+    SP<CTexture> backgroundTexture;
 
     friend class COverviewPassElement;
     friend void removeOverview(WP<Hyprutils::Animation::CBaseAnimatedVariable>, PHLMONITOR);

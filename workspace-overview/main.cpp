@@ -199,6 +199,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
     HyprlandAPI::addDispatcherV2(PHANDLE, "workspace-overview", workspaceOverviewDispatch);
 
+    // Register config options
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:background_path",
+                                 Hyprlang::STRING{""});
+
     Debug::log(LOG, "[workspace-overview] Plugin initialized successfully");
 
     return {"workspace-overview", "Workspace overview plugin for Hyprland", "cmihail", "1.0"};
