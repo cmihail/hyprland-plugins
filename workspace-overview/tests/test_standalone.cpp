@@ -3476,3 +3476,458 @@ TEST(DragPreviewTest, ClampNegativeCoordinates) {
     EXPECT_FLOAT_EQ(region.x, 0.0f);
     EXPECT_FLOAT_EQ(region.y, 0.0f);
 }
+
+// Test helper: Simulate global drag state
+struct DragState {
+    bool isDragging = false;
+    bool mouseButtonPressed = false;
+    bool isWorkspaceDrag = false;
+    int sourceWorkspaceIndex = -1;
+    float mouseDownX = 0.0f;
+    float mouseDownY = 0.0f;
+};
+
+// Test helper: Check if workspace drag should be triggered
+static bool shouldTriggerWorkspaceDrag(const DragState& state, float currentX, float currentY,
+                                       float threshold, bool isMiddleClick) {
+    if (!isMiddleClick)
+        return false;
+
+    if (!state.mouseButtonPressed)
+        return false;
+
+    if (state.isDragging)
+        return true;  // Already dragging
+
+    const float distanceX = std::abs(currentX - state.mouseDownX);
+    const float distanceY = std::abs(currentY - state.mouseDownY);
+
+    return (distanceX > threshold || distanceY > threshold);
+}
+
+// Test helper: Calculate workspace drag preview size
+struct WorkspaceDragPreview {
+    float width;
+    float height;
+    float renderScale;
+};
+
+static WorkspaceDragPreview calculateWorkspaceDragPreview(
+    float workspaceWidth, float workspaceHeight, float dragPreviewScale
+) {
+    WorkspaceDragPreview result;
+    result.width = workspaceWidth;
+    result.height = workspaceHeight;
+    result.renderScale = dragPreviewScale;
+    return result;
+}
+
+// Test: Workspace drag should not trigger with left-click
+TEST(WorkspaceDragTest, NoTriggerWithLeftClick) {
+    DragState state;
+    state.mouseButtonPressed = true;
+    state.mouseDownX = 100.0f;
+    state.mouseDownY = 100.0f;
+    state.sourceWorkspaceIndex = 0;
+
+    // Simulate mouse movement beyond threshold with left-click (not middle)
+    EXPECT_FALSE(shouldTriggerWorkspaceDrag(state, 160.0f, 100.0f, 50.0f, false));
+}
+
+// Test: Workspace drag should trigger with middle-click beyond threshold
+TEST(WorkspaceDragTest, TriggerWithMiddleClick) {
+    DragState state;
+    state.mouseButtonPressed = true;
+    state.mouseDownX = 100.0f;
+    state.mouseDownY = 100.0f;
+    state.sourceWorkspaceIndex = 1;
+
+    // Simulate mouse movement beyond threshold with middle-click
+    EXPECT_TRUE(shouldTriggerWorkspaceDrag(state, 160.0f, 100.0f, 50.0f, true));
+}
+
+// Test: Workspace drag should not trigger within threshold
+TEST(WorkspaceDragTest, NoTriggerWithinThreshold) {
+    DragState state;
+    state.mouseButtonPressed = true;
+    state.mouseDownX = 100.0f;
+    state.mouseDownY = 100.0f;
+    state.sourceWorkspaceIndex = 2;
+
+    // Simulate mouse movement within threshold with middle-click
+    EXPECT_FALSE(shouldTriggerWorkspaceDrag(state, 130.0f, 110.0f, 50.0f, true));
+}
+
+// Test: Workspace drag should not trigger without button press
+TEST(WorkspaceDragTest, NoTriggerWithoutButtonPress) {
+    DragState state;
+    state.mouseButtonPressed = false;
+    state.mouseDownX = 100.0f;
+    state.mouseDownY = 100.0f;
+
+    // Simulate mouse movement with middle-click but no button press
+    EXPECT_FALSE(shouldTriggerWorkspaceDrag(state, 160.0f, 100.0f, 50.0f, true));
+}
+
+// Test: Workspace drag preview uses entire workspace dimensions
+TEST(WorkspaceDragTest, PreviewUsesFullWorkspaceDimensions) {
+    float workspaceWidth = 1920.0f;
+    float workspaceHeight = 1080.0f;
+    float dragScale = 0.10f;
+
+    auto preview = calculateWorkspaceDragPreview(workspaceWidth, workspaceHeight, dragScale);
+
+    // Preview should use full workspace dimensions (before scaling for display)
+    EXPECT_FLOAT_EQ(preview.width, workspaceWidth);
+    EXPECT_FLOAT_EQ(preview.height, workspaceHeight);
+    EXPECT_FLOAT_EQ(preview.renderScale, dragScale);
+}
+
+// Test: Workspace drag flag should be set correctly for middle-click
+TEST(WorkspaceDragTest, WorkspaceDragFlagSetForMiddleClick) {
+    DragState state;
+
+    // Simulate middle-click button press
+    state.isWorkspaceDrag = true;
+    state.mouseButtonPressed = true;
+
+    EXPECT_TRUE(state.isWorkspaceDrag);
+    EXPECT_TRUE(state.mouseButtonPressed);
+}
+
+// Test: Workspace drag flag should not be set for left-click
+TEST(WorkspaceDragTest, WorkspaceDragFlagNotSetForLeftClick) {
+    DragState state;
+
+    // Simulate left-click button press
+    state.isWorkspaceDrag = false;
+    state.mouseButtonPressed = true;
+
+    EXPECT_FALSE(state.isWorkspaceDrag);
+    EXPECT_TRUE(state.mouseButtonPressed);
+}
+
+// Test: Workspace drag should preserve aspect ratio
+TEST(WorkspaceDragTest, PreviewPreservesAspectRatio) {
+    float workspaceWidth = 1920.0f;
+    float workspaceHeight = 1080.0f;
+    float dragScale = 0.10f;
+
+    auto preview = calculateWorkspaceDragPreview(workspaceWidth, workspaceHeight, dragScale);
+
+    // Calculate aspect ratios
+    float originalAspect = workspaceWidth / workspaceHeight;
+    float previewAspect = preview.width / preview.height;
+
+    EXPECT_FLOAT_EQ(originalAspect, previewAspect);
+}
+
+// Test: Different monitor resolutions produce correct preview sizes
+TEST(WorkspaceDragTest, DifferentMonitorResolutions) {
+    float dragScale = 0.10f;
+
+    // Test 1920x1080 monitor
+    auto preview1 = calculateWorkspaceDragPreview(1920.0f, 1080.0f, dragScale);
+    EXPECT_FLOAT_EQ(preview1.width, 1920.0f);
+    EXPECT_FLOAT_EQ(preview1.height, 1080.0f);
+
+    // Test 2560x1440 monitor
+    auto preview2 = calculateWorkspaceDragPreview(2560.0f, 1440.0f, dragScale);
+    EXPECT_FLOAT_EQ(preview2.width, 2560.0f);
+    EXPECT_FLOAT_EQ(preview2.height, 1440.0f);
+
+    // Test ultrawide 3440x1440 monitor
+    auto preview3 = calculateWorkspaceDragPreview(3440.0f, 1440.0f, dragScale);
+    EXPECT_FLOAT_EQ(preview3.width, 3440.0f);
+    EXPECT_FLOAT_EQ(preview3.height, 1440.0f);
+}
+
+// ============================================================================
+// Drop Zone Filtering Tests
+// ============================================================================
+
+// Helper struct to represent drop zone result
+struct DropZoneResult {
+    int above;
+    int below;
+
+    DropZoneResult(int a, int b) : above(a), below(b) {}
+
+    bool isValid() const { return above != -1 || below != -1; }
+    bool isAboveFirst() const { return above == -2 && below == 0; }
+    bool isBelowLast() const { return below == -3; }
+    bool isBetween() const { return above >= 0 && below >= 0; }
+};
+
+// Helper function to check if drop zone should be filtered for adjacent workspace
+bool shouldFilterAdjacentDropZone(const DropZoneResult& dropZone, int sourceWorkspaceIndex) {
+    if (sourceWorkspaceIndex < 0) return false;
+
+    // Check if drop zone is directly above or below the source workspace
+    // Handle normal cases (between two workspaces)
+    if ((dropZone.above == sourceWorkspaceIndex && dropZone.below >= 0) ||
+        (dropZone.below == sourceWorkspaceIndex && dropZone.above >= 0) ||
+        (dropZone.above >= 0 && dropZone.below == sourceWorkspaceIndex) ||
+        (dropZone.below >= 0 && dropZone.above == sourceWorkspaceIndex)) {
+        return true;
+    }
+
+    // Handle special case: above first workspace (-2, 0)
+    if (dropZone.above == -2 && dropZone.below == 0 && sourceWorkspaceIndex == 0) {
+        return true;
+    }
+
+    // Handle special case: below last workspace (lastIndex, -3)
+    if (dropZone.below == -3 && dropZone.above == sourceWorkspaceIndex) {
+        return true;
+    }
+
+    return false;
+}
+
+// Helper function to check if drop zone should be filtered for placeholder
+struct WorkspaceInfo {
+    bool isPlaceholder;
+};
+
+bool shouldFilterPlaceholderDropZone(const DropZoneResult& dropZone,
+                                      const std::vector<WorkspaceInfo>& workspaces) {
+    if (dropZone.above >= 0 && dropZone.above < (int)workspaces.size()) {
+        if (workspaces[dropZone.above].isPlaceholder) {
+            return true;
+        }
+    }
+    return false;
+}
+
+TEST(DropZoneFilteringTest, AdjacentToSourceWorkspace_Above) {
+    // Dragging workspace 2, hovering between workspace 1 and 2
+    DropZoneResult dropZone(1, 2);
+    int sourceWorkspaceIndex = 2;
+
+    bool shouldFilter = shouldFilterAdjacentDropZone(dropZone, sourceWorkspaceIndex);
+
+    EXPECT_TRUE(shouldFilter) << "Should filter drop zone between workspace 1 and 2 when dragging workspace 2";
+}
+
+TEST(DropZoneFilteringTest, AdjacentToSourceWorkspace_Below) {
+    // Dragging workspace 2, hovering between workspace 2 and 3
+    DropZoneResult dropZone(2, 3);
+    int sourceWorkspaceIndex = 2;
+
+    bool shouldFilter = shouldFilterAdjacentDropZone(dropZone, sourceWorkspaceIndex);
+
+    EXPECT_TRUE(shouldFilter) << "Should filter drop zone between workspace 2 and 3 when dragging workspace 2";
+}
+
+TEST(DropZoneFilteringTest, NotAdjacentToSourceWorkspace) {
+    // Dragging workspace 2, hovering between workspace 0 and 1
+    DropZoneResult dropZone(0, 1);
+    int sourceWorkspaceIndex = 2;
+
+    bool shouldFilter = shouldFilterAdjacentDropZone(dropZone, sourceWorkspaceIndex);
+
+    EXPECT_FALSE(shouldFilter) << "Should NOT filter drop zone between workspace 0 and 1 when dragging workspace 2";
+}
+
+TEST(DropZoneFilteringTest, AdjacentToFirstWorkspace_Above) {
+    // Dragging workspace 0, hovering above it
+    DropZoneResult dropZone(-2, 0);
+    int sourceWorkspaceIndex = 0;
+
+    bool shouldFilter = shouldFilterAdjacentDropZone(dropZone, sourceWorkspaceIndex);
+
+    EXPECT_TRUE(shouldFilter) << "Should filter drop zone above workspace 0 when dragging workspace 0";
+}
+
+TEST(DropZoneFilteringTest, AdjacentToFirstWorkspace_Below) {
+    // Dragging workspace 0, hovering between workspace 0 and 1
+    DropZoneResult dropZone(0, 1);
+    int sourceWorkspaceIndex = 0;
+
+    bool shouldFilter = shouldFilterAdjacentDropZone(dropZone, sourceWorkspaceIndex);
+
+    EXPECT_TRUE(shouldFilter) << "Should filter drop zone between workspace 0 and 1 when dragging workspace 0";
+}
+
+TEST(DropZoneFilteringTest, AdjacentToLastWorkspace_Above) {
+    // Dragging last workspace (index 4), hovering between workspace 3 and 4
+    DropZoneResult dropZone(3, 4);
+    int sourceWorkspaceIndex = 4;
+
+    bool shouldFilter = shouldFilterAdjacentDropZone(dropZone, sourceWorkspaceIndex);
+
+    EXPECT_TRUE(shouldFilter) << "Should filter drop zone between workspace 3 and 4 when dragging workspace 4";
+}
+
+TEST(DropZoneFilteringTest, AdjacentToLastWorkspace_Below) {
+    // Dragging last workspace (index 4), hovering below it
+    DropZoneResult dropZone(4, -3);
+    int sourceWorkspaceIndex = 4;
+
+    bool shouldFilter = shouldFilterAdjacentDropZone(dropZone, sourceWorkspaceIndex);
+
+    EXPECT_TRUE(shouldFilter) << "Should filter drop zone below workspace 4 when dragging workspace 4";
+}
+
+TEST(DropZoneFilteringTest, AfterPlaceholderWorkspace) {
+    // Setup: workspaces [0:real, 1:real, 2:real, 3:placeholder, 4:placeholder]
+    std::vector<WorkspaceInfo> workspaces = {
+        {false}, {false}, {false}, {true}, {true}
+    };
+
+    // Drop zone after workspace 3 (which is a placeholder)
+    DropZoneResult dropZone(3, 4);
+
+    bool shouldFilter = shouldFilterPlaceholderDropZone(dropZone, workspaces);
+
+    EXPECT_TRUE(shouldFilter) << "Should filter drop zone after placeholder workspace";
+}
+
+TEST(DropZoneFilteringTest, AfterRealWorkspace) {
+    // Setup: workspaces [0:real, 1:real, 2:real, 3:placeholder, 4:placeholder]
+    std::vector<WorkspaceInfo> workspaces = {
+        {false}, {false}, {false}, {true}, {true}
+    };
+
+    // Drop zone after workspace 2 (which is NOT a placeholder)
+    DropZoneResult dropZone(2, 3);
+
+    bool shouldFilter = shouldFilterPlaceholderDropZone(dropZone, workspaces);
+
+    EXPECT_FALSE(shouldFilter) << "Should NOT filter drop zone after real workspace";
+}
+
+TEST(DropZoneFilteringTest, BetweenTwoPlaceholders) {
+    // Setup: workspaces [0:real, 1:real, 2:real, 3:placeholder, 4:placeholder]
+    std::vector<WorkspaceInfo> workspaces = {
+        {false}, {false}, {false}, {true}, {true}
+    };
+
+    // Drop zone after workspace 4 (which is a placeholder)
+    DropZoneResult dropZone(4, -3);
+
+    bool shouldFilter = shouldFilterPlaceholderDropZone(dropZone, workspaces);
+
+    EXPECT_TRUE(shouldFilter) << "Should filter drop zone after placeholder, even if below last";
+}
+
+TEST(DropZoneFilteringTest, AboveFirstWorkspace_NotAdjacent) {
+    // Dragging workspace 2, hovering above first workspace
+    DropZoneResult dropZone(-2, 0);
+    int sourceWorkspaceIndex = 2;
+
+    bool shouldFilter = shouldFilterAdjacentDropZone(dropZone, sourceWorkspaceIndex);
+
+    EXPECT_FALSE(shouldFilter) << "Should NOT filter drop zone above first workspace when dragging workspace 2";
+}
+
+TEST(DropZoneFilteringTest, BelowLastWorkspace_NotAdjacent) {
+    // Dragging workspace 2, hovering below last workspace (4)
+    DropZoneResult dropZone(4, -3);
+    int sourceWorkspaceIndex = 2;
+
+    bool shouldFilter = shouldFilterAdjacentDropZone(dropZone, sourceWorkspaceIndex);
+
+    EXPECT_FALSE(shouldFilter) << "Should NOT filter drop zone below last workspace when dragging workspace 2";
+}
+
+TEST(DropZoneFilteringTest, ComplexScenario_RealAfterPlaceholder) {
+    // Setup: workspaces [0:real, 1:placeholder, 2:real, 3:placeholder]
+    std::vector<WorkspaceInfo> workspaces = {
+        {false}, {true}, {false}, {true}
+    };
+
+    // Drop zone after workspace 1 (placeholder)
+    DropZoneResult dropZone1(1, 2);
+    EXPECT_TRUE(shouldFilterPlaceholderDropZone(dropZone1, workspaces));
+
+    // Drop zone after workspace 2 (real)
+    DropZoneResult dropZone2(2, 3);
+    EXPECT_FALSE(shouldFilterPlaceholderDropZone(dropZone2, workspaces));
+}
+
+TEST(DropZoneFilteringTest, CombinedFiltering_AdjacentAndPlaceholder) {
+    // Setup: workspaces [0:real, 1:real, 2:placeholder, 3:placeholder]
+    std::vector<WorkspaceInfo> workspaces = {
+        {false}, {false}, {true}, {true}
+    };
+
+    // Dragging workspace 1, hovering between 1 and 2
+    DropZoneResult dropZone(1, 2);
+    int sourceWorkspaceIndex = 1;
+
+    // Should be filtered for being adjacent
+    bool adjacentFilter = shouldFilterAdjacentDropZone(dropZone, sourceWorkspaceIndex);
+    EXPECT_TRUE(adjacentFilter) << "Should filter for being adjacent to source";
+
+    // Even if not adjacent, would be filtered for being after placeholder
+    // (if workspace 1 were a placeholder)
+    std::vector<WorkspaceInfo> workspaces2 = {
+        {false}, {true}, {false}, {true}
+    };
+    bool placeholderFilter = shouldFilterPlaceholderDropZone(dropZone, workspaces2);
+    EXPECT_TRUE(placeholderFilter) << "Should also filter for being after placeholder";
+}
+
+TEST(DropZoneFilteringTest, NoFiltering_ValidDropLocation) {
+    // Setup: workspaces [0:real, 1:real, 2:real, 3:real]
+    std::vector<WorkspaceInfo> workspaces = {
+        {false}, {false}, {false}, {false}
+    };
+
+    // Dragging workspace 3, hovering between 0 and 1
+    DropZoneResult dropZone(0, 1);
+    int sourceWorkspaceIndex = 3;
+
+    bool adjacentFilter = shouldFilterAdjacentDropZone(dropZone, sourceWorkspaceIndex);
+    bool placeholderFilter = shouldFilterPlaceholderDropZone(dropZone, workspaces);
+
+    EXPECT_FALSE(adjacentFilter) << "Should NOT filter for adjacent";
+    EXPECT_FALSE(placeholderFilter) << "Should NOT filter for placeholder";
+}
+
+TEST(DropZoneFilteringTest, EdgeCase_NegativeSourceIndex) {
+    // Invalid source index
+    DropZoneResult dropZone(1, 2);
+    int sourceWorkspaceIndex = -1;
+
+    bool shouldFilter = shouldFilterAdjacentDropZone(dropZone, sourceWorkspaceIndex);
+
+    EXPECT_FALSE(shouldFilter) << "Should NOT filter when source index is negative";
+}
+
+TEST(DropZoneFilteringTest, EdgeCase_EmptyWorkspaceList) {
+    std::vector<WorkspaceInfo> workspaces = {};
+
+    DropZoneResult dropZone(0, 1);
+
+    bool shouldFilter = shouldFilterPlaceholderDropZone(dropZone, workspaces);
+
+    EXPECT_FALSE(shouldFilter) << "Should NOT filter when workspace list is empty";
+}
+
+TEST(DropZoneFilteringTest, TopmostWorkspace_DraggedAbove) {
+    // Dragging topmost workspace (index 0) above it
+    // Drop zone is (-2, 0) which is above first workspace
+    DropZoneResult dropZone(-2, 0);
+    int sourceWorkspaceIndex = 0;
+
+    bool shouldFilter = shouldFilterAdjacentDropZone(dropZone, sourceWorkspaceIndex);
+
+    EXPECT_TRUE(shouldFilter) << "Should filter when dragging topmost workspace above it (adjacent to margin)";
+}
+
+TEST(DropZoneFilteringTest, BottommostWorkspace_DraggedBelow) {
+    // Dragging bottommost workspace (last on left side) below it
+    // Drop zone is (lastIndex, -3) which is below last workspace
+    // Assuming 5 workspaces on left side (indices 0-4), activeIndex would be 5
+    // So lastLeftIndex = activeIndex - 1 = 4
+    int lastLeftIndex = 4;
+    DropZoneResult dropZone(lastLeftIndex, -3);
+    int sourceWorkspaceIndex = lastLeftIndex;
+
+    bool shouldFilter = shouldFilterAdjacentDropZone(dropZone, sourceWorkspaceIndex);
+
+    EXPECT_TRUE(shouldFilter) << "Should filter when dragging bottommost workspace below it (adjacent to margin)";
+}

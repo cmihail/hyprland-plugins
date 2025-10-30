@@ -20,6 +20,7 @@ class COverview;
 struct GlobalDragState {
     bool isDragging = false;
     bool mouseButtonPressed = false;  // Shared across all monitors
+    bool isWorkspaceDrag = false;     // true if dragging whole workspace (middle-click)
     PHLWINDOW draggedWindow = nullptr;
     int sourceWorkspaceIndex = -1;
     COverview* sourceOverview = nullptr;
@@ -29,6 +30,7 @@ struct GlobalDragState {
     void reset() {
         isDragging = false;
         mouseButtonPressed = false;
+        isWorkspaceDrag = false;
         draggedWindow = nullptr;
         sourceWorkspaceIndex = -1;
         sourceOverview = nullptr;
@@ -85,6 +87,10 @@ class COverview {
     PHLWINDOW   findWindowAtPosition(const Vector2D& pos, int workspaceIndex);
     void        moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex);
     void        renderDragPreview();
+    std::pair<int, int> findDropZoneBetweenWorkspaces(const Vector2D& pos);
+    void        renderDropZoneAboveFirst();
+    void        renderDropZoneBelowLast(int lastIndex);
+    void        renderDropZoneBetween(int above, int below);
 
     // Cross-monitor helpers
     static std::pair<COverview*, int> findWorkspaceAtGlobalPosition(

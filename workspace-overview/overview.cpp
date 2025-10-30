@@ -293,7 +293,11 @@ void COverview::setupMouseMoveHook() {
 
             if (distanceX > DRAG_THRESHOLD || distanceY > DRAG_THRESHOLD) {
                 g_dragState.isDragging = true;
-                if (g_dragState.draggedWindow) {
+                if (g_dragState.isWorkspaceDrag) {
+                    // Render whole workspace preview for workspace drag
+                    renderDragPreview();
+                } else if (g_dragState.draggedWindow) {
+                    // Render window preview for window drag
                     renderDragPreview();
                 }
             }
@@ -326,7 +330,32 @@ void COverview::setupMouseButtonHook() {
 
         info.cancelled = true;
 
-        // Any button except left click: consume event without doing anything
+        // Handle middle-click for workspace dragging
+        if (e.button == BTN_MIDDLE) {
+            if (e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
+                // Middle-click pressed - setup for workspace drag
+                g_dragState.mouseButtonPressed = true;
+                g_dragState.mouseDownPos = lastMousePosLocal;
+                g_dragState.sourceOverview = this;
+                g_dragState.isWorkspaceDrag = true;
+
+                // Find which workspace was clicked
+                int clickedWsIndex = findWorkspaceIndexAtPosition(lastMousePosLocal);
+                g_dragState.sourceWorkspaceIndex = clickedWsIndex;
+                g_dragState.draggedWindow = nullptr;  // No window for workspace drag
+            } else {
+                // Middle-click released - handle workspace drop (do nothing for now)
+                if (g_dragState.isDragging && g_dragState.isWorkspaceDrag) {
+                    // TODO: Handle workspace reordering on drop
+                }
+
+                // Reset global drag state
+                g_dragState.reset();
+            }
+            return;
+        }
+
+        // Any button except left or middle click: consume event without doing anything
         if (e.button != BTN_LEFT) {
             return;
         }
@@ -336,6 +365,7 @@ void COverview::setupMouseButtonHook() {
             g_dragState.mouseButtonPressed = true;
             g_dragState.mouseDownPos = lastMousePosLocal;
             g_dragState.sourceOverview = this;  // Set source overview when button is pressed
+            g_dragState.isWorkspaceDrag = false;  // Left-click is window drag
 
             // Find which workspace was clicked
             int clickedWsIndex = findWorkspaceIndexAtPosition(
@@ -1091,11 +1121,58 @@ void COverview::fullRender() {
         }
     }
 
+    // Render drop zone indicator when dragging workspace
+    if (g_dragState.isDragging && g_dragState.isWorkspaceDrag) {
+        auto [dropZoneAbove, dropZoneBelow] =
+            findDropZoneBetweenWorkspaces(lastMousePosLocal);
+
+        bool isAdjacentToSource = false;
+        int sourceIdx = g_dragState.sourceWorkspaceIndex;
+
+        if (sourceIdx >= 0 && g_dragState.sourceOverview == this) {
+            if ((dropZoneAbove == sourceIdx && dropZoneBelow >= 0) ||
+                (dropZoneBelow == sourceIdx && dropZoneAbove >= 0) ||
+                (dropZoneAbove >= 0 && dropZoneBelow == sourceIdx) ||
+                (dropZoneBelow >= 0 && dropZoneAbove == sourceIdx)) {
+                isAdjacentToSource = true;
+            }
+
+            if (sourceIdx == 0 &&
+                dropZoneAbove == -2 && dropZoneBelow == 0) {
+                isAdjacentToSource = true;
+            }
+
+            int lastLeftIndex = activeIndex - 1;
+            if (sourceIdx == lastLeftIndex &&
+                dropZoneAbove == lastLeftIndex && dropZoneBelow == -3) {
+                isAdjacentToSource = true;
+            }
+        }
+
+        bool isAfterPlaceholder = false;
+        if (dropZoneAbove >= 0 &&
+            dropZoneAbove < (int)images.size()) {
+            if (!images[dropZoneAbove].pWorkspace) {
+                isAfterPlaceholder = true;
+            }
+        }
+
+        if (!isAdjacentToSource && !isAfterPlaceholder) {
+            if (dropZoneAbove == -2 && dropZoneBelow == 0) {
+                renderDropZoneAboveFirst();
+            } else if (dropZoneBelow == -3 && dropZoneAbove >= 0) {
+                renderDropZoneBelowLast(dropZoneAbove);
+            } else if (dropZoneAbove >= 0 && dropZoneBelow >= 0) {
+                renderDropZoneBetween(dropZoneAbove, dropZoneBelow);
+            }
+        }
+    }
+
     // Render drag preview if dragging
     bool shouldRenderDragPreview = (
         g_dragState.isDragging &&
-        g_dragState.draggedWindow &&
-        g_dragState.dragPreviewFB.m_size.x > 0
+        g_dragState.dragPreviewFB.m_size.x > 0 &&
+        (g_dragState.draggedWindow || g_dragState.isWorkspaceDrag)
     );
     if (shouldRenderDragPreview) {
         const float monScale = pMonitor->m_scale;
@@ -1157,6 +1234,238 @@ int COverview::findWorkspaceIndexAtPosition(const Vector2D& pos) {
         }
     }
     return -1;
+}
+
+void COverview::renderDropZoneAboveFirst() {
+    const Vector2D monitorSize = pMonitor->m_size;
+    const Vector2D currentSize = size->value();
+    const Vector2D currentPos  = pos->value();
+    const float    zoomScale   = currentSize.x / monitorSize.x;
+
+    const float monitorAspectRatio = monitorSize.x / monitorSize.y;
+    const float leftWorkspaceWidth =
+        this->leftPreviewHeight * monitorAspectRatio;
+
+    float yPos0Untransformed =
+        PADDING + 0 * (this->leftPreviewHeight + GAP_WIDTH) -
+        scrollOffset;
+    float yPos0Transformed = yPos0Untransformed * zoomScale + currentPos.y;
+
+    float leftPanelX = PADDING * zoomScale + currentPos.x;
+    float gapHeightTransformed = GAP_WIDTH * zoomScale;
+
+    CBox dropZoneBox = {
+        leftPanelX,
+        yPos0Transformed - gapHeightTransformed,
+        leftWorkspaceWidth * zoomScale,
+        gapHeightTransformed
+    };
+
+    const float monScale = pMonitor->m_scale;
+    dropZoneBox.scale(monScale);
+    dropZoneBox.round();
+
+    CRegion damage{0, 0, INT16_MAX, INT16_MAX};
+    CHyprColor dropZoneColor = CHyprColor{1.0, 1.0, 1.0, 0.8};
+    g_pHyprOpenGL->renderRect(dropZoneBox, dropZoneColor,
+                               {.damage = &damage});
+}
+
+void COverview::renderDropZoneBelowLast(int lastIndex) {
+    const Vector2D monitorSize = pMonitor->m_size;
+    const Vector2D currentSize = size->value();
+    const Vector2D currentPos  = pos->value();
+    const float    zoomScale   = currentSize.x / monitorSize.x;
+
+    const float monitorAspectRatio = monitorSize.x / monitorSize.y;
+    const float leftWorkspaceWidth =
+        this->leftPreviewHeight * monitorAspectRatio;
+
+    float yPosLastUntransformed =
+        PADDING + lastIndex * (this->leftPreviewHeight + GAP_WIDTH) -
+        scrollOffset;
+    float yPosLastTransformed =
+        yPosLastUntransformed * zoomScale + currentPos.y;
+    float yBottomLastTransformed =
+        yPosLastTransformed + (this->leftPreviewHeight * zoomScale);
+
+    float leftPanelX = PADDING * zoomScale + currentPos.x;
+    float gapHeightTransformed = GAP_WIDTH * zoomScale;
+
+    CBox dropZoneBox = {
+        leftPanelX,
+        yBottomLastTransformed,
+        leftWorkspaceWidth * zoomScale,
+        gapHeightTransformed
+    };
+
+    const float monScale = pMonitor->m_scale;
+    dropZoneBox.scale(monScale);
+    dropZoneBox.round();
+
+    CRegion damage{0, 0, INT16_MAX, INT16_MAX};
+    CHyprColor dropZoneColor = CHyprColor{1.0, 1.0, 1.0, 0.8};
+    g_pHyprOpenGL->renderRect(dropZoneBox, dropZoneColor,
+                               {.damage = &damage});
+}
+
+void COverview::renderDropZoneBetween(int above, int below) {
+    const Vector2D monitorSize = pMonitor->m_size;
+    const Vector2D currentSize = size->value();
+    const Vector2D currentPos  = pos->value();
+    const float    zoomScale   = currentSize.x / monitorSize.x;
+
+    const float monitorAspectRatio = monitorSize.x / monitorSize.y;
+    const float leftWorkspaceWidth =
+        this->leftPreviewHeight * monitorAspectRatio;
+
+    float yPosAbove =
+        PADDING + above * (this->leftPreviewHeight + GAP_WIDTH) -
+        scrollOffset;
+    CBox boxAbove = {
+        PADDING, yPosAbove,
+        leftWorkspaceWidth, this->leftPreviewHeight
+    };
+
+    boxAbove.x = boxAbove.x * zoomScale + currentPos.x;
+    boxAbove.y = boxAbove.y * zoomScale + currentPos.y;
+    boxAbove.w = boxAbove.w * zoomScale;
+    boxAbove.h = boxAbove.h * zoomScale;
+
+    float yPosBelow =
+        PADDING + below * (this->leftPreviewHeight + GAP_WIDTH) -
+        scrollOffset;
+    CBox boxBelow = {
+        PADDING, yPosBelow,
+        leftWorkspaceWidth, this->leftPreviewHeight
+    };
+
+    boxBelow.x = boxBelow.x * zoomScale + currentPos.x;
+    boxBelow.y = boxBelow.y * zoomScale + currentPos.y;
+    boxBelow.w = boxBelow.w * zoomScale;
+    boxBelow.h = boxBelow.h * zoomScale;
+
+    CBox dropZoneBox = {
+        boxAbove.x,
+        boxAbove.y + boxAbove.h,
+        boxAbove.w,
+        boxBelow.y - (boxAbove.y + boxAbove.h)
+    };
+
+    const float monScale = pMonitor->m_scale;
+    dropZoneBox.scale(monScale);
+    dropZoneBox.round();
+
+    CRegion damage{0, 0, INT16_MAX, INT16_MAX};
+    CHyprColor dropZoneColor = CHyprColor{1.0, 1.0, 1.0, 0.8};
+    g_pHyprOpenGL->renderRect(dropZoneBox, dropZoneColor,
+                               {.damage = &damage});
+}
+
+std::pair<int, int> COverview::findDropZoneBetweenWorkspaces(const Vector2D& pos) {
+    // Returns a pair of workspace indices where the drop zone is between them
+    // Returns {-1, -1} if not in the left panel
+    // Returns {-2, 0} if above the first workspace
+    // Returns {lastIndex, -3} if below the last workspace
+    // Returns {i, i+1} if between workspaces i and i+1
+    //
+    // Logic: When cursor is over a workspace, check if it's in the top or bottom half:
+    // - Top half: select drop zone ABOVE the workspace
+    // - Bottom half: select drop zone BELOW the workspace
+
+    const Vector2D monitorSize = pMonitor->m_size;
+    const Vector2D currentSize = size->value();
+    const Vector2D currentPos  = this->pos->value();
+    const float    zoomScale   = currentSize.x / monitorSize.x;
+
+    const float monitorAspectRatio = monitorSize.x / monitorSize.y;
+    const float leftWorkspaceWidth = this->leftPreviewHeight * monitorAspectRatio;
+
+    // Check if cursor is in the left panel area horizontally
+    CBox leftPanelBox = {PADDING, PADDING, leftWorkspaceWidth,
+                         monitorSize.y - 2 * PADDING};
+
+    // Apply zoom transformation to left panel box
+    leftPanelBox.x = leftPanelBox.x * zoomScale + currentPos.x;
+    leftPanelBox.y = leftPanelBox.y * zoomScale + currentPos.y;
+    leftPanelBox.w = leftPanelBox.w * zoomScale;
+    leftPanelBox.h = leftPanelBox.h * zoomScale;
+
+    // Check if cursor is within the left panel area horizontally
+    if (pos.x < leftPanelBox.x || pos.x > leftPanelBox.x + leftPanelBox.w) {
+        return {-1, -1};
+    }
+
+    if (activeIndex <= 0) {
+        return {-1, -1};
+    }
+
+    // Find which workspace the cursor is over (or closest to)
+    // We check each workspace and determine if cursor is in top or bottom half
+    for (int i = 0; i < activeIndex; ++i) {
+        float yPosUntransformed = PADDING + i * (this->leftPreviewHeight + GAP_WIDTH) - scrollOffset;
+        float yPosTransformed = yPosUntransformed * zoomScale + currentPos.y;
+        float workspaceHeightTransformed = this->leftPreviewHeight * zoomScale;
+        float yBottomTransformed = yPosTransformed + workspaceHeightTransformed;
+
+        // Check if cursor is within this workspace's bounds
+        if (pos.y >= yPosTransformed && pos.y <= yBottomTransformed) {
+            float yMiddle = yPosTransformed + workspaceHeightTransformed / 2.0f;
+
+            if (pos.y < yMiddle) {
+                // Cursor in TOP half - select drop zone ABOVE this workspace
+                if (i == 0) {
+                    // First workspace - drop zone is above it
+                    return {-2, 0};
+                } else {
+                    // Drop zone is between workspace i-1 and i
+                    return {i - 1, i};
+                }
+            } else {
+                // Cursor in BOTTOM half - select drop zone BELOW this workspace
+                if (i == activeIndex - 1) {
+                    // Last workspace - drop zone is below it
+                    return {i, -3};
+                } else {
+                    // Drop zone is between workspace i and i+1
+                    return {i, i + 1};
+                }
+            }
+        }
+    }
+
+    // Cursor is not over any workspace - check if it's above first or below last
+    float yPos0Untransformed = PADDING - scrollOffset;
+    float yPos0Transformed = yPos0Untransformed * zoomScale + currentPos.y;
+
+    if (pos.y < yPos0Transformed) {
+        return {-2, 0};
+    }
+
+    int lastIndex = activeIndex - 1;
+    float yPosLastUntransformed = PADDING + lastIndex * (this->leftPreviewHeight + GAP_WIDTH) - scrollOffset;
+    float yPosLastTransformed = yPosLastUntransformed * zoomScale + currentPos.y;
+    float yBottomLastTransformed = yPosLastTransformed + (this->leftPreviewHeight * zoomScale);
+
+    if (pos.y > yBottomLastTransformed) {
+        return {lastIndex, -3};
+    }
+
+    // Cursor is in a gap between workspaces - find which gap
+    for (int i = 0; i < activeIndex - 1; ++i) {
+        float yPos1Untransformed = PADDING + i * (this->leftPreviewHeight + GAP_WIDTH) - scrollOffset;
+        float yPos1Transformed = yPos1Untransformed * zoomScale + currentPos.y;
+        float yBottom1Transformed = yPos1Transformed + (this->leftPreviewHeight * zoomScale);
+
+        float yPos2Untransformed = PADDING + (i + 1) * (this->leftPreviewHeight + GAP_WIDTH) - scrollOffset;
+        float yPos2Transformed = yPos2Untransformed * zoomScale + currentPos.y;
+
+        if (pos.y >= yBottom1Transformed && pos.y <= yPos2Transformed) {
+            return {i, i + 1};
+        }
+    }
+
+    return {-1, -1};
 }
 
 std::pair<COverview*, int> COverview::findWorkspaceAtGlobalPosition(
@@ -1273,6 +1582,48 @@ void COverview::renderDragPreview() {
         return;
 
     auto& sourceImage = srcOverview->images[srcIdx];
+
+    // Handle workspace drag - render entire workspace
+    if (g_dragState.isWorkspaceDrag) {
+        // Use entire workspace framebuffer as preview
+        Vector2D previewSize = sourceImage.fb.m_size;
+
+        if (g_dragState.dragPreviewFB.m_size != previewSize) {
+            g_dragState.dragPreviewFB.release();
+            g_dragState.dragPreviewFB.alloc(
+                previewSize.x, previewSize.y,
+                pMonitor->m_output->state->state().drmFormat
+            );
+        }
+
+        g_pHyprRenderer->makeEGLCurrent();
+
+        CRegion fakeDamage{0, 0, INT16_MAX, INT16_MAX};
+        auto& fb = g_dragState.dragPreviewFB;
+        g_pHyprRenderer->beginRender(
+            pMonitor.lock(), fakeDamage, RENDER_MODE_FULL_FAKE, nullptr, &fb
+        );
+
+        g_pHyprOpenGL->clear(CHyprColor{0, 0, 0, 0});
+
+        // Render entire workspace texture
+        CBox destBox = {
+            0,
+            0,
+            (double)sourceImage.fb.m_size.x,
+            (double)sourceImage.fb.m_size.y
+        };
+
+        g_pHyprOpenGL->renderTexturePrimitive(
+            sourceImage.fb.getTexture(), destBox
+        );
+
+        g_pHyprOpenGL->m_renderData.blockScreenShader = true;
+        g_pHyprRenderer->endRender();
+        return;
+    }
+
+    // Handle window drag - render only window region
     const Vector2D winPos =
         g_dragState.draggedWindow->m_realPosition->value();
     const Vector2D winSize =
