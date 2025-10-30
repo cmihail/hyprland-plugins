@@ -344,9 +344,9 @@ void COverview::setupMouseButtonHook() {
                 g_dragState.sourceWorkspaceIndex = clickedWsIndex;
                 g_dragState.draggedWindow = nullptr;  // No window for workspace drag
             } else {
-                // Middle-click released - handle workspace drop (do nothing for now)
+                // Middle-click released - handle workspace drop
                 if (g_dragState.isDragging && g_dragState.isWorkspaceDrag) {
-                    // TODO: Handle workspace reordering on drop
+                    handleWorkspaceReordering();
                 }
 
                 // Reset global drag state
@@ -2009,6 +2009,156 @@ bool createTextureFromPixelData(const std::vector<uint8_t>& pixelData,
         Debug::log(ERR, "[workspace-overview] Failed to create texture: {}", e.what());
         g_pBackgroundTexture.reset();
         return false;
+    }
+}
+
+void COverview::handleWorkspaceReordering() {
+    // Only handle reordering within the same monitor
+    if (!g_dragState.sourceOverview || g_dragState.sourceOverview != this)
+        return;
+
+    int sourceIdx = g_dragState.sourceWorkspaceIndex;
+    if (sourceIdx < 0 || sourceIdx >= activeIndex)
+        return;
+
+    // Don't allow reordering placeholders
+    if (!images[sourceIdx].pWorkspace)
+        return;
+
+    // Find drop zone at current mouse position
+    auto [dropZoneAbove, dropZoneBelow] = findDropZoneBetweenWorkspaces(lastMousePosLocal);
+
+    // Check if this is a valid drop zone
+    if (dropZoneAbove < 0 && dropZoneBelow < 0)
+        return;
+
+    // Calculate target index from drop zone
+    int targetIdx = calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow);
+    if (targetIdx < 0)
+        return;
+
+    // Don't reorder if dropping in the same position
+    if (sourceIdx == targetIdx)
+        return;
+
+    // Perform the reordering
+    reorderWorkspace(sourceIdx, targetIdx);
+}
+
+int COverview::calculateTargetIndexFromDropZone(int sourceIdx, int dropZoneAbove,
+                                                 int dropZoneBelow) {
+    if (dropZoneAbove == -2 && dropZoneBelow == 0) {
+        // Dropping above first workspace
+        return 0;
+    } else if (dropZoneBelow == -3 && dropZoneAbove >= 0) {
+        // Dropping below last workspace
+        return dropZoneAbove;
+    } else if (dropZoneAbove >= 0 && dropZoneBelow >= 0) {
+        // Dropping between two workspaces
+        if (sourceIdx < dropZoneBelow) {
+            // Moving down: target is one position before dropZoneBelow
+            return dropZoneBelow - 1;
+        } else {
+            // Moving up: target is dropZoneBelow
+            return dropZoneBelow;
+        }
+    }
+    return -1;
+}
+
+void COverview::reorderWorkspace(int sourceIdx, int targetIdx) {
+    if (sourceIdx < 0 || sourceIdx >= activeIndex ||
+        targetIdx < 0 || targetIdx >= activeIndex)
+        return;
+
+    // Don't allow reordering placeholders
+    if (!images[sourceIdx].pWorkspace)
+        return;
+
+    // Collect windows, move them, then schedule refreshes
+    std::vector<std::pair<int, std::vector<PHLWINDOW>>> workspaceWindows;
+    collectWorkspaceWindowsForReorder(sourceIdx, targetIdx, workspaceWindows);
+    moveWindowsForReorder(sourceIdx, targetIdx, workspaceWindows);
+    scheduleWorkspaceRefreshes(sourceIdx, targetIdx);
+}
+
+void COverview::collectWorkspaceWindowsForReorder(
+    int sourceIdx, int targetIdx,
+    std::vector<std::pair<int, std::vector<PHLWINDOW>>>& workspaceWindows) {
+
+    int startIdx = sourceIdx < targetIdx ? sourceIdx : targetIdx;
+    int endIdx = sourceIdx < targetIdx ? targetIdx : sourceIdx;
+
+    for (int i = startIdx; i <= endIdx; ++i) {
+        if (!images[i].pWorkspace)
+            continue;
+
+        std::vector<PHLWINDOW> windows;
+        for (auto& w : g_pCompositor->m_windows) {
+            if (w->m_workspace == images[i].pWorkspace &&
+                !w->isHidden() && w->m_isMapped) {
+                windows.push_back(w);
+            }
+        }
+        workspaceWindows.push_back({i, windows});
+    }
+}
+
+void COverview::moveWindowsForReorder(
+    int sourceIdx, int targetIdx,
+    const std::vector<std::pair<int, std::vector<PHLWINDOW>>>& workspaceWindows) {
+
+    bool movingDown = sourceIdx < targetIdx;
+
+    for (const auto& [wsIdx, windows] : workspaceWindows) {
+        int targetWsIdx;
+        if (wsIdx == sourceIdx) {
+            targetWsIdx = targetIdx;
+        } else {
+            targetWsIdx = movingDown ? wsIdx - 1 : wsIdx + 1;
+        }
+
+        if (targetWsIdx >= 0 && targetWsIdx < activeIndex &&
+            images[targetWsIdx].pWorkspace) {
+            for (auto& win : windows) {
+                g_pCompositor->moveWindowToWorkspaceSafe(
+                    win, images[targetWsIdx].pWorkspace
+                );
+            }
+        }
+    }
+}
+
+void COverview::scheduleWorkspaceRefreshes(int sourceIdx, int targetIdx) {
+    std::vector<int> workspacesToRefresh;
+    int minIdx = std::min(sourceIdx, targetIdx);
+    int maxIdx = std::max(sourceIdx, targetIdx);
+
+    for (int i = minIdx; i <= maxIdx; ++i) {
+        if (i != activeIndex) {
+            workspacesToRefresh.push_back(i);
+        }
+    }
+
+    // Also refresh left-side active workspace if affected
+    int leftSideActiveIndex = -1;
+    for (size_t i = 0; i < (size_t)activeIndex; ++i) {
+        if (images[i].isActive) {
+            leftSideActiveIndex = i;
+            break;
+        }
+    }
+
+    if (leftSideActiveIndex >= 0 &&
+        leftSideActiveIndex >= minIdx && leftSideActiveIndex <= maxIdx) {
+        if (std::find(workspacesToRefresh.begin(), workspacesToRefresh.end(),
+                     leftSideActiveIndex) == workspacesToRefresh.end()) {
+            workspacesToRefresh.push_back(leftSideActiveIndex);
+        }
+    }
+
+    if (!workspacesToRefresh.empty()) {
+        setupSourceWorkspaceRefreshTimer(this, workspacesToRefresh);
     }
 }
 

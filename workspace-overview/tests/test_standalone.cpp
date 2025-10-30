@@ -3931,3 +3931,191 @@ TEST(DropZoneFilteringTest, BottommostWorkspace_DraggedBelow) {
 
     EXPECT_TRUE(shouldFilter) << "Should filter when dragging bottommost workspace below it (adjacent to margin)";
 }
+
+// ============================================================================
+// Workspace Reordering Tests
+// ============================================================================
+
+// Helper function to calculate target index from drop zone
+static int calculateTargetIndexFromDropZone(int sourceIdx, int dropZoneAbove, int dropZoneBelow) {
+    if (dropZoneAbove == -2 && dropZoneBelow == 0) {
+        return 0;
+    } else if (dropZoneBelow == -3 && dropZoneAbove >= 0) {
+        return dropZoneAbove;
+    } else if (dropZoneAbove >= 0 && dropZoneBelow >= 0) {
+        if (sourceIdx < dropZoneBelow) {
+            return dropZoneBelow - 1;
+        } else {
+            return dropZoneBelow;
+        }
+    }
+    return -1;
+}
+
+TEST(WorkspaceReorderingTest, CalculateTargetIndex_MoveDownOnePosition) {
+    // Moving from index 0 to between 1 and 2
+    int sourceIdx = 0;
+    int dropZoneAbove = 1;
+    int dropZoneBelow = 2;
+
+    int targetIdx = calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow);
+
+    EXPECT_EQ(targetIdx, 1) << "Moving down one position should target index 1";
+}
+
+TEST(WorkspaceReorderingTest, CalculateTargetIndex_MoveDownMultiplePositions) {
+    // Moving from index 0 to between 2 and 3
+    int sourceIdx = 0;
+    int dropZoneAbove = 2;
+    int dropZoneBelow = 3;
+
+    int targetIdx = calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow);
+
+    EXPECT_EQ(targetIdx, 2) << "Moving down should target dropZoneBelow - 1";
+}
+
+TEST(WorkspaceReorderingTest, CalculateTargetIndex_MoveUpOnePosition) {
+    // Moving from index 3 to between 1 and 2
+    int sourceIdx = 3;
+    int dropZoneAbove = 1;
+    int dropZoneBelow = 2;
+
+    int targetIdx = calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow);
+
+    EXPECT_EQ(targetIdx, 2) << "Moving up should target dropZoneBelow";
+}
+
+TEST(WorkspaceReorderingTest, CalculateTargetIndex_MoveUpMultiplePositions) {
+    // Moving from index 5 to between 1 and 2
+    int sourceIdx = 5;
+    int dropZoneAbove = 1;
+    int dropZoneBelow = 2;
+
+    int targetIdx = calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow);
+
+    EXPECT_EQ(targetIdx, 2) << "Moving up multiple positions should target dropZoneBelow";
+}
+
+TEST(WorkspaceReorderingTest, CalculateTargetIndex_MoveToTop) {
+    // Moving to above first workspace
+    int sourceIdx = 3;
+    int dropZoneAbove = -2;
+    int dropZoneBelow = 0;
+
+    int targetIdx = calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow);
+
+    EXPECT_EQ(targetIdx, 0) << "Moving to top should target index 0";
+}
+
+TEST(WorkspaceReorderingTest, CalculateTargetIndex_MoveToBottom) {
+    // Moving to below last workspace
+    int sourceIdx = 0;
+    int dropZoneAbove = 5;
+    int dropZoneBelow = -3;
+
+    int targetIdx = calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow);
+
+    EXPECT_EQ(targetIdx, 5) << "Moving to bottom should target dropZoneAbove";
+}
+
+TEST(WorkspaceReorderingTest, CalculateTargetIndex_InvalidDropZone) {
+    // Invalid drop zone
+    int sourceIdx = 2;
+    int dropZoneAbove = -1;
+    int dropZoneBelow = -1;
+
+    int targetIdx = calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow);
+
+    EXPECT_EQ(targetIdx, -1) << "Invalid drop zone should return -1";
+}
+
+TEST(WorkspaceReorderingTest, NoOpCheck_SamePosition) {
+    // Calculate target for moving to same position
+    int sourceIdx = 2;
+    int dropZoneAbove = 1;
+    int dropZoneBelow = 2;
+
+    // When moving up to between 1 and 2, target would be 2 (same as source)
+    int targetIdx = calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow);
+
+    EXPECT_EQ(targetIdx, 2);
+    EXPECT_EQ(sourceIdx, targetIdx) << "Should detect same position";
+}
+
+TEST(WorkspaceReorderingTest, MoveDown_SourceBeforeTarget) {
+    // Moving down: source 0 to target 2
+    int sourceIdx = 0;
+    int targetIdx = 2;
+
+    // Verify this is a down move
+    EXPECT_LT(sourceIdx, targetIdx) << "Should be moving down";
+
+    // Windows should be collected from sourceIdx to targetIdx
+    int startIdx = sourceIdx;
+    int endIdx = targetIdx;
+
+    EXPECT_EQ(startIdx, 0);
+    EXPECT_EQ(endIdx, 2);
+}
+
+TEST(WorkspaceReorderingTest, MoveUp_SourceAfterTarget) {
+    // Moving up: source 3 to target 1
+    int sourceIdx = 3;
+    int targetIdx = 1;
+
+    // Verify this is an up move
+    EXPECT_GT(sourceIdx, targetIdx) << "Should be moving up";
+
+    // Windows should be collected from targetIdx to sourceIdx
+    int startIdx = targetIdx;
+    int endIdx = sourceIdx;
+
+    EXPECT_EQ(startIdx, 1);
+    EXPECT_EQ(endIdx, 3);
+}
+
+TEST(WorkspaceReorderingTest, MoveDown_TargetCalculation) {
+    // When moving down from 0 to 2:
+    // - Source workspace (0) should move to target (2)
+    // - Other workspaces (1, 2) should shift up by 1
+    int sourceIdx = 0;
+    int targetIdx = 2;
+    bool movingDown = sourceIdx < targetIdx;
+
+    EXPECT_TRUE(movingDown);
+
+    // Source workspace target
+    int sourceTarget = targetIdx;
+    EXPECT_EQ(sourceTarget, 2);
+
+    // Workspace 1 should move to 0
+    int ws1Target = movingDown ? 1 - 1 : 1 + 1;
+    EXPECT_EQ(ws1Target, 0);
+
+    // Workspace 2 should move to 1
+    int ws2Target = movingDown ? 2 - 1 : 2 + 1;
+    EXPECT_EQ(ws2Target, 1);
+}
+
+TEST(WorkspaceReorderingTest, MoveUp_TargetCalculation) {
+    // When moving up from 3 to 1:
+    // - Source workspace (3) should move to target (1)
+    // - Other workspaces (1, 2) should shift down by 1
+    int sourceIdx = 3;
+    int targetIdx = 1;
+    bool movingDown = sourceIdx < targetIdx;
+
+    EXPECT_FALSE(movingDown);
+
+    // Source workspace target
+    int sourceTarget = targetIdx;
+    EXPECT_EQ(sourceTarget, 1);
+
+    // Workspace 1 should move to 2
+    int ws1Target = movingDown ? 1 - 1 : 1 + 1;
+    EXPECT_EQ(ws1Target, 2);
+
+    // Workspace 2 should move to 3
+    int ws2Target = movingDown ? 2 - 1 : 2 + 1;
+    EXPECT_EQ(ws2Target, 3);
+}

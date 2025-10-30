@@ -91,6 +91,17 @@ class COverview {
     void        renderDropZoneAboveFirst();
     void        renderDropZoneBelowLast(int lastIndex);
     void        renderDropZoneBetween(int above, int below);
+    void        handleWorkspaceReordering();
+    void        reorderWorkspace(int sourceIdx, int targetIdx);
+    int         calculateTargetIndexFromDropZone(int sourceIdx, int dropZoneAbove,
+                                                  int dropZoneBelow);
+    void        collectWorkspaceWindowsForReorder(
+                    int sourceIdx, int targetIdx,
+                    std::vector<std::pair<int, std::vector<PHLWINDOW>>>& workspaceWindows);
+    void        moveWindowsForReorder(
+                    int sourceIdx, int targetIdx,
+                    const std::vector<std::pair<int, std::vector<PHLWINDOW>>>& workspaceWindows);
+    void        scheduleWorkspaceRefreshes(int sourceIdx, int targetIdx);
 
     // Cross-monitor helpers
     static std::pair<COverview*, int> findWorkspaceAtGlobalPosition(
