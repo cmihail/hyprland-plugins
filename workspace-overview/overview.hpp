@@ -84,6 +84,8 @@ class COverview {
 
     // Helper functions for drag and drop
     int         findWorkspaceIndexAtPosition(const Vector2D& pos);
+    bool        isMiddleClickWorkspaceDragAllowed(int clickedWorkspaceIndex) const;
+    void        setupWorkspaceDragOnMiddleClick(int clickedWorkspaceIndex, const Vector2D& mousePos);
     PHLWINDOW   findWindowAtPosition(const Vector2D& pos, int workspaceIndex);
     void        moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex);
     void        renderDragPreview();

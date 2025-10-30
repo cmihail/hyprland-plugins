@@ -3643,6 +3643,100 @@ TEST(WorkspaceDragTest, DifferentMonitorResolutions) {
 }
 
 // ============================================================================
+// Middle-Click Workspace Drag Permission Tests
+// ============================================================================
+
+// Helper function to test middle-click workspace drag permission logic
+static bool isMiddleClickWorkspaceDragAllowed(int clickedWorkspaceIndex, int activeIndex) {
+    // Middle-click workspace dragging is only allowed for left side workspaces
+    // (not the active workspace displayed on the right side)
+    return clickedWorkspaceIndex >= 0 && clickedWorkspaceIndex != activeIndex;
+}
+
+// Test: Middle-click allowed on workspace that is not active
+TEST(MiddleClickWorkspaceDragTest, AllowedOnLeftSideWorkspace) {
+    int activeIndex = 3;
+
+    // Test workspaces that are not active (on left side)
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(0, activeIndex));
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(1, activeIndex));
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(2, activeIndex));
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(4, activeIndex));
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(5, activeIndex));
+}
+
+// Test: Middle-click not allowed on active workspace (right side)
+TEST(MiddleClickWorkspaceDragTest, NotAllowedOnActiveWorkspace) {
+    int activeIndex = 3;
+
+    // Middle-click on active workspace should be disallowed
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(3, activeIndex));
+
+    // Test different active workspace positions
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(0, 0));
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(5, 5));
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(7, 7));
+}
+
+// Test: Middle-click not allowed with invalid workspace index
+TEST(MiddleClickWorkspaceDragTest, NotAllowedWithInvalidIndex) {
+    int activeIndex = 3;
+
+    // Negative index (no workspace clicked) should be disallowed
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(-1, activeIndex));
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(-2, activeIndex));
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(-10, activeIndex));
+}
+
+// Test: Edge case with first workspace as active
+TEST(MiddleClickWorkspaceDragTest, FirstWorkspaceActive) {
+    int activeIndex = 0;
+
+    // Active workspace (0) should be disallowed
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(0, activeIndex));
+
+    // Other workspaces should be allowed
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(1, activeIndex));
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(2, activeIndex));
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(7, activeIndex));
+}
+
+// Test: Edge case with last workspace as active
+TEST(MiddleClickWorkspaceDragTest, LastWorkspaceActive) {
+    int activeIndex = 7;
+
+    // Active workspace (7) should be disallowed
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(7, activeIndex));
+
+    // Other workspaces should be allowed
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(0, activeIndex));
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(3, activeIndex));
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(6, activeIndex));
+}
+
+// Test: Boundary with invalid index and active workspace
+TEST(MiddleClickWorkspaceDragTest, InvalidIndexWithActiveWorkspace) {
+    // Test with various active indices
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(-1, 0));
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(-1, 5));
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(-1, 10));
+}
+
+// Test: Sequential workspace indices
+TEST(MiddleClickWorkspaceDragTest, SequentialWorkspaceCheck) {
+    int activeIndex = 4;
+
+    // Check workspaces in sequence
+    for (int i = 0; i < 10; ++i) {
+        if (i == activeIndex) {
+            EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(i, activeIndex));
+        } else {
+            EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(i, activeIndex));
+        }
+    }
+}
+
+// ============================================================================
 // Drop Zone Filtering Tests
 // ============================================================================
 

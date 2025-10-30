@@ -330,19 +330,12 @@ void COverview::setupMouseButtonHook() {
 
         info.cancelled = true;
 
-        // Handle middle-click for workspace dragging
+        // Handle middle-click for workspace dragging (only on left side workspaces)
         if (e.button == BTN_MIDDLE) {
             if (e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
-                // Middle-click pressed - setup for workspace drag
-                g_dragState.mouseButtonPressed = true;
-                g_dragState.mouseDownPos = lastMousePosLocal;
-                g_dragState.sourceOverview = this;
-                g_dragState.isWorkspaceDrag = true;
-
-                // Find which workspace was clicked
+                // Find which workspace was clicked and setup drag if allowed
                 int clickedWsIndex = findWorkspaceIndexAtPosition(lastMousePosLocal);
-                g_dragState.sourceWorkspaceIndex = clickedWsIndex;
-                g_dragState.draggedWindow = nullptr;  // No window for workspace drag
+                setupWorkspaceDragOnMiddleClick(clickedWsIndex, lastMousePosLocal);
             } else {
                 // Middle-click released - handle workspace drop
                 // Only the overview where the mouse currently is should handle the drop
@@ -1245,6 +1238,27 @@ int COverview::findWorkspaceIndexAtPosition(const Vector2D& pos) {
         }
     }
     return -1;
+}
+
+bool COverview::isMiddleClickWorkspaceDragAllowed(int clickedWorkspaceIndex) const {
+    // Middle-click workspace dragging is only allowed for left side workspaces
+    // (not the active workspace displayed on the right side)
+    return clickedWorkspaceIndex >= 0 && clickedWorkspaceIndex != activeIndex;
+}
+
+void COverview::setupWorkspaceDragOnMiddleClick(int clickedWorkspaceIndex, const Vector2D& mousePos) {
+    // Only setup workspace drag if clicking on a left side workspace
+    if (!isMiddleClickWorkspaceDragAllowed(clickedWorkspaceIndex)) {
+        return;
+    }
+
+    // Middle-click pressed on left side workspace - setup for workspace drag
+    g_dragState.mouseButtonPressed = true;
+    g_dragState.mouseDownPos = mousePos;
+    g_dragState.sourceOverview = this;
+    g_dragState.isWorkspaceDrag = true;
+    g_dragState.sourceWorkspaceIndex = clickedWorkspaceIndex;
+    g_dragState.draggedWindow = nullptr;  // No window for workspace drag
 }
 
 void COverview::renderDropZoneAboveFirst() {
