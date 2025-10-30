@@ -4030,17 +4030,33 @@ TEST(DropZoneFilteringTest, BottommostWorkspace_DraggedBelow) {
 // Workspace Reordering Tests
 // ============================================================================
 
+// Helper structure for test workspaces
+struct TestWorkspace {
+    bool isPlaceholder;  // true if this is a placeholder workspace
+};
+
 // Helper function to calculate target index from drop zone
-static int calculateTargetIndexFromDropZone(int sourceIdx, int dropZoneAbove, int dropZoneBelow) {
+static int calculateTargetIndexFromDropZone(int sourceIdx, int dropZoneAbove, int dropZoneBelow,
+                                            const std::vector<TestWorkspace>& images = {}) {
     if (dropZoneAbove == -2 && dropZoneBelow == 0) {
         return 0;
     } else if (dropZoneBelow == -3 && dropZoneAbove >= 0) {
+        // Don't allow placement after a placeholder
+        if (!images.empty() && dropZoneAbove < (int)images.size() &&
+            images[dropZoneAbove].isPlaceholder)
+            return -1;
+
         // For cross-monitor (sourceIdx < 0), return dropZoneAbove + 1
         if (sourceIdx < 0)
             return dropZoneAbove + 1;
         // For same-monitor, return dropZoneAbove (original logic)
         return dropZoneAbove;
     } else if (dropZoneAbove >= 0 && dropZoneBelow >= 0) {
+        // Don't allow placement after a placeholder
+        if (!images.empty() && dropZoneAbove < (int)images.size() &&
+            images[dropZoneAbove].isPlaceholder)
+            return -1;
+
         if (sourceIdx < 0) {
             // Cross-monitor drop: always use dropZoneBelow
             return dropZoneBelow;
@@ -4265,6 +4281,235 @@ TEST(WorkspaceReorderingTest, MoveUp_TargetCalculation) {
     // Workspace 2 should move to 3
     int ws2Target = movingDown ? 2 - 1 : 2 + 1;
     EXPECT_EQ(ws2Target, 3);
+}
+
+// ============================================================================
+// Placeholder Workspace Tests
+// ============================================================================
+
+TEST(WorkspaceReorderingTest, RejectPlacementAfterPlaceholder_BelowLast) {
+    // Scenario: [Real, Real, Placeholder] - trying to place below last (after placeholder)
+    std::vector<TestWorkspace> images = {
+        {false},  // Index 0: Real workspace
+        {false},  // Index 1: Real workspace
+        {true}    // Index 2: Placeholder
+    };
+
+    int sourceIdx = 0;
+    int dropZoneAbove = 2;  // After placeholder
+    int dropZoneBelow = -3; // Below last workspace
+
+    int targetIdx = calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow, images);
+
+    EXPECT_EQ(targetIdx, -1) << "Should reject placement after placeholder";
+}
+
+TEST(WorkspaceReorderingTest, RejectPlacementAfterPlaceholder_Between) {
+    // Scenario: [Real, Placeholder, Real] - trying to place between placeholder and real
+    std::vector<TestWorkspace> images = {
+        {false},  // Index 0: Real workspace
+        {true},   // Index 1: Placeholder
+        {false}   // Index 2: Real workspace
+    };
+
+    int sourceIdx = 0;
+    int dropZoneAbove = 1;  // After placeholder
+    int dropZoneBelow = 2;  // Before real workspace
+
+    int targetIdx = calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow, images);
+
+    EXPECT_EQ(targetIdx, -1) << "Should reject placement after placeholder";
+}
+
+TEST(WorkspaceReorderingTest, AllowPlacementAfterRealWorkspace_BelowLast) {
+    // Scenario: [Real, Real, Real] - placing after last real workspace should work
+    std::vector<TestWorkspace> images = {
+        {false},  // Index 0: Real workspace
+        {false},  // Index 1: Real workspace
+        {false}   // Index 2: Real workspace
+    };
+
+    int sourceIdx = 0;
+    int dropZoneAbove = 2;  // After real workspace
+    int dropZoneBelow = -3; // Below last workspace
+
+    int targetIdx = calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow, images);
+
+    EXPECT_EQ(targetIdx, 2) << "Should allow placement after real workspace";
+}
+
+TEST(WorkspaceReorderingTest, AllowPlacementAfterRealWorkspace_Between) {
+    // Scenario: [Real, Real, Real] - placing between real workspaces should work
+    std::vector<TestWorkspace> images = {
+        {false},  // Index 0: Real workspace
+        {false},  // Index 1: Real workspace
+        {false}   // Index 2: Real workspace
+    };
+
+    int sourceIdx = 0;
+    int dropZoneAbove = 1;  // After real workspace
+    int dropZoneBelow = 2;  // Before real workspace
+
+    int targetIdx = calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow, images);
+
+    EXPECT_EQ(targetIdx, 1) << "Should allow placement between real workspaces";
+}
+
+TEST(WorkspaceReorderingTest, CrossMonitorRejectPlacementAfterPlaceholder_BelowLast) {
+    // Cross-monitor drop after placeholder should be rejected
+    std::vector<TestWorkspace> images = {
+        {false},  // Index 0: Real workspace
+        {false},  // Index 1: Real workspace
+        {true}    // Index 2: Placeholder
+    };
+
+    int sourceIdx = -1;     // Cross-monitor indicator
+    int dropZoneAbove = 2;  // After placeholder
+    int dropZoneBelow = -3; // Below last workspace
+
+    int targetIdx = calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow, images);
+
+    EXPECT_EQ(targetIdx, -1) << "Should reject cross-monitor placement after placeholder";
+}
+
+TEST(WorkspaceReorderingTest, CrossMonitorRejectPlacementAfterPlaceholder_Between) {
+    // Cross-monitor drop between placeholder and real workspace should be rejected
+    std::vector<TestWorkspace> images = {
+        {false},  // Index 0: Real workspace
+        {true},   // Index 1: Placeholder
+        {false}   // Index 2: Real workspace
+    };
+
+    int sourceIdx = -1;     // Cross-monitor indicator
+    int dropZoneAbove = 1;  // After placeholder
+    int dropZoneBelow = 2;  // Before real workspace
+
+    int targetIdx = calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow, images);
+
+    EXPECT_EQ(targetIdx, -1) << "Should reject cross-monitor placement after placeholder";
+}
+
+TEST(WorkspaceReorderingTest, CrossMonitorAllowPlacementAfterRealWorkspace) {
+    // Cross-monitor drop after real workspace should work
+    std::vector<TestWorkspace> images = {
+        {false},  // Index 0: Real workspace
+        {false},  // Index 1: Real workspace
+        {false}   // Index 2: Real workspace
+    };
+
+    int sourceIdx = -1;     // Cross-monitor indicator
+    int dropZoneAbove = 2;  // After real workspace
+    int dropZoneBelow = -3; // Below last workspace
+
+    int targetIdx = calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow, images);
+
+    EXPECT_EQ(targetIdx, 3) << "Should allow cross-monitor placement after real workspace";
+}
+
+TEST(WorkspaceReorderingTest, AllPlaceholdersRejectAnyPlacement) {
+    // Scenario: [Placeholder, Placeholder, Placeholder]
+    std::vector<TestWorkspace> images = {
+        {true},  // Index 0: Placeholder
+        {true},  // Index 1: Placeholder
+        {true}   // Index 2: Placeholder
+    };
+
+    // Try placing after first placeholder
+    int sourceIdx = 0;
+    int dropZoneAbove = 0;
+    int dropZoneBelow = 1;
+
+    int targetIdx = calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow, images);
+    EXPECT_EQ(targetIdx, -1) << "Should reject placement after placeholder (case 1)";
+
+    // Try placing after second placeholder
+    dropZoneAbove = 1;
+    dropZoneBelow = 2;
+    targetIdx = calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow, images);
+    EXPECT_EQ(targetIdx, -1) << "Should reject placement after placeholder (case 2)";
+
+    // Try placing below last placeholder
+    dropZoneAbove = 2;
+    dropZoneBelow = -3;
+    targetIdx = calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow, images);
+    EXPECT_EQ(targetIdx, -1) << "Should reject placement after placeholder (case 3)";
+}
+
+TEST(WorkspaceReorderingTest, AllowPlacementBeforePlaceholder) {
+    // Scenario: [Real, Placeholder] - placing before placeholder (after real) should work
+    std::vector<TestWorkspace> images = {
+        {false},  // Index 0: Real workspace
+        {true}    // Index 1: Placeholder
+    };
+
+    int sourceIdx = 0;
+    int dropZoneAbove = 0;  // After real workspace
+    int dropZoneBelow = 1;  // Before placeholder
+
+    int targetIdx = calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow, images);
+
+    // This should be allowed because we're placing after index 0 (real workspace)
+    EXPECT_GE(targetIdx, 0) << "Should allow placement before placeholder";
+}
+
+TEST(WorkspaceReorderingTest, MultipleConsecutivePlaceholdersRejectAll) {
+    // Scenario: [Real, Placeholder, Placeholder, Placeholder]
+    std::vector<TestWorkspace> images = {
+        {false},  // Index 0: Real workspace
+        {true},   // Index 1: Placeholder
+        {true},   // Index 2: Placeholder
+        {true}    // Index 3: Placeholder
+    };
+
+    int sourceIdx = 0;
+
+    // Try placing after first placeholder
+    int dropZoneAbove = 1;
+    int dropZoneBelow = 2;
+    int targetIdx = calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow, images);
+    EXPECT_EQ(targetIdx, -1) << "Should reject after first placeholder";
+
+    // Try placing after second placeholder
+    dropZoneAbove = 2;
+    dropZoneBelow = 3;
+    targetIdx = calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow, images);
+    EXPECT_EQ(targetIdx, -1) << "Should reject after second placeholder";
+
+    // Try placing after third placeholder
+    dropZoneAbove = 3;
+    dropZoneBelow = -3;
+    targetIdx = calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow, images);
+    EXPECT_EQ(targetIdx, -1) << "Should reject after third placeholder";
+}
+
+TEST(WorkspaceReorderingTest, EmptyImagesArrayUsesLegacyBehavior) {
+    // When images array is empty, should use legacy behavior (no placeholder checks)
+    std::vector<TestWorkspace> images = {};  // Empty
+
+    int sourceIdx = 0;
+    int dropZoneAbove = 2;
+    int dropZoneBelow = -3;
+
+    int targetIdx = calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow, images);
+
+    EXPECT_EQ(targetIdx, 2) << "Empty images array should allow placement";
+}
+
+TEST(WorkspaceReorderingTest, OutOfBoundsDropZoneAboveSafety) {
+    // Ensure we don't crash if dropZoneAbove is out of bounds
+    std::vector<TestWorkspace> images = {
+        {false},  // Index 0: Real workspace
+        {false}   // Index 1: Real workspace
+    };
+
+    int sourceIdx = 0;
+    int dropZoneAbove = 10;  // Out of bounds
+    int dropZoneBelow = -3;
+
+    int targetIdx = calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow, images);
+
+    // Should not crash and should return valid result or -1
+    EXPECT_GE(targetIdx, -1) << "Should handle out of bounds gracefully";
 }
 
 // ============================================================================

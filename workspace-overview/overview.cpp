@@ -2102,6 +2102,10 @@ int COverview::calculateTargetIndexFromDropZone(int sourceIdx, int dropZoneAbove
         return 0;
     } else if (dropZoneBelow == -3 && dropZoneAbove >= 0) {
         // Dropping below last workspace
+        // Don't allow placement after a placeholder
+        if (dropZoneAbove < (int)images.size() && !images[dropZoneAbove].pWorkspace)
+            return -1;
+
         // For cross-monitor (sourceIdx < 0), return dropZoneAbove + 1
         if (sourceIdx < 0)
             return dropZoneAbove + 1;
@@ -2109,6 +2113,10 @@ int COverview::calculateTargetIndexFromDropZone(int sourceIdx, int dropZoneAbove
         return dropZoneAbove;
     } else if (dropZoneAbove >= 0 && dropZoneBelow >= 0) {
         // Dropping between two workspaces
+        // Don't allow placement after a placeholder
+        if (dropZoneAbove < (int)images.size() && !images[dropZoneAbove].pWorkspace)
+            return -1;
+
         if (sourceIdx < 0) {
             // Cross-monitor drop: always use dropZoneBelow
             return dropZoneBelow;
