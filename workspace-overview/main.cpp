@@ -202,10 +202,23 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     // Register config options
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:background_path",
                                  Hyprlang::STRING{""});
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:active_border_color",
+                                 Hyprlang::INT{0x4c7fa6ff});
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:active_border_size",
+                                 Hyprlang::FLOAT{4.0f});
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:placeholder_plus_color",
+                                 Hyprlang::INT{0xffffffcc});
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:placeholder_plus_size",
+                                 Hyprlang::FLOAT{8.0f});
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:drop_zone_color",
+                                 Hyprlang::INT{0xffffffcc});
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:placeholders_num",
+                                 Hyprlang::INT{5});
 
-    // Register config change callback to reload background image
-    static auto bgCallback = HyprlandAPI::registerCallbackDynamic(
+    // Register config change callback to reload all config values
+    static auto configCallback = HyprlandAPI::registerCallbackDynamic(
         PHANDLE, "configReloaded", [](void* self, SCallbackInfo& info, std::any param) {
+            // Load background path
             auto* const PBACKGROUNDPATH =
                 HyprlandAPI::getConfigValue(PHANDLE,
                                             "plugin:workspace_overview:background_path");
@@ -220,9 +233,103 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                                e.what());
                 }
             }
+
+            // Load active border color
+            auto* const PACTIVEBORDERCOLOR =
+                HyprlandAPI::getConfigValue(PHANDLE,
+                                            "plugin:workspace_overview:active_border_color");
+            if (PACTIVEBORDERCOLOR) {
+                try {
+                    auto colorValue = PACTIVEBORDERCOLOR->getValue();
+                    int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
+                    g_activeBorderColor = CHyprColor{(uint32_t)colorInt};
+                } catch (const std::bad_any_cast& e) {
+                    Debug::log(ERR,
+                               "[workspace-overview] Failed to read active_border_color: {}",
+                               e.what());
+                }
+            }
+
+            // Load active border size
+            auto* const PACTIVEBORDERSIZE =
+                HyprlandAPI::getConfigValue(PHANDLE,
+                                            "plugin:workspace_overview:active_border_size");
+            if (PACTIVEBORDERSIZE) {
+                try {
+                    auto sizeValue = PACTIVEBORDERSIZE->getValue();
+                    g_activeBorderSize = std::any_cast<Hyprlang::FLOAT>(sizeValue);
+                } catch (const std::bad_any_cast& e) {
+                    Debug::log(ERR,
+                               "[workspace-overview] Failed to read active_border_size: {}",
+                               e.what());
+                }
+            }
+
+            // Load placeholder plus color
+            auto* const PPLACEHOLDERPLUSCOLOR =
+                HyprlandAPI::getConfigValue(PHANDLE,
+                                            "plugin:workspace_overview:placeholder_plus_color");
+            if (PPLACEHOLDERPLUSCOLOR) {
+                try {
+                    auto colorValue = PPLACEHOLDERPLUSCOLOR->getValue();
+                    int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
+                    g_placeholderPlusColor = CHyprColor{(uint32_t)colorInt};
+                } catch (const std::bad_any_cast& e) {
+                    Debug::log(ERR,
+                               "[workspace-overview] Failed to read placeholder_plus_color: {}",
+                               e.what());
+                }
+            }
+
+            // Load placeholder plus size
+            auto* const PPLACEHOLDERPLUSSIZE =
+                HyprlandAPI::getConfigValue(PHANDLE,
+                                            "plugin:workspace_overview:placeholder_plus_size");
+            if (PPLACEHOLDERPLUSSIZE) {
+                try {
+                    auto sizeValue = PPLACEHOLDERPLUSSIZE->getValue();
+                    g_placeholderPlusSize = std::any_cast<Hyprlang::FLOAT>(sizeValue);
+                } catch (const std::bad_any_cast& e) {
+                    Debug::log(ERR,
+                               "[workspace-overview] Failed to read placeholder_plus_size: {}",
+                               e.what());
+                }
+            }
+
+            // Load drop zone color
+            auto* const PDROPZONECOLOR =
+                HyprlandAPI::getConfigValue(PHANDLE,
+                                            "plugin:workspace_overview:drop_zone_color");
+            if (PDROPZONECOLOR) {
+                try {
+                    auto colorValue = PDROPZONECOLOR->getValue();
+                    int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
+                    g_dropZoneColor = CHyprColor{(uint32_t)colorInt};
+                } catch (const std::bad_any_cast& e) {
+                    Debug::log(ERR,
+                               "[workspace-overview] Failed to read drop_zone_color: {}",
+                               e.what());
+                }
+            }
+
+            // Load placeholders num
+            auto* const PPLACEHOLDERSNUM =
+                HyprlandAPI::getConfigValue(PHANDLE,
+                                            "plugin:workspace_overview:placeholders_num");
+            if (PPLACEHOLDERSNUM) {
+                try {
+                    auto numValue = PPLACEHOLDERSNUM->getValue();
+                    int64_t numInt = std::any_cast<Hyprlang::INT>(numValue);
+                    g_placeholdersNum = (int)numInt;
+                } catch (const std::bad_any_cast& e) {
+                    Debug::log(ERR,
+                               "[workspace-overview] Failed to read placeholders_num: {}",
+                               e.what());
+                }
+            }
         });
 
-    // Load background image on startup
+    // Load all config values on startup
     auto* const PBACKGROUNDPATH =
         HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:background_path");
     if (PBACKGROUNDPATH) {
@@ -234,6 +341,82 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             }
         } catch (const std::bad_any_cast& e) {
             Debug::log(ERR, "[workspace-overview] Failed to read background_path: {}",
+                       e.what());
+        }
+    }
+
+    auto* const PACTIVEBORDERCOLOR =
+        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:active_border_color");
+    if (PACTIVEBORDERCOLOR) {
+        try {
+            auto colorValue = PACTIVEBORDERCOLOR->getValue();
+            int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
+            g_activeBorderColor = CHyprColor{(uint32_t)colorInt};
+        } catch (const std::bad_any_cast& e) {
+            Debug::log(ERR, "[workspace-overview] Failed to read active_border_color: {}",
+                       e.what());
+        }
+    }
+
+    auto* const PACTIVEBORDERSIZE =
+        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:active_border_size");
+    if (PACTIVEBORDERSIZE) {
+        try {
+            auto sizeValue = PACTIVEBORDERSIZE->getValue();
+            g_activeBorderSize = std::any_cast<Hyprlang::FLOAT>(sizeValue);
+        } catch (const std::bad_any_cast& e) {
+            Debug::log(ERR, "[workspace-overview] Failed to read active_border_size: {}",
+                       e.what());
+        }
+    }
+
+    auto* const PPLACEHOLDERPLUSCOLOR =
+        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:placeholder_plus_color");
+    if (PPLACEHOLDERPLUSCOLOR) {
+        try {
+            auto colorValue = PPLACEHOLDERPLUSCOLOR->getValue();
+            int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
+            g_placeholderPlusColor = CHyprColor{(uint32_t)colorInt};
+        } catch (const std::bad_any_cast& e) {
+            Debug::log(ERR, "[workspace-overview] Failed to read placeholder_plus_color: {}",
+                       e.what());
+        }
+    }
+
+    auto* const PPLACEHOLDERPLUSSIZE =
+        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:placeholder_plus_size");
+    if (PPLACEHOLDERPLUSSIZE) {
+        try {
+            auto sizeValue = PPLACEHOLDERPLUSSIZE->getValue();
+            g_placeholderPlusSize = std::any_cast<Hyprlang::FLOAT>(sizeValue);
+        } catch (const std::bad_any_cast& e) {
+            Debug::log(ERR, "[workspace-overview] Failed to read placeholder_plus_size: {}",
+                       e.what());
+        }
+    }
+
+    auto* const PDROPZONECOLOR =
+        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:drop_zone_color");
+    if (PDROPZONECOLOR) {
+        try {
+            auto colorValue = PDROPZONECOLOR->getValue();
+            int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
+            g_dropZoneColor = CHyprColor{(uint32_t)colorInt};
+        } catch (const std::bad_any_cast& e) {
+            Debug::log(ERR, "[workspace-overview] Failed to read drop_zone_color: {}",
+                       e.what());
+        }
+    }
+
+    auto* const PPLACEHOLDERSNUM =
+        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:placeholders_num");
+    if (PPLACEHOLDERSNUM) {
+        try {
+            auto numValue = PPLACEHOLDERSNUM->getValue();
+            int64_t numInt = std::any_cast<Hyprlang::INT>(numValue);
+            g_placeholdersNum = (int)numInt;
+        } catch (const std::bad_any_cast& e) {
+            Debug::log(ERR, "[workspace-overview] Failed to read placeholders_num: {}",
                        e.what());
         }
     }

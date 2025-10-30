@@ -8,3 +8,11 @@ inline HANDLE PHANDLE = nullptr;
 
 // Global background texture shared across all monitors
 inline SP<CTexture> g_pBackgroundTexture;
+
+// Global configuration values with defaults
+inline CHyprColor g_activeBorderColor = CHyprColor{0.3, 0.5, 0.7, 1.0};  // rgba(4c7fa6ff)
+inline float g_activeBorderSize = 4.0f;
+inline CHyprColor g_placeholderPlusColor = CHyprColor{1.0, 1.0, 1.0, 0.8};  // rgba(ffffffff) with 0.8 alpha
+inline float g_placeholderPlusSize = 8.0f;
+inline CHyprColor g_dropZoneColor = CHyprColor{1.0, 1.0, 1.0, 0.8};  // White with 0.8 alpha
+inline int g_placeholdersNum = 5;

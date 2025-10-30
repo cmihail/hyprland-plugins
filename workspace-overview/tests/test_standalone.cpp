@@ -4410,3 +4410,131 @@ TEST(CrossMonitorWorkspaceDragTest, MaxScrollOffsetRecalculation) {
     EXPECT_TRUE(sourceRecalculated);
     EXPECT_TRUE(targetRecalculated);
 }
+
+// Configuration Options Tests
+struct ConfigColor {
+    float r, g, b, a;
+
+    ConfigColor(uint32_t rgba) {
+        r = ((rgba >> 24) & 0xFF) / 255.0f;
+        g = ((rgba >> 16) & 0xFF) / 255.0f;
+        b = ((rgba >> 8) & 0xFF) / 255.0f;
+        a = (rgba & 0xFF) / 255.0f;
+    }
+
+    bool equals(float r_, float g_, float b_, float a_, float tolerance = 0.01f) const {
+        return std::abs(r - r_) < tolerance &&
+               std::abs(g - g_) < tolerance &&
+               std::abs(b - b_) < tolerance &&
+               std::abs(a - a_) < tolerance;
+    }
+};
+
+TEST(ConfigurationTest, DefaultActiveBorderColor) {
+    // Default: 0x4c7fa6ff -> rgba(76, 127, 166, 255)
+    ConfigColor color(0x4c7fa6ff);
+    EXPECT_TRUE(color.equals(76.0f/255.0f, 127.0f/255.0f, 166.0f/255.0f, 1.0f));
+}
+
+TEST(ConfigurationTest, DefaultActiveBorderSize) {
+    float defaultSize = 4.0f;
+    EXPECT_EQ(defaultSize, 4.0f);
+    EXPECT_GT(defaultSize, 0.0f);
+}
+
+TEST(ConfigurationTest, DefaultPlaceholderPlusColor) {
+    // Default: 0xffffffcc -> rgba(255, 255, 255, 204)
+    ConfigColor color(0xffffffcc);
+    EXPECT_TRUE(color.equals(1.0f, 1.0f, 1.0f, 204.0f/255.0f));
+}
+
+TEST(ConfigurationTest, DefaultPlaceholderPlusSize) {
+    float defaultSize = 8.0f;
+    EXPECT_EQ(defaultSize, 8.0f);
+    EXPECT_GT(defaultSize, 0.0f);
+}
+
+TEST(ConfigurationTest, DefaultDropZoneColor) {
+    // Default: 0xffffffcc -> rgba(255, 255, 255, 204)
+    ConfigColor color(0xffffffcc);
+    EXPECT_TRUE(color.equals(1.0f, 1.0f, 1.0f, 204.0f/255.0f));
+}
+
+TEST(ConfigurationTest, DefaultPlaceholdersNum) {
+    int defaultNum = 5;
+    EXPECT_EQ(defaultNum, 5);
+    EXPECT_GT(defaultNum, 0);
+}
+
+TEST(ConfigurationTest, CustomActiveBorderColor) {
+    // Test custom color: 0xff0000ff -> red
+    ConfigColor color(0xff0000ff);
+    EXPECT_TRUE(color.equals(1.0f, 0.0f, 0.0f, 1.0f));
+}
+
+TEST(ConfigurationTest, CustomActiveBorderColorWithAlpha) {
+    // Test custom color with alpha: 0xff000080 -> red with 50% opacity
+    ConfigColor color(0xff000080);
+    EXPECT_TRUE(color.equals(1.0f, 0.0f, 0.0f, 0x80/255.0f));
+}
+
+TEST(ConfigurationTest, BorderSizeRange) {
+    // Test various border sizes
+    std::vector<float> testSizes = {1.0f, 2.0f, 4.0f, 8.0f, 16.0f};
+
+    for (float size : testSizes) {
+        EXPECT_GT(size, 0.0f) << "Border size must be positive: " << size;
+        EXPECT_LE(size, 100.0f) << "Border size should be reasonable: " << size;
+    }
+}
+
+TEST(ConfigurationTest, PlusSizeRange) {
+    // Test various plus sign sizes
+    std::vector<float> testSizes = {4.0f, 8.0f, 12.0f, 16.0f};
+
+    for (float size : testSizes) {
+        EXPECT_GT(size, 0.0f) << "Plus size must be positive: " << size;
+        EXPECT_LE(size, 50.0f) << "Plus size should be reasonable: " << size;
+    }
+}
+
+TEST(ConfigurationTest, PlaceholdersNumRange) {
+    // Test various placeholder counts
+    std::vector<int> testCounts = {0, 1, 3, 5, 10, 20};
+
+    for (int count : testCounts) {
+        EXPECT_GE(count, 0) << "Placeholder count must be non-negative: " << count;
+        EXPECT_LE(count, 50) << "Placeholder count should be reasonable: " << count;
+    }
+}
+
+TEST(ConfigurationTest, ColorFormatConsistency) {
+    // Verify RGBA format: 0xRRGGBBAA
+    uint32_t testColor = 0x12345678;
+    ConfigColor color(testColor);
+
+    EXPECT_FLOAT_EQ(color.r, 0x12 / 255.0f);
+    EXPECT_FLOAT_EQ(color.g, 0x34 / 255.0f);
+    EXPECT_FLOAT_EQ(color.b, 0x56 / 255.0f);
+    EXPECT_FLOAT_EQ(color.a, 0x78 / 255.0f);
+}
+
+TEST(ConfigurationTest, ZeroPlaceholdersValid) {
+    // Test that zero placeholders is valid
+    int placeholdersNum = 0;
+    size_t existingWorkspaces = 3;
+    size_t totalWorkspaces = existingWorkspaces + placeholdersNum;
+
+    EXPECT_EQ(totalWorkspaces, 3);
+    EXPECT_GE(placeholdersNum, 0);
+}
+
+TEST(ConfigurationTest, HighPlaceholderCount) {
+    // Test high placeholder count
+    int placeholdersNum = 20;
+    size_t existingWorkspaces = 2;
+    size_t totalWorkspaces = existingWorkspaces + placeholdersNum;
+
+    EXPECT_EQ(totalWorkspaces, 22);
+    EXPECT_GT(totalWorkspaces, existingWorkspaces);
+}

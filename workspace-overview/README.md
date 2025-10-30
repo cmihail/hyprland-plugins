@@ -163,10 +163,38 @@ Note: Tests are standalone unit tests that don't require the full Hyprland runti
 
 ## Configuration
 
-The plugin works out of the box with sensible defaults. The following constants are defined in the code:
+The plugin works out of the box with sensible defaults. You can customize the appearance by adding these options to your Hyprland configuration (`~/.config/hypr/hyprland.conf`):
+
+### Visual Customization
+
+```conf
+# Background image (optional)
+plugin:workspace_overview:background_path = /path/to/your/background.png
+
+# Active workspace border color (hex RGBA format: 0xRRGGBBAA)
+plugin:workspace_overview:active_border_color = 0x4c7fa6ff  # Blue (default)
+
+# Active workspace border thickness (pixels)
+plugin:workspace_overview:active_border_size = 4.0
+
+# Placeholder workspace plus sign color (hex RGBA format: 0xRRGGBBAA)
+plugin:workspace_overview:placeholder_plus_color = 0xffffffcc  # White with 80% opacity (default)
+
+# Placeholder workspace plus sign thickness (pixels)
+plugin:workspace_overview:placeholder_plus_size = 8.0
+
+# Drop zone indicator color during drag-and-drop (hex RGBA format: 0xRRGGBBAA)
+plugin:workspace_overview:drop_zone_color = 0xffffffcc  # White with 80% opacity (default)
+
+# Number of placeholder (empty) workspaces to show
+plugin:workspace_overview:placeholders_num = 5
+```
+
+### Layout Constants
+
+The following constants are defined in the code and control the layout:
 
 ```cpp
-LEFT_WORKSPACES = 4;           // Number of workspaces shown on left
 LEFT_WIDTH_RATIO = 0.33f;      // Left side takes 1/3 of screen
 GAP_WIDTH = 10.0f;             // Gap between workspace previews
 PADDING = 20.0f;               // Padding around edges

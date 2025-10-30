@@ -70,8 +70,8 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
     // Sort workspace IDs
     std::sort(monitorWorkspaceIDs.begin(), monitorWorkspaceIDs.end());
 
-    // Calculate dynamic workspace count: existing workspaces + EXTRA_PLACEHOLDERS
-    leftWorkspaceCount = monitorWorkspaceIDs.size() + EXTRA_PLACEHOLDERS;
+    // Calculate dynamic workspace count: existing workspaces + configured placeholders
+    leftWorkspaceCount = monitorWorkspaceIDs.size() + g_placeholdersNum;
 
     // We need leftWorkspaceCount + 1 (for the active workspace on the right)
     images.resize(leftWorkspaceCount + 1);
@@ -1039,26 +1039,23 @@ void COverview::fullRender() {
 
         // Draw border around active workspace on left side
         if (i != (size_t)activeIndex && image.isActive) {
-            const float borderThickness = 4.0f;  // Half of plus sign thickness
-            const CHyprColor borderColor = CHyprColor{0.3, 0.5, 0.7, 1.0};  // Same as drag preview
-
             // Top border
-            CBox topBorder = {scaledBox.x, scaledBox.y, scaledBox.w, borderThickness};
-            g_pHyprOpenGL->renderRect(topBorder, borderColor, {.damage = &damage});
+            CBox topBorder = {scaledBox.x, scaledBox.y, scaledBox.w, g_activeBorderSize};
+            g_pHyprOpenGL->renderRect(topBorder, g_activeBorderColor, {.damage = &damage});
 
             // Bottom border
-            CBox bottomBorder = {scaledBox.x, scaledBox.y + scaledBox.h - borderThickness,
-                                scaledBox.w, borderThickness};
-            g_pHyprOpenGL->renderRect(bottomBorder, borderColor, {.damage = &damage});
+            CBox bottomBorder = {scaledBox.x, scaledBox.y + scaledBox.h - g_activeBorderSize,
+                                scaledBox.w, g_activeBorderSize};
+            g_pHyprOpenGL->renderRect(bottomBorder, g_activeBorderColor, {.damage = &damage});
 
             // Left border
-            CBox leftBorder = {scaledBox.x, scaledBox.y, borderThickness, scaledBox.h};
-            g_pHyprOpenGL->renderRect(leftBorder, borderColor, {.damage = &damage});
+            CBox leftBorder = {scaledBox.x, scaledBox.y, g_activeBorderSize, scaledBox.h};
+            g_pHyprOpenGL->renderRect(leftBorder, g_activeBorderColor, {.damage = &damage});
 
             // Right border
-            CBox rightBorder = {scaledBox.x + scaledBox.w - borderThickness, scaledBox.y,
-                               borderThickness, scaledBox.h};
-            g_pHyprOpenGL->renderRect(rightBorder, borderColor, {.damage = &damage});
+            CBox rightBorder = {scaledBox.x + scaledBox.w - g_activeBorderSize, scaledBox.y,
+                               g_activeBorderSize, scaledBox.h};
+            g_pHyprOpenGL->renderRect(rightBorder, g_activeBorderColor, {.damage = &damage});
         }
 
         // Render workspace indicator (number or plus sign for new workspaces)
@@ -1067,7 +1064,6 @@ void COverview::fullRender() {
         // For new workspaces, draw a plus sign in the center
         if (isNewWorkspace) {
             const float plusSize = std::min(scaledBox.w, scaledBox.h) * 0.5f;
-            const float lineThickness = 8.0f;
 
             const float centerX = scaledBox.x + scaledBox.w / 2.0f;
             const float centerY = scaledBox.y + scaledBox.h / 2.0f;
@@ -1075,21 +1071,21 @@ void COverview::fullRender() {
             // Horizontal line of the plus
             CBox hLine = {
                 centerX - plusSize / 2.0f,
-                centerY - lineThickness / 2.0f,
+                centerY - g_placeholderPlusSize / 2.0f,
                 plusSize,
-                lineThickness
+                g_placeholderPlusSize
             };
 
             // Vertical line of the plus
             CBox vLine = {
-                centerX - lineThickness / 2.0f,
+                centerX - g_placeholderPlusSize / 2.0f,
                 centerY - plusSize / 2.0f,
-                lineThickness,
+                g_placeholderPlusSize,
                 plusSize
             };
 
-            g_pHyprOpenGL->renderRect(hLine, CHyprColor{1.0, 1.0, 1.0, 0.8}, {.damage = &damage});
-            g_pHyprOpenGL->renderRect(vLine, CHyprColor{1.0, 1.0, 1.0, 0.8}, {.damage = &damage});
+            g_pHyprOpenGL->renderRect(hLine, g_placeholderPlusColor, {.damage = &damage});
+            g_pHyprOpenGL->renderRect(vLine, g_placeholderPlusColor, {.damage = &damage});
         } else if (image.workspaceID > 0 && i != (size_t)activeIndex) {
             // Show workspace number in top-left corner for left panel workspaces
             int workspaceNum = image.workspaceID;
@@ -1281,8 +1277,7 @@ void COverview::renderDropZoneAboveFirst() {
     dropZoneBox.round();
 
     CRegion damage{0, 0, INT16_MAX, INT16_MAX};
-    CHyprColor dropZoneColor = CHyprColor{1.0, 1.0, 1.0, 0.8};
-    g_pHyprOpenGL->renderRect(dropZoneBox, dropZoneColor,
+    g_pHyprOpenGL->renderRect(dropZoneBox, g_dropZoneColor,
                                {.damage = &damage});
 }
 
@@ -1319,8 +1314,7 @@ void COverview::renderDropZoneBelowLast(int lastIndex) {
     dropZoneBox.round();
 
     CRegion damage{0, 0, INT16_MAX, INT16_MAX};
-    CHyprColor dropZoneColor = CHyprColor{1.0, 1.0, 1.0, 0.8};
-    g_pHyprOpenGL->renderRect(dropZoneBox, dropZoneColor,
+    g_pHyprOpenGL->renderRect(dropZoneBox, g_dropZoneColor,
                                {.damage = &damage});
 }
 
@@ -1372,8 +1366,7 @@ void COverview::renderDropZoneBetween(int above, int below) {
     dropZoneBox.round();
 
     CRegion damage{0, 0, INT16_MAX, INT16_MAX};
-    CHyprColor dropZoneColor = CHyprColor{1.0, 1.0, 1.0, 0.8};
-    g_pHyprOpenGL->renderRect(dropZoneBox, dropZoneColor,
+    g_pHyprOpenGL->renderRect(dropZoneBox, g_dropZoneColor,
                                {.damage = &damage});
 }
 

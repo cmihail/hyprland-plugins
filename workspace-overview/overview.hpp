@@ -124,14 +124,13 @@ class COverview {
     static void closeAllOverviews();
 
     // Layout constants
-    static constexpr int   EXTRA_PLACEHOLDERS  = 5;  // Number of extra placeholder workspaces
     static constexpr float LEFT_WIDTH_RATIO    = 0.33f;  // Left side takes 1/3
     static constexpr float GAP_WIDTH           = 10.0f;
     static constexpr float PADDING             = 20.0f;
     CHyprColor             BG_COLOR            = CHyprColor{0.1, 0.1, 0.1, 1.0};
 
     // Dynamic per-monitor workspace count
-    size_t leftWorkspaceCount = 0;  // Number of workspaces in left list (existing + EXTRA_PLACEHOLDERS)
+    size_t leftWorkspaceCount = 0;  // Number of workspaces in left list (existing + configured placeholders)
 
     bool damageDirty = false;
 
