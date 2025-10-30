@@ -102,6 +102,11 @@ class COverview {
                     int sourceIdx, int targetIdx,
                     const std::vector<std::pair<int, std::vector<PHLWINDOW>>>& workspaceWindows);
     void        scheduleWorkspaceRefreshes(int sourceIdx, int targetIdx);
+    static void moveCrossMonitorWorkspace(COverview* sourceOverview, int sourceIdx,
+                                          COverview* targetOverview, int targetIdx);
+    static void moveSourceMonitorWindowsUp(COverview* sourceOverview, int sourceIdx);
+    static void moveTargetMonitorWindowsDown(COverview* targetOverview, int targetIdx);
+    void        recalculateMaxScrollOffset();
 
     // Cross-monitor helpers
     static std::pair<COverview*, int> findWorkspaceAtGlobalPosition(
