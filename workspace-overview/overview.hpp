@@ -45,7 +45,7 @@ inline GlobalDragState g_dragState;
 
 class COverview {
   public:
-    COverview(PHLWORKSPACE startedOn_);
+    COverview(PHLWORKSPACE startedOn_, bool skipAnimation_ = false);
     ~COverview();
 
     void render();
@@ -84,7 +84,6 @@ class COverview {
     void setupMouseAxisHook();
     void setupMonitorHooks();
     void setupWorkspaceChangeHook();
-    void updateActiveWorkspaceDisplay(PHLWORKSPACE newActiveWorkspace);
 
     // Helper functions for drag and drop
     int         findWorkspaceIndexAtPosition(const Vector2D& pos);

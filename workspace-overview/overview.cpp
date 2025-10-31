@@ -44,7 +44,7 @@ COverview::~COverview() {
     g_pHyprOpenGL->markBlurDirtyForMonitor(pMonitor.lock());
 }
 
-COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
+COverview::COverview(PHLWORKSPACE startedOn_, bool skipAnimation) : startedOn(startedOn_) {
     const auto PMONITOR = g_pCompositor->m_lastMonitor.lock();
     pMonitor            = PMONITOR;
 
@@ -240,28 +240,37 @@ COverview::COverview(PHLWORKSPACE startedOn_) : startedOn(startedOn_) {
     size->setUpdateCallback(damageMonitor);
     pos->setUpdateCallback(damageMonitor);
 
-    // Start with the view zoomed into the active workspace (right side)
-    const auto& activeBox = images[activeIndex].box;
+    if (skipAnimation) {
+        // No animation - directly set to normal view
+        size->setValue(monitorSize);
+        pos->setValue(Vector2D{0, 0});
+        *size = monitorSize;
+        *pos  = Vector2D{0, 0};
+    } else {
+        // Animate from zoomed in to normal view
+        // Start with the view zoomed into the active workspace (right side)
+        const auto& activeBox = images[activeIndex].box;
 
-    // Calculate scale needed to zoom the active box to fill the screen
-    const float scaleX = monitorSize.x / activeBox.w;
-    const float scaleY = monitorSize.y / activeBox.h;
-    const float scale = std::min(scaleX, scaleY);
+        // Calculate scale needed to zoom the active box to fill the screen
+        const float scaleX = monitorSize.x / activeBox.w;
+        const float scaleY = monitorSize.y / activeBox.h;
+        const float scale = std::min(scaleX, scaleY);
 
-    // Starting position: zoomed into active workspace
-    const Vector2D activeCenter = Vector2D{activeBox.x + activeBox.w / 2.0f,
-                                           activeBox.y + activeBox.h / 2.0f};
-    const Vector2D screenCenter = monitorSize / 2.0f;
+        // Starting position: zoomed into active workspace
+        const Vector2D activeCenter = Vector2D{activeBox.x + activeBox.w / 2.0f,
+                                               activeBox.y + activeBox.h / 2.0f};
+        const Vector2D screenCenter = monitorSize / 2.0f;
 
-    // Set initial value (zoomed in)
-    size->setValue(monitorSize * scale);
-    pos->setValue((screenCenter - activeCenter) * scale);
+        // Set initial value (zoomed in)
+        size->setValue(monitorSize * scale);
+        pos->setValue((screenCenter - activeCenter) * scale);
 
-    // Set goal (normal view) - this starts the animation
-    *size = monitorSize;
-    *pos  = Vector2D{0, 0};
+        // Set goal (normal view) - this starts the animation
+        *size = monitorSize;
+        *pos  = Vector2D{0, 0};
 
-    size->setCallbackOnEnd([this](auto) { redrawAll(true); });
+        size->setCallbackOnEnd([this](auto) { redrawAll(true); });
+    }
 
     setupEventHooks();
 }
@@ -580,55 +589,21 @@ void COverview::setupWorkspaceChangeHook() {
             if (!newWorkspace || !workspaceMonitor)
                 return;
 
-            if (workspaceMonitor != pMonitor.lock())
+            auto monitor = pMonitor.lock();
+            if (!monitor || workspaceMonitor != monitor)
                 return;
 
-            // Update the active workspace display
-            updateActiveWorkspaceDisplay(newWorkspace);
+            // Recreate the overview with the new workspace
+            // This is simpler and more reliable than trying to update indices
+            // Skip animation for instant recreation
+            g_pOverviews.erase(monitor);
+            g_pOverviews[monitor] = std::make_unique<COverview>(newWorkspace, true);
         } catch (const std::exception& e) {
             Debug::log(ERR, "[Overview] Exception in workspace change handler: {}", e.what());
         }
     };
 
     workspaceChangeHook = g_pHookSystem->hookDynamic("workspace", onWorkspaceChange);
-}
-
-void COverview::updateActiveWorkspaceDisplay(PHLWORKSPACE newActiveWorkspace) {
-    if (!newActiveWorkspace)
-        return;
-
-    int64_t newActiveID = newActiveWorkspace->m_id;
-    int64_t oldActiveID = images[activeIndex].workspaceID;
-
-    // No change needed if switching to the same workspace
-    if (newActiveID == oldActiveID)
-        return;
-
-    Debug::log(LOG, "[Overview] Active workspace changed from {} to {}", oldActiveID, newActiveID);
-
-    // Update the isActive flag for workspaces on the left side
-    for (size_t i = 0; i < leftWorkspaceCount; ++i) {
-        bool wasActive = images[i].isActive;
-        images[i].isActive = (images[i].workspaceID == newActiveID);
-
-        // Re-render workspaces whose active state changed
-        if (wasActive != images[i].isActive && images[i].workspaceID > 0) {
-            redrawID(i);
-        }
-    }
-
-    // Update the active workspace ID for the right side display
-    images[activeIndex].workspaceID = newActiveID;
-    images[activeIndex].pWorkspace = newActiveWorkspace;
-
-    // Re-render the active workspace on the right side
-    redrawID(activeIndex);
-
-    // Update startedOn to track the current active workspace
-    startedOn = newActiveWorkspace;
-
-    // Trigger damage to update the display
-    damage();
 }
 
 void COverview::setInitialScrollPosition(float availableHeight) {
