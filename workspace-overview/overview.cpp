@@ -271,6 +271,7 @@ void COverview::setupEventHooks() {
     setupMouseButtonHook();
     setupMouseAxisHook();
     setupMonitorHooks();
+    setupWorkspaceChangeHook();
 }
 
 void COverview::setupMouseMoveHook() {
@@ -564,6 +565,70 @@ void COverview::setupMonitorHooks() {
 
     monitorAddedHook = g_pHookSystem->hookDynamic("monitorAdded", onMonitorAdded);
     monitorRemovedHook = g_pHookSystem->hookDynamic("monitorRemoved", onMonitorRemoved);
+}
+
+void COverview::setupWorkspaceChangeHook() {
+    auto onWorkspaceChange = [this](void* self, SCallbackInfo& info, std::any param) {
+        if (closing)
+            return;
+
+        try {
+            auto newWorkspace = std::any_cast<PHLWORKSPACE>(param);
+
+            // Only update if the workspace change is on this monitor
+            auto workspaceMonitor = newWorkspace ? newWorkspace->m_monitor.lock() : nullptr;
+            if (!newWorkspace || !workspaceMonitor)
+                return;
+
+            if (workspaceMonitor != pMonitor.lock())
+                return;
+
+            // Update the active workspace display
+            updateActiveWorkspaceDisplay(newWorkspace);
+        } catch (const std::exception& e) {
+            Debug::log(ERR, "[Overview] Exception in workspace change handler: {}", e.what());
+        }
+    };
+
+    workspaceChangeHook = g_pHookSystem->hookDynamic("workspace", onWorkspaceChange);
+}
+
+void COverview::updateActiveWorkspaceDisplay(PHLWORKSPACE newActiveWorkspace) {
+    if (!newActiveWorkspace)
+        return;
+
+    int64_t newActiveID = newActiveWorkspace->m_id;
+    int64_t oldActiveID = images[activeIndex].workspaceID;
+
+    // No change needed if switching to the same workspace
+    if (newActiveID == oldActiveID)
+        return;
+
+    Debug::log(LOG, "[Overview] Active workspace changed from {} to {}", oldActiveID, newActiveID);
+
+    // Update the isActive flag for workspaces on the left side
+    for (size_t i = 0; i < leftWorkspaceCount; ++i) {
+        bool wasActive = images[i].isActive;
+        images[i].isActive = (images[i].workspaceID == newActiveID);
+
+        // Re-render workspaces whose active state changed
+        if (wasActive != images[i].isActive && images[i].workspaceID > 0) {
+            redrawID(i);
+        }
+    }
+
+    // Update the active workspace ID for the right side display
+    images[activeIndex].workspaceID = newActiveID;
+    images[activeIndex].pWorkspace = newActiveWorkspace;
+
+    // Re-render the active workspace on the right side
+    redrawID(activeIndex);
+
+    // Update startedOn to track the current active workspace
+    startedOn = newActiveWorkspace;
+
+    // Trigger damage to update the display
+    damage();
 }
 
 void COverview::setInitialScrollPosition(float availableHeight) {

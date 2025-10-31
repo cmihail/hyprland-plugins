@@ -83,6 +83,8 @@ class COverview {
                                       const SP<CMonitor>& clickedMonitor);
     void setupMouseAxisHook();
     void setupMonitorHooks();
+    void setupWorkspaceChangeHook();
+    void updateActiveWorkspaceDisplay(PHLWORKSPACE newActiveWorkspace);
 
     // Helper functions for drag and drop
     int         findWorkspaceIndexAtPosition(const Vector2D& pos);
@@ -171,6 +173,7 @@ class COverview {
     SP<HOOK_CALLBACK_FN> mouseAxisHook;
     SP<HOOK_CALLBACK_FN> monitorAddedHook;
     SP<HOOK_CALLBACK_FN> monitorRemovedHook;
+    SP<HOOK_CALLBACK_FN> workspaceChangeHook;
 
     friend class COverviewPassElement;
     friend void removeOverview(WP<Hyprutils::Animation::CBaseAnimatedVariable>, PHLMONITOR);
