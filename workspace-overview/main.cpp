@@ -214,6 +214,14 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                                  Hyprlang::INT{0xffffffcc});
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:placeholders_num",
                                  Hyprlang::INT{5});
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:drag_threshold",
+                                 Hyprlang::FLOAT{50.0f});
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:drag_window_action_button",
+                                 Hyprlang::INT{272});
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:drag_workspace_action_button",
+                                 Hyprlang::INT{274});
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:select_workspace_action_button",
+                                 Hyprlang::INT{272});
 
     // Register config change callback to reload all config values
     static auto configCallback = HyprlandAPI::registerCallbackDynamic(
@@ -327,6 +335,69 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                                e.what());
                 }
             }
+
+            // Load drag threshold
+            auto* const PDRAGTHRESHOLD =
+                HyprlandAPI::getConfigValue(PHANDLE,
+                                            "plugin:workspace_overview:drag_threshold");
+            if (PDRAGTHRESHOLD) {
+                try {
+                    auto thresholdValue = PDRAGTHRESHOLD->getValue();
+                    g_dragThreshold = std::any_cast<Hyprlang::FLOAT>(thresholdValue);
+                } catch (const std::bad_any_cast& e) {
+                    Debug::log(ERR,
+                               "[workspace-overview] Failed to read drag_threshold: {}",
+                               e.what());
+                }
+            }
+
+            // Load drag window action button
+            auto* const PDRAGWINDOWBUTTON =
+                HyprlandAPI::getConfigValue(PHANDLE,
+                                            "plugin:workspace_overview:drag_window_action_button");
+            if (PDRAGWINDOWBUTTON) {
+                try {
+                    auto buttonValue = PDRAGWINDOWBUTTON->getValue();
+                    int64_t buttonInt = std::any_cast<Hyprlang::INT>(buttonValue);
+                    g_dragWindowActionButton = (uint32_t)buttonInt;
+                } catch (const std::bad_any_cast& e) {
+                    Debug::log(ERR,
+                               "[workspace-overview] Failed to read drag_window_action_button: {}",
+                               e.what());
+                }
+            }
+
+            // Load drag workspace action button
+            auto* const PDRAGWORKSPACEBUTTON =
+                HyprlandAPI::getConfigValue(PHANDLE,
+                                            "plugin:workspace_overview:drag_workspace_action_button");
+            if (PDRAGWORKSPACEBUTTON) {
+                try {
+                    auto buttonValue = PDRAGWORKSPACEBUTTON->getValue();
+                    int64_t buttonInt = std::any_cast<Hyprlang::INT>(buttonValue);
+                    g_dragWorkspaceActionButton = (uint32_t)buttonInt;
+                } catch (const std::bad_any_cast& e) {
+                    Debug::log(ERR,
+                               "[workspace-overview] Failed to read drag_workspace_action_button: {}",
+                               e.what());
+                }
+            }
+
+            // Load select workspace action button
+            auto* const PSELECTWORKSPACEBUTTON =
+                HyprlandAPI::getConfigValue(PHANDLE,
+                                            "plugin:workspace_overview:select_workspace_action_button");
+            if (PSELECTWORKSPACEBUTTON) {
+                try {
+                    auto buttonValue = PSELECTWORKSPACEBUTTON->getValue();
+                    int64_t buttonInt = std::any_cast<Hyprlang::INT>(buttonValue);
+                    g_selectWorkspaceActionButton = (uint32_t)buttonInt;
+                } catch (const std::bad_any_cast& e) {
+                    Debug::log(ERR,
+                               "[workspace-overview] Failed to read select_workspace_action_button: {}",
+                               e.what());
+                }
+            }
         });
 
     // Load all config values on startup
@@ -417,6 +488,57 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             g_placeholdersNum = (int)numInt;
         } catch (const std::bad_any_cast& e) {
             Debug::log(ERR, "[workspace-overview] Failed to read placeholders_num: {}",
+                       e.what());
+        }
+    }
+
+    auto* const PDRAGTHRESHOLD =
+        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:drag_threshold");
+    if (PDRAGTHRESHOLD) {
+        try {
+            auto thresholdValue = PDRAGTHRESHOLD->getValue();
+            g_dragThreshold = std::any_cast<Hyprlang::FLOAT>(thresholdValue);
+        } catch (const std::bad_any_cast& e) {
+            Debug::log(ERR, "[workspace-overview] Failed to read drag_threshold: {}",
+                       e.what());
+        }
+    }
+
+    auto* const PDRAGWINDOWBUTTON =
+        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:drag_window_action_button");
+    if (PDRAGWINDOWBUTTON) {
+        try {
+            auto buttonValue = PDRAGWINDOWBUTTON->getValue();
+            int64_t buttonInt = std::any_cast<Hyprlang::INT>(buttonValue);
+            g_dragWindowActionButton = (uint32_t)buttonInt;
+        } catch (const std::bad_any_cast& e) {
+            Debug::log(ERR, "[workspace-overview] Failed to read drag_window_action_button: {}",
+                       e.what());
+        }
+    }
+
+    auto* const PDRAGWORKSPACEBUTTON =
+        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:drag_workspace_action_button");
+    if (PDRAGWORKSPACEBUTTON) {
+        try {
+            auto buttonValue = PDRAGWORKSPACEBUTTON->getValue();
+            int64_t buttonInt = std::any_cast<Hyprlang::INT>(buttonValue);
+            g_dragWorkspaceActionButton = (uint32_t)buttonInt;
+        } catch (const std::bad_any_cast& e) {
+            Debug::log(ERR, "[workspace-overview] Failed to read drag_workspace_action_button: {}",
+                       e.what());
+        }
+    }
+
+    auto* const PSELECTWORKSPACEBUTTON =
+        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:select_workspace_action_button");
+    if (PSELECTWORKSPACEBUTTON) {
+        try {
+            auto buttonValue = PSELECTWORKSPACEBUTTON->getValue();
+            int64_t buttonInt = std::any_cast<Hyprlang::INT>(buttonValue);
+            g_selectWorkspaceActionButton = (uint32_t)buttonInt;
+        } catch (const std::bad_any_cast& e) {
+            Debug::log(ERR, "[workspace-overview] Failed to read select_workspace_action_button: {}",
                        e.what());
         }
     }

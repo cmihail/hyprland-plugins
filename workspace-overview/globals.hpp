@@ -16,3 +16,7 @@ inline CHyprColor g_placeholderPlusColor = CHyprColor{1.0, 1.0, 1.0, 0.8};  // r
 inline float g_placeholderPlusSize = 8.0f;
 inline CHyprColor g_dropZoneColor = CHyprColor{1.0, 1.0, 1.0, 0.8};  // White with 0.8 alpha
 inline int g_placeholdersNum = 5;
+inline float g_dragThreshold = 50.0f;
+inline uint32_t g_dragWindowActionButton = 272;  // BTN_LEFT
+inline uint32_t g_dragWorkspaceActionButton = 274;  // BTN_MIDDLE
+inline uint32_t g_selectWorkspaceActionButton = 272;  // BTN_LEFT

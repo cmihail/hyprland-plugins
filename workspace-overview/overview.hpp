@@ -160,8 +160,7 @@ class COverview {
     float maxScrollOffset = 0.0f;
     float leftPreviewHeight = 0.0f;
 
-    // Drag detection
-    static constexpr float DRAG_THRESHOLD = 50.0f;
+    // Drag preview scale
     static constexpr float DRAG_PREVIEW_SCALE = 0.10f;  // Scale factor for drag preview
 
     // Event hooks

@@ -291,7 +291,7 @@ void COverview::setupMouseMoveHook() {
             const float distanceX = std::abs(lastMousePosLocal.x - g_dragState.mouseDownPos.x);
             const float distanceY = std::abs(lastMousePosLocal.y - g_dragState.mouseDownPos.y);
 
-            if (distanceX > DRAG_THRESHOLD || distanceY > DRAG_THRESHOLD) {
+            if (distanceX > g_dragThreshold || distanceY > g_dragThreshold) {
                 g_dragState.isDragging = true;
                 if (g_dragState.isWorkspaceDrag) {
                     // Render whole workspace preview for workspace drag
@@ -330,14 +330,14 @@ void COverview::setupMouseButtonHook() {
 
         info.cancelled = true;
 
-        // Handle middle-click for workspace dragging (only on left side workspaces)
-        if (e.button == BTN_MIDDLE) {
+        // Handle workspace drag button (default middle-click)
+        if (e.button == g_dragWorkspaceActionButton) {
             if (e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
                 // Find which workspace was clicked and setup drag if allowed
                 int clickedWsIndex = findWorkspaceIndexAtPosition(lastMousePosLocal);
                 setupWorkspaceDragOnMiddleClick(clickedWsIndex, lastMousePosLocal);
             } else {
-                // Middle-click released - handle workspace drop
+                // Workspace drag button released - handle workspace drop
                 // Only the overview where the mouse currently is should handle the drop
                 if (clickedMonitor == pMonitor.lock()) {
                     if (g_dragState.isDragging && g_dragState.isWorkspaceDrag) {
@@ -351,81 +351,80 @@ void COverview::setupMouseButtonHook() {
             return;
         }
 
-        // Any button except left or middle click: consume event without doing anything
-        if (e.button != BTN_LEFT) {
-            return;
-        }
+        // Handle window drag button (default left-click)
+        if (e.button == g_dragWindowActionButton) {
+            if (e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
+                // Mouse button pressed - record position and find window
+                g_dragState.mouseButtonPressed = true;
+                g_dragState.mouseDownPos = lastMousePosLocal;
+                g_dragState.sourceOverview = this;  // Set source overview when button is pressed
+                g_dragState.isWorkspaceDrag = false;  // Window drag
 
-        if (e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
-            // Mouse button pressed - record position and find window
-            g_dragState.mouseButtonPressed = true;
-            g_dragState.mouseDownPos = lastMousePosLocal;
-            g_dragState.sourceOverview = this;  // Set source overview when button is pressed
-            g_dragState.isWorkspaceDrag = false;  // Left-click is window drag
+                // Find which workspace was clicked
+                int clickedWsIndex = findWorkspaceIndexAtPosition(
+                    lastMousePosLocal
+                );
 
-            // Find which workspace was clicked
-            int clickedWsIndex = findWorkspaceIndexAtPosition(
-                lastMousePosLocal
-            );
+                // Find window at click position in that workspace
+                PHLWINDOW clickedWindow = findWindowAtPosition(
+                    lastMousePosLocal, clickedWsIndex
+                );
 
-            // Find window at click position in that workspace
-            PHLWINDOW clickedWindow = findWindowAtPosition(
-                lastMousePosLocal, clickedWsIndex
-            );
+                g_dragState.sourceWorkspaceIndex = clickedWsIndex;
+                g_dragState.draggedWindow = clickedWindow;
+            } else {
+                // Mouse button released (mouseButtonPressed already set to false at the start)
 
-            g_dragState.sourceWorkspaceIndex = clickedWsIndex;
-            g_dragState.draggedWindow = clickedWindow;
-        } else {
-            // Mouse button released (mouseButtonPressed already set to false at the start)
+                // Only the overview where the mouse is currently positioned should handle the release
+                if (clickedMonitor != pMonitor.lock()) {
+                    return;
+                }
 
-            // Only the overview where the mouse is currently positioned should handle the release
-            if (clickedMonitor != pMonitor.lock()) {
-                return;
-            }
+                if (g_dragState.isDragging) {
+                    // Dragging detected - handle window move
+                    if (g_dragState.draggedWindow) {
+                        // Find target workspace at release position
+                        auto [targetOverview, targetIndex] =
+                            findWorkspaceAtGlobalPosition(mousePos);
 
-            if (g_dragState.isDragging) {
-                // Dragging detected - handle window move
-                if (g_dragState.draggedWindow) {
-                    // Find target workspace at release position
-                    auto [targetOverview, targetIndex] =
-                        findWorkspaceAtGlobalPosition(mousePos);
-
-                    if (targetOverview && targetIndex >= 0) {
-                        bool sameWs = (
-                            targetOverview == g_dragState.sourceOverview &&
-                            targetIndex == g_dragState.sourceWorkspaceIndex
-                        );
-
-                        if (!sameWs) {
-                            // Move window to target workspace
-                            auto draggedWin = g_dragState.draggedWindow;
-                            targetOverview->moveWindowToWorkspace(
-                                draggedWin, targetIndex
+                        if (targetOverview && targetIndex >= 0) {
+                            bool sameWs = (
+                                targetOverview == g_dragState.sourceOverview &&
+                                targetIndex == g_dragState.sourceWorkspaceIndex
                             );
 
-                            // For cross-monitor moves, redraw source
-                            bool isCrossMonitor = (
-                                g_dragState.sourceOverview &&
-                                g_dragState.sourceOverview != targetOverview
-                            );
-
-                            if (isCrossMonitor) {
-                                refreshSourceWorkspacesAfterCrossMonitorMove(
-                                    g_dragState.sourceOverview,
-                                    g_dragState.sourceWorkspaceIndex
+                            if (!sameWs) {
+                                // Move window to target workspace
+                                auto draggedWin = g_dragState.draggedWindow;
+                                targetOverview->moveWindowToWorkspace(
+                                    draggedWin, targetIndex
                                 );
+
+                                // For cross-monitor moves, redraw source
+                                bool isCrossMonitor = (
+                                    g_dragState.sourceOverview &&
+                                    g_dragState.sourceOverview != targetOverview
+                                );
+
+                                if (isCrossMonitor) {
+                                    refreshSourceWorkspacesAfterCrossMonitorMove(
+                                        g_dragState.sourceOverview,
+                                        g_dragState.sourceWorkspaceIndex
+                                    );
+                                }
                             }
                         }
                     }
-                }
 
-                // Reset global drag state
-                g_dragState.reset();
-            } else {
-                // Click (not drag) - select workspace and close
-                selectWorkspaceAtPosition(lastMousePosLocal);
-                close();
+                    // Reset global drag state
+                    g_dragState.reset();
+                } else if (e.button == g_selectWorkspaceActionButton) {
+                    // Click (not drag) on select button - select workspace and close
+                    selectWorkspaceAtPosition(lastMousePosLocal);
+                    close();
+                }
             }
+            return;
         }
     };
 
