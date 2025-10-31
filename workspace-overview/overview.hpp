@@ -43,9 +43,16 @@ struct GlobalDragState {
 
 inline GlobalDragState g_dragState;
 
+enum class OverviewAnimationType {
+    ZOOM_IN,      // Zoom in from active workspace (normal opening)
+    SLIDE_UP,     // Slide up from below (switching to higher workspace)
+    SLIDE_DOWN,   // Slide down from above (switching to lower workspace)
+    NONE          // No animation (instant)
+};
+
 class COverview {
   public:
-    COverview(PHLWORKSPACE startedOn_, bool skipAnimation_ = false);
+    COverview(PHLWORKSPACE startedOn_, OverviewAnimationType animType_ = OverviewAnimationType::ZOOM_IN);
     ~COverview();
 
     void render();
