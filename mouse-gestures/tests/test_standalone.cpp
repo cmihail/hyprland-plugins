@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <cmath>
+#include <vector>
 #include <linux/input-event-codes.h>
 
 // Mock Vector2D struct
@@ -8,16 +9,45 @@ struct Vector2D {
     double y = 0;
 };
 
+// Gesture directions
+enum class Direction {
+    UP,
+    DOWN,
+    LEFT,
+    RIGHT,
+    UP_RIGHT,
+    UP_LEFT,
+    DOWN_RIGHT,
+    DOWN_LEFT,
+    NONE
+};
+
+const char* directionToString(Direction dir) {
+    switch (dir) {
+        case Direction::UP: return "UP";
+        case Direction::DOWN: return "DOWN";
+        case Direction::LEFT: return "LEFT";
+        case Direction::RIGHT: return "RIGHT";
+        case Direction::UP_RIGHT: return "UP_RIGHT";
+        case Direction::UP_LEFT: return "UP_LEFT";
+        case Direction::DOWN_RIGHT: return "DOWN_RIGHT";
+        case Direction::DOWN_LEFT: return "DOWN_LEFT";
+        default: return "NONE";
+    }
+}
+
 // Mock MouseGestureState
 struct MouseGestureState {
     bool rightButtonPressed = false;
     Vector2D mouseDownPos = {0, 0};
     bool dragDetected = false;
+    std::vector<Vector2D> path;
 
     void reset() {
         rightButtonPressed = false;
         mouseDownPos = {0, 0};
         dragDetected = false;
+        path.clear();
     }
 };
 
@@ -297,4 +327,336 @@ TEST_F(MouseGestureTest, LargeMovementBothAxes) {
 
     EXPECT_TRUE(dragDetected);
     EXPECT_TRUE(state.dragDetected);
+}
+
+// Constants for gesture detection
+constexpr float MIN_SEGMENT_LENGTH = 10.0f;
+
+// Calculate direction from two points
+static Direction calculateDirection(const Vector2D& from, const Vector2D& to) {
+    float dx = to.x - from.x;
+    float dy = to.y - from.y;
+
+    float distance = std::sqrt(dx * dx + dy * dy);
+    if (distance < MIN_SEGMENT_LENGTH) {
+        return Direction::NONE;
+    }
+
+    float angle = std::atan2(dy, dx) * 180.0f / M_PI;
+
+    if (angle < 0) {
+        angle += 360.0f;
+    }
+
+    if (angle >= 337.5f || angle < 22.5f) {
+        return Direction::RIGHT;
+    } else if (angle >= 22.5f && angle < 67.5f) {
+        return Direction::DOWN_RIGHT;
+    } else if (angle >= 67.5f && angle < 112.5f) {
+        return Direction::DOWN;
+    } else if (angle >= 112.5f && angle < 157.5f) {
+        return Direction::DOWN_LEFT;
+    } else if (angle >= 157.5f && angle < 202.5f) {
+        return Direction::LEFT;
+    } else if (angle >= 202.5f && angle < 247.5f) {
+        return Direction::UP_LEFT;
+    } else if (angle >= 247.5f && angle < 292.5f) {
+        return Direction::UP;
+    } else {
+        return Direction::UP_RIGHT;
+    }
+}
+
+// Analyze gesture path and return sequence of directions
+static std::vector<Direction> analyzeGesture(
+    const std::vector<Vector2D>& path
+) {
+    std::vector<Direction> rawDirections;
+
+    if (path.size() < 2) {
+        return rawDirections;
+    }
+
+    for (size_t i = 1; i < path.size(); i++) {
+        Direction dir = calculateDirection(path[i - 1], path[i]);
+        if (dir != Direction::NONE) {
+            rawDirections.push_back(dir);
+        }
+    }
+
+    std::vector<Direction> gesture;
+    if (!rawDirections.empty()) {
+        gesture.push_back(rawDirections[0]);
+        for (size_t i = 1; i < rawDirections.size(); i++) {
+            if (rawDirections[i] != gesture.back()) {
+                gesture.push_back(rawDirections[i]);
+            }
+        }
+    }
+
+    return gesture;
+}
+
+// Test fixture for gesture direction tests
+class GestureDirectionTest : public ::testing::Test {
+};
+
+// Test RIGHT direction (0 degrees)
+TEST_F(GestureDirectionTest, DirectionRight) {
+    Vector2D from = {0, 0};
+    Vector2D to = {100, 0};
+    EXPECT_EQ(calculateDirection(from, to), Direction::RIGHT);
+}
+
+// Test DOWN_RIGHT direction (45 degrees)
+TEST_F(GestureDirectionTest, DirectionDownRight) {
+    Vector2D from = {0, 0};
+    Vector2D to = {100, 100};
+    EXPECT_EQ(calculateDirection(from, to), Direction::DOWN_RIGHT);
+}
+
+// Test DOWN direction (90 degrees)
+TEST_F(GestureDirectionTest, DirectionDown) {
+    Vector2D from = {0, 0};
+    Vector2D to = {0, 100};
+    EXPECT_EQ(calculateDirection(from, to), Direction::DOWN);
+}
+
+// Test DOWN_LEFT direction (135 degrees)
+TEST_F(GestureDirectionTest, DirectionDownLeft) {
+    Vector2D from = {0, 0};
+    Vector2D to = {-100, 100};
+    EXPECT_EQ(calculateDirection(from, to), Direction::DOWN_LEFT);
+}
+
+// Test LEFT direction (180 degrees)
+TEST_F(GestureDirectionTest, DirectionLeft) {
+    Vector2D from = {0, 0};
+    Vector2D to = {-100, 0};
+    EXPECT_EQ(calculateDirection(from, to), Direction::LEFT);
+}
+
+// Test UP_LEFT direction (225 degrees)
+TEST_F(GestureDirectionTest, DirectionUpLeft) {
+    Vector2D from = {0, 0};
+    Vector2D to = {-100, -100};
+    EXPECT_EQ(calculateDirection(from, to), Direction::UP_LEFT);
+}
+
+// Test UP direction (270 degrees)
+TEST_F(GestureDirectionTest, DirectionUp) {
+    Vector2D from = {0, 0};
+    Vector2D to = {0, -100};
+    EXPECT_EQ(calculateDirection(from, to), Direction::UP);
+}
+
+// Test UP_RIGHT direction (315 degrees)
+TEST_F(GestureDirectionTest, DirectionUpRight) {
+    Vector2D from = {0, 0};
+    Vector2D to = {100, -100};
+    EXPECT_EQ(calculateDirection(from, to), Direction::UP_RIGHT);
+}
+
+// Test movement below minimum segment length
+TEST_F(GestureDirectionTest, BelowMinSegmentLength) {
+    Vector2D from = {0, 0};
+    Vector2D to = {5, 5};
+    EXPECT_EQ(calculateDirection(from, to), Direction::NONE);
+}
+
+// Test exact minimum segment length boundary
+TEST_F(GestureDirectionTest, ExactMinSegmentLength) {
+    Vector2D from = {0, 0};
+    Vector2D to = {10, 0};
+    EXPECT_EQ(calculateDirection(from, to), Direction::RIGHT);
+}
+
+// Test boundary between RIGHT and DOWN_RIGHT (22.5 degrees)
+TEST_F(GestureDirectionTest, BoundaryRightDownRight) {
+    Vector2D from = {0, 0};
+    Vector2D to = {100, 45};
+    EXPECT_EQ(calculateDirection(from, to), Direction::DOWN_RIGHT);
+}
+
+// Test boundary between DOWN_RIGHT and DOWN (67.5 degrees)
+TEST_F(GestureDirectionTest, BoundaryDownRightDown) {
+    Vector2D from = {0, 0};
+    Vector2D to = {40, 100};
+    EXPECT_EQ(calculateDirection(from, to), Direction::DOWN);
+}
+
+// Test fixture for gesture analysis tests
+class GestureAnalysisTest : public ::testing::Test {
+};
+
+// Test empty path
+TEST_F(GestureAnalysisTest, EmptyPath) {
+    std::vector<Vector2D> path;
+    std::vector<Direction> result = analyzeGesture(path);
+    EXPECT_TRUE(result.empty());
+}
+
+// Test single point path
+TEST_F(GestureAnalysisTest, SinglePointPath) {
+    std::vector<Vector2D> path = {{0, 0}};
+    std::vector<Direction> result = analyzeGesture(path);
+    EXPECT_TRUE(result.empty());
+}
+
+// Test simple horizontal right gesture
+TEST_F(GestureAnalysisTest, SimpleRightGesture) {
+    std::vector<Vector2D> path = {
+        {0, 0},
+        {20, 0},
+        {40, 0},
+        {60, 0}
+    };
+    std::vector<Direction> result = analyzeGesture(path);
+    ASSERT_EQ(result.size(), 1);
+    EXPECT_EQ(result[0], Direction::RIGHT);
+}
+
+// Test simple vertical down gesture
+TEST_F(GestureAnalysisTest, SimpleDownGesture) {
+    std::vector<Vector2D> path = {
+        {0, 0},
+        {0, 20},
+        {0, 40},
+        {0, 60}
+    };
+    std::vector<Direction> result = analyzeGesture(path);
+    ASSERT_EQ(result.size(), 1);
+    EXPECT_EQ(result[0], Direction::DOWN);
+}
+
+// Test L-shape gesture (RIGHT then DOWN)
+TEST_F(GestureAnalysisTest, LShapeRightDown) {
+    std::vector<Vector2D> path = {
+        {0, 0},
+        {30, 0},
+        {60, 0},
+        {60, 30},
+        {60, 60}
+    };
+    std::vector<Direction> result = analyzeGesture(path);
+    ASSERT_EQ(result.size(), 2);
+    EXPECT_EQ(result[0], Direction::RIGHT);
+    EXPECT_EQ(result[1], Direction::DOWN);
+}
+
+// Test reverse L-shape gesture (DOWN then RIGHT)
+TEST_F(GestureAnalysisTest, LShapeDownRight) {
+    std::vector<Vector2D> path = {
+        {0, 0},
+        {0, 30},
+        {0, 60},
+        {30, 60},
+        {60, 60}
+    };
+    std::vector<Direction> result = analyzeGesture(path);
+    ASSERT_EQ(result.size(), 2);
+    EXPECT_EQ(result[0], Direction::DOWN);
+    EXPECT_EQ(result[1], Direction::RIGHT);
+}
+
+// Test diagonal gesture
+TEST_F(GestureAnalysisTest, DiagonalDownRight) {
+    std::vector<Vector2D> path = {
+        {0, 0},
+        {20, 20},
+        {40, 40},
+        {60, 60}
+    };
+    std::vector<Direction> result = analyzeGesture(path);
+    ASSERT_EQ(result.size(), 1);
+    EXPECT_EQ(result[0], Direction::DOWN_RIGHT);
+}
+
+// Test Z-shape gesture (RIGHT, DOWN, RIGHT)
+TEST_F(GestureAnalysisTest, ZShapeGesture) {
+    std::vector<Vector2D> path = {
+        {0, 0},
+        {30, 0},
+        {60, 0},
+        {60, 30},
+        {60, 60},
+        {90, 60},
+        {120, 60}
+    };
+    std::vector<Direction> result = analyzeGesture(path);
+    ASSERT_EQ(result.size(), 3);
+    EXPECT_EQ(result[0], Direction::RIGHT);
+    EXPECT_EQ(result[1], Direction::DOWN);
+    EXPECT_EQ(result[2], Direction::RIGHT);
+}
+
+// Test gesture with very small movements filtered out
+TEST_F(GestureAnalysisTest, SmallMovementsFiltered) {
+    std::vector<Vector2D> path = {
+        {0, 0},
+        {2, 1},
+        {4, 2},
+        {60, 0}
+    };
+    std::vector<Direction> result = analyzeGesture(path);
+    ASSERT_EQ(result.size(), 1);
+    EXPECT_EQ(result[0], Direction::RIGHT);
+}
+
+// Test circular gesture (RIGHT, DOWN, LEFT, UP)
+TEST_F(GestureAnalysisTest, CircularGesture) {
+    std::vector<Vector2D> path = {
+        {0, 0},
+        {50, 0},
+        {50, 50},
+        {0, 50},
+        {0, 0}
+    };
+    std::vector<Direction> result = analyzeGesture(path);
+    ASSERT_EQ(result.size(), 4);
+    EXPECT_EQ(result[0], Direction::RIGHT);
+    EXPECT_EQ(result[1], Direction::DOWN);
+    EXPECT_EQ(result[2], Direction::LEFT);
+    EXPECT_EQ(result[3], Direction::UP);
+}
+
+// Test UP gesture (negative Y)
+TEST_F(GestureAnalysisTest, SimpleUpGesture) {
+    std::vector<Vector2D> path = {
+        {0, 100},
+        {0, 70},
+        {0, 40},
+        {0, 10}
+    };
+    std::vector<Direction> result = analyzeGesture(path);
+    ASSERT_EQ(result.size(), 1);
+    EXPECT_EQ(result[0], Direction::UP);
+}
+
+// Test LEFT gesture (negative X)
+TEST_F(GestureAnalysisTest, SimpleLeftGesture) {
+    std::vector<Vector2D> path = {
+        {100, 0},
+        {70, 0},
+        {40, 0},
+        {10, 0}
+    };
+    std::vector<Direction> result = analyzeGesture(path);
+    ASSERT_EQ(result.size(), 1);
+    EXPECT_EQ(result[0], Direction::LEFT);
+}
+
+// Test path with duplicate consecutive directions merged
+TEST_F(GestureAnalysisTest, ConsecutiveDuplicatesMerged) {
+    std::vector<Vector2D> path = {
+        {0, 0},
+        {20, 0},
+        {40, 0},
+        {60, 0},
+        {80, 0},
+        {100, 0}
+    };
+    std::vector<Direction> result = analyzeGesture(path);
+    ASSERT_EQ(result.size(), 1);
+    EXPECT_EQ(result[0], Direction::RIGHT);
 }
