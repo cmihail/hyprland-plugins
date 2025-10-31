@@ -925,3 +925,207 @@ TEST_F(GestureHandlerTest, LShapePathGestureDetected) {
     EXPECT_EQ(state.path.size(), 3);
     EXPECT_TRUE(state.dragDetected);
 }
+
+// ============================================================================
+// Gesture Action Configuration Tests
+// ============================================================================
+
+// Gesture action structure
+struct GestureAction {
+    std::vector<Direction> pattern;
+    std::string command;
+};
+
+// Parse direction string to Direction enum
+static Direction stringToDirection(const std::string& str) {
+    if (str == "UP") return Direction::UP;
+    if (str == "DOWN") return Direction::DOWN;
+    if (str == "LEFT") return Direction::LEFT;
+    if (str == "RIGHT") return Direction::RIGHT;
+    if (str == "UP_RIGHT") return Direction::UP_RIGHT;
+    if (str == "UP_LEFT") return Direction::UP_LEFT;
+    if (str == "DOWN_RIGHT") return Direction::DOWN_RIGHT;
+    if (str == "DOWN_LEFT") return Direction::DOWN_LEFT;
+    return Direction::NONE;
+}
+
+// Check if detected gesture matches configured pattern
+static const GestureAction* findMatchingGestureAction(
+    const std::vector<Direction>& gesture,
+    const std::vector<GestureAction>& actions
+) {
+    for (const auto& action : actions) {
+        if (action.pattern.size() != gesture.size()) {
+            continue;
+        }
+
+        bool matches = true;
+        for (size_t i = 0; i < gesture.size(); i++) {
+            if (gesture[i] != action.pattern[i]) {
+                matches = false;
+                break;
+            }
+        }
+
+        if (matches) {
+            return &action;
+        }
+    }
+    return nullptr;
+}
+
+// Test fixture for gesture action tests
+class GestureActionTest : public ::testing::Test {
+protected:
+    std::vector<GestureAction> actions;
+
+    void SetUp() override {
+        actions.clear();
+    }
+};
+
+// Test string to direction conversion
+TEST_F(GestureActionTest, StringToDirectionConversion) {
+    EXPECT_EQ(stringToDirection("UP"), Direction::UP);
+    EXPECT_EQ(stringToDirection("DOWN"), Direction::DOWN);
+    EXPECT_EQ(stringToDirection("LEFT"), Direction::LEFT);
+    EXPECT_EQ(stringToDirection("RIGHT"), Direction::RIGHT);
+    EXPECT_EQ(stringToDirection("UP_LEFT"), Direction::UP_LEFT);
+    EXPECT_EQ(stringToDirection("UP_RIGHT"), Direction::UP_RIGHT);
+    EXPECT_EQ(stringToDirection("DOWN_LEFT"), Direction::DOWN_LEFT);
+    EXPECT_EQ(stringToDirection("DOWN_RIGHT"), Direction::DOWN_RIGHT);
+    EXPECT_EQ(stringToDirection("INVALID"), Direction::NONE);
+    EXPECT_EQ(stringToDirection(""), Direction::NONE);
+}
+
+// Test matching simple gesture pattern
+TEST_F(GestureActionTest, MatchSimplePattern) {
+    GestureAction action;
+    action.pattern = {Direction::UP, Direction::LEFT};
+    action.command = "hyprctl dispatch togglefloating";
+    actions.push_back(action);
+
+    std::vector<Direction> gesture = {Direction::UP, Direction::LEFT};
+    const GestureAction* match = findMatchingGestureAction(gesture, actions);
+
+    ASSERT_NE(match, nullptr);
+    EXPECT_EQ(match->command, "hyprctl dispatch togglefloating");
+}
+
+// Test matching complex gesture pattern
+TEST_F(GestureActionTest, MatchComplexPattern) {
+    GestureAction action;
+    action.pattern = {Direction::DOWN, Direction::DOWN_RIGHT, Direction::RIGHT};
+    action.command = "hyprctl dispatch togglegroup";
+    actions.push_back(action);
+
+    std::vector<Direction> gesture = {Direction::DOWN, Direction::DOWN_RIGHT, Direction::RIGHT};
+    const GestureAction* match = findMatchingGestureAction(gesture, actions);
+
+    ASSERT_NE(match, nullptr);
+    EXPECT_EQ(match->command, "hyprctl dispatch togglegroup");
+}
+
+// Test no match for different pattern
+TEST_F(GestureActionTest, NoMatchDifferentPattern) {
+    GestureAction action;
+    action.pattern = {Direction::UP, Direction::LEFT};
+    action.command = "hyprctl dispatch togglefloating";
+    actions.push_back(action);
+
+    std::vector<Direction> gesture = {Direction::DOWN, Direction::RIGHT};
+    const GestureAction* match = findMatchingGestureAction(gesture, actions);
+
+    EXPECT_EQ(match, nullptr);
+}
+
+// Test no match for different length pattern
+TEST_F(GestureActionTest, NoMatchDifferentLength) {
+    GestureAction action;
+    action.pattern = {Direction::UP, Direction::LEFT};
+    action.command = "hyprctl dispatch togglefloating";
+    actions.push_back(action);
+
+    std::vector<Direction> gesture = {Direction::UP, Direction::LEFT, Direction::DOWN};
+    const GestureAction* match = findMatchingGestureAction(gesture, actions);
+
+    EXPECT_EQ(match, nullptr);
+}
+
+// Test matching with multiple configured actions
+TEST_F(GestureActionTest, MatchFromMultipleActions) {
+    GestureAction action1;
+    action1.pattern = {Direction::UP, Direction::LEFT};
+    action1.command = "command1";
+    actions.push_back(action1);
+
+    GestureAction action2;
+    action2.pattern = {Direction::DOWN, Direction::RIGHT};
+    action2.command = "command2";
+    actions.push_back(action2);
+
+    GestureAction action3;
+    action3.pattern = {Direction::LEFT, Direction::RIGHT};
+    action3.command = "command3";
+    actions.push_back(action3);
+
+    std::vector<Direction> gesture = {Direction::DOWN, Direction::RIGHT};
+    const GestureAction* match = findMatchingGestureAction(gesture, actions);
+
+    ASSERT_NE(match, nullptr);
+    EXPECT_EQ(match->command, "command2");
+}
+
+// Test first match when multiple patterns match
+TEST_F(GestureActionTest, FirstMatchSelected) {
+    GestureAction action1;
+    action1.pattern = {Direction::UP};
+    action1.command = "command1";
+    actions.push_back(action1);
+
+    GestureAction action2;
+    action2.pattern = {Direction::UP};
+    action2.command = "command2";
+    actions.push_back(action2);
+
+    std::vector<Direction> gesture = {Direction::UP};
+    const GestureAction* match = findMatchingGestureAction(gesture, actions);
+
+    ASSERT_NE(match, nullptr);
+    EXPECT_EQ(match->command, "command1");
+}
+
+// Test empty gesture list
+TEST_F(GestureActionTest, EmptyGestureNoMatch) {
+    GestureAction action;
+    action.pattern = {Direction::UP, Direction::LEFT};
+    action.command = "command1";
+    actions.push_back(action);
+
+    std::vector<Direction> gesture;
+    const GestureAction* match = findMatchingGestureAction(gesture, actions);
+
+    EXPECT_EQ(match, nullptr);
+}
+
+// Test empty action list
+TEST_F(GestureActionTest, EmptyActionListNoMatch) {
+    std::vector<Direction> gesture = {Direction::UP, Direction::LEFT};
+    const GestureAction* match = findMatchingGestureAction(gesture, actions);
+
+    EXPECT_EQ(match, nullptr);
+}
+
+// Test single direction gesture
+TEST_F(GestureActionTest, SingleDirectionGesture) {
+    GestureAction action;
+    action.pattern = {Direction::RIGHT};
+    action.command = "notify-send Test";
+    actions.push_back(action);
+
+    std::vector<Direction> gesture = {Direction::RIGHT};
+    const GestureAction* match = findMatchingGestureAction(gesture, actions);
+
+    ASSERT_NE(match, nullptr);
+    EXPECT_EQ(match->command, "notify-send Test");
+}

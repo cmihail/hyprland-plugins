@@ -3,8 +3,10 @@
 #include <any>
 #include <string>
 #include <cmath>
+#include <cstdlib>
 #include <vector>
 #include <fstream>
+#include <sstream>
 #include <chrono>
 #include <wayland-server.h>
 #include <wayland-server-protocol.h>
@@ -47,6 +49,25 @@ const char* directionToString(Direction dir) {
     }
 }
 
+// Parse direction string to Direction enum
+static Direction stringToDirection(const std::string& str) {
+    if (str == "UP") return Direction::UP;
+    if (str == "DOWN") return Direction::DOWN;
+    if (str == "LEFT") return Direction::LEFT;
+    if (str == "RIGHT") return Direction::RIGHT;
+    if (str == "UP_RIGHT") return Direction::UP_RIGHT;
+    if (str == "UP_LEFT") return Direction::UP_LEFT;
+    if (str == "DOWN_RIGHT") return Direction::DOWN_RIGHT;
+    if (str == "DOWN_LEFT") return Direction::DOWN_LEFT;
+    return Direction::NONE;
+}
+
+// Gesture action configuration
+struct GestureAction {
+    std::vector<Direction> pattern;
+    std::string command;
+};
+
 // Mouse gesture state
 struct MouseGestureState {
     bool rightButtonPressed = false;
@@ -68,6 +89,7 @@ struct MouseGestureState {
 };
 
 MouseGestureState g_gestureState;
+std::vector<GestureAction> g_gestureActions;
 
 // Hook handles
 SP<HOOK_CALLBACK_FN> g_mouseButtonHook;
@@ -156,11 +178,43 @@ static std::vector<Direction> analyzeGesture(
     return gesture;
 }
 
+// Check if detected gesture matches configured pattern
+static const GestureAction* findMatchingGestureAction(const std::vector<Direction>& gesture) {
+    for (const auto& action : g_gestureActions) {
+        if (action.pattern.size() != gesture.size()) {
+            continue;
+        }
+
+        bool matches = true;
+        for (size_t i = 0; i < gesture.size(); i++) {
+            if (gesture[i] != action.pattern[i]) {
+                matches = false;
+                break;
+            }
+        }
+
+        if (matches) {
+            return &action;
+        }
+    }
+    return nullptr;
+}
+
 // Write gesture result to file
 static void writeGestureToFile(const std::vector<Direction>& gesture) {
-    std::ofstream file("/tmp/hyprland-mouse", std::ios::out | std::ios::trunc);
+    // Check if file exists
+    std::ifstream checkFile("/tmp/hyprland-mouse");
+    bool fileExists = checkFile.good();
+    checkFile.close();
+
+    // Open in append mode if exists, otherwise create new
+    std::ofstream file("/tmp/hyprland-mouse", fileExists ? std::ios::app : std::ios::out);
     if (!file.is_open()) {
         return;
+    }
+
+    if (fileExists) {
+        file << "\n";
     }
 
     file << "Gesture detected: ";
@@ -176,7 +230,7 @@ static void writeGestureToFile(const std::vector<Direction>& gesture) {
         file << "\n";
     }
 
-    file << "\nPath points: " << g_gestureState.path.size() << "\n";
+    file << "Path points: " << g_gestureState.path.size() << "\n";
     file.close();
 }
 
@@ -202,12 +256,26 @@ static void handleGestureDetected() {
         }
     }
 
-    HyprlandAPI::addNotification(
-        PHANDLE,
-        "[mouse-gestures] " + gestureStr,
-        {0, 1, 0, 1},
-        3000
-    );
+    // Check for matching gesture action
+    const GestureAction* matchingAction = findMatchingGestureAction(gesture);
+    if (matchingAction) {
+        // Execute the command
+        system(matchingAction->command.c_str());
+
+        HyprlandAPI::addNotification(
+            PHANDLE,
+            "[mouse-gestures] " + gestureStr + " -> Executed: " + matchingAction->command,
+            {0, 1, 0, 1},
+            3000
+        );
+    } else {
+        HyprlandAPI::addNotification(
+            PHANDLE,
+            "[mouse-gestures] " + gestureStr,
+            {0, 1, 0, 1},
+            3000
+        );
+    }
 }
 
 // Handle no gesture detected - replay press and release events
@@ -259,9 +327,116 @@ static bool checkDragThresholdExceeded(const Vector2D& mousePos) {
     return (distanceX > dragThreshold || distanceY > dragThreshold);
 }
 
+// Config handler for gesture_action keyword
+static Hyprlang::CParseResult onGestureAction(const char* COMMAND, const char* VALUE) {
+    std::string value(VALUE);
+
+    // Find the comma separator between pattern and command
+    size_t commaPos = value.find(',');
+    if (commaPos == std::string::npos) {
+        HyprlandAPI::addNotification(
+            PHANDLE,
+            "[mouse-gestures] Invalid gesture_action format "
+            "(expected: DIRECTION1 DIRECTION2, command)",
+            {1, 0, 0, 1},
+            5000
+        );
+        return Hyprlang::CParseResult{};
+    }
+
+    std::string patternStr = value.substr(0, commaPos);
+    std::string command = value.substr(commaPos + 1);
+
+    // Trim whitespace from command
+    size_t cmdStart = command.find_first_not_of(" \t");
+    if (cmdStart != std::string::npos) {
+        command = command.substr(cmdStart);
+    }
+
+    // Parse pattern (space-separated directions)
+    GestureAction action;
+    std::istringstream iss(patternStr);
+    std::string dirStr;
+
+    while (iss >> dirStr) {
+        Direction dir = stringToDirection(dirStr);
+        if (dir == Direction::NONE) {
+            HyprlandAPI::addNotification(
+                PHANDLE,
+                "[mouse-gestures] Invalid direction in gesture pattern: " + dirStr,
+                {1, 0, 0, 1},
+                5000
+            );
+            return Hyprlang::CParseResult{};
+        }
+        action.pattern.push_back(dir);
+    }
+
+    if (action.pattern.empty()) {
+        HyprlandAPI::addNotification(
+            PHANDLE,
+            "[mouse-gestures] Gesture pattern cannot be empty",
+            {1, 0, 0, 1},
+            5000
+        );
+        return Hyprlang::CParseResult{};
+    }
+
+    action.command = command;
+    g_gestureActions.push_back(action);
+
+    return Hyprlang::CParseResult{};
+}
+
+// Write configured gesture actions to file
+static void writeConfiguredGesturesToFile() {
+    // Check if file exists
+    std::ifstream checkFile("/tmp/hyprland-mouse");
+    bool fileExists = checkFile.good();
+    checkFile.close();
+
+    // Open in append mode if exists, otherwise create new
+    std::ofstream file("/tmp/hyprland-mouse", fileExists ? std::ios::app : std::ios::out);
+    if (!file.is_open()) {
+        return;
+    }
+
+    if (fileExists) {
+        file << "\n";
+    }
+
+    file << "Configured gesture actions:\n";
+    if (g_gestureActions.empty()) {
+        file << "  (none)\n";
+    } else {
+        for (size_t i = 0; i < g_gestureActions.size(); i++) {
+            file << "  " << (i + 1) << ". ";
+            for (size_t j = 0; j < g_gestureActions[i].pattern.size(); j++) {
+                file << directionToString(g_gestureActions[i].pattern[j]);
+                if (j < g_gestureActions[i].pattern.size() - 1) {
+                    file << " ";
+                }
+            }
+            file << " -> " << g_gestureActions[i].command << "\n";
+        }
+    }
+
+    file.close();
+}
+
+// Handler to clear gesture actions on config reload
+static void onPreConfigReload() {
+    g_gestureActions.clear();
+}
+
 static SDispatchResult mouseGesturesDispatch(std::string arg) {
     if (arg == "register") {
-        HyprlandAPI::addNotification(PHANDLE, "[mouse-gestures] Register command received", {0, 0.5, 1, 1}, 5000);
+        HyprlandAPI::addNotification(
+            PHANDLE,
+            "[mouse-gestures] Register command received",
+            {0, 0.5, 1, 1},
+            5000
+        );
     }
     return {};
 }
@@ -271,7 +446,11 @@ static void setupMouseButtonHook() {
         auto e = std::any_cast<IPointer::SButtonEvent>(param);
 
         // Get configured action button (default: BTN_RIGHT = 273)
-        static auto* const PACTIONBUTTON = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:mouse_gestures:action_button")->getDataStaticPtr();
+        static auto* const PACTIONBUTTON = (Hyprlang::INT* const*)
+            HyprlandAPI::getConfigValue(
+                PHANDLE,
+                "plugin:mouse_gestures:action_button"
+            )->getDataStaticPtr();
         const uint32_t actionButton = static_cast<uint32_t>(**PACTIONBUTTON);
 
         // Only handle configured action button
@@ -354,8 +533,44 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     }
 
     // Register configuration values
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:mouse_gestures:drag_threshold", Hyprlang::INT{50});
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:mouse_gestures:action_button", Hyprlang::INT{273}); // BTN_RIGHT
+    HyprlandAPI::addConfigValue(
+        PHANDLE,
+        "plugin:mouse_gestures:drag_threshold",
+        Hyprlang::INT{50}
+    );
+    HyprlandAPI::addConfigValue(
+        PHANDLE,
+        "plugin:mouse_gestures:action_button",
+        Hyprlang::INT{273}
+    ); // BTN_RIGHT
+
+    // Register config keyword for gesture_action
+    HyprlandAPI::addConfigKeyword(
+        PHANDLE,
+        "gesture_action",
+        onGestureAction,
+        Hyprlang::SHandlerOptions{}
+    );
+
+    // Register preConfigReload handler
+    static auto preConfigReloadHook = HyprlandAPI::registerCallbackDynamic(
+        PHANDLE,
+        "preConfigReload",
+        [&](void* self, SCallbackInfo& info, std::any data) { onPreConfigReload(); }
+    );
+
+    // Register configReloaded handler to write gestures after reload
+    static auto configReloadedHook = HyprlandAPI::registerCallbackDynamic(
+        PHANDLE,
+        "configReloaded",
+        [&](void* self, SCallbackInfo& info, std::any data) { writeConfiguredGesturesToFile(); }
+    );
+
+    // Reload config to apply registered values
+    HyprlandAPI::reloadConfig();
+
+    // Write configured gestures to file
+    writeConfiguredGesturesToFile();
 
     HyprlandAPI::addDispatcherV2(PHANDLE, "mouse-gestures", mouseGesturesDispatch);
 
@@ -363,7 +578,12 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     setupMouseButtonHook();
     setupMouseMoveHook();
 
-    HyprlandAPI::addNotification(PHANDLE, "[mouse-gestures] Plugin registered successfully", {0, 1, 0, 1}, 5000);
+    HyprlandAPI::addNotification(
+        PHANDLE,
+        "[mouse-gestures] Plugin registered successfully",
+        {0, 1, 0, 1},
+        5000
+    );
 
     return {"mouse-gestures", "Mouse gestures for Hyprland", "cmihail", "1.0"};
 }
