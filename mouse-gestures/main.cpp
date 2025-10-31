@@ -66,7 +66,6 @@ SP<HOOK_CALLBACK_FN> g_mouseButtonHook;
 SP<HOOK_CALLBACK_FN> g_mouseMoveHook;
 
 // Constants
-constexpr float DRAG_THRESHOLD_PX = 50.0f;
 constexpr float MIN_SEGMENT_LENGTH = 10.0f;
 
 // Calculate direction from two points
@@ -184,12 +183,16 @@ static void setupMouseButtonHook() {
     auto onMouseButton = [](void* self, SCallbackInfo& info, std::any param) {
         auto e = std::any_cast<IPointer::SButtonEvent>(param);
 
-        // Only handle right button
-        if (e.button != BTN_RIGHT)
+        // Get configured action button (default: BTN_RIGHT = 273)
+        static auto* const PACTIONBUTTON = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:mouse_gestures:action_button")->getDataStaticPtr();
+        const uint32_t actionButton = static_cast<uint32_t>(**PACTIONBUTTON);
+
+        // Only handle configured action button
+        if (e.button != actionButton)
             return;
 
         if (e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
-            // Right button pressed - record position
+            // Action button pressed - record position
             const Vector2D mousePos = g_pInputManager->getMouseCoordsInternal();
             g_gestureState.rightButtonPressed = true;
             g_gestureState.mouseDownPos = mousePos;
@@ -197,7 +200,7 @@ static void setupMouseButtonHook() {
             g_gestureState.path.clear();
             g_gestureState.path.push_back(mousePos);
         } else {
-            // Right button released - analyze gesture if drag detected
+            // Action button released - analyze gesture if drag detected
             if (g_gestureState.dragDetected && g_gestureState.path.size() > 1) {
                 std::vector<Direction> gesture = analyzeGesture(
                     g_gestureState.path
@@ -224,11 +227,19 @@ static void setupMouseButtonHook() {
                 );
             }
 
+            // Consume event if drag was detected
+            if (g_gestureState.dragDetected) {
+                info.cancelled = true;
+            }
+
             // Reset state
             g_gestureState.reset();
         }
 
-        // Do NOT consume the event - let it pass through
+        // Consume event if drag is detected
+        if (g_gestureState.dragDetected) {
+            info.cancelled = true;
+        }
     };
 
     g_mouseButtonHook = g_pHookSystem->hookDynamic("mouseButton", onMouseButton);
@@ -243,6 +254,10 @@ static void setupMouseMoveHook() {
 
         // Check if drag threshold exceeded (if not yet detected)
         if (!g_gestureState.dragDetected) {
+            // Get configured drag threshold (default: 50.0)
+            static auto* const PDRAGTHRESHOLD = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:mouse_gestures:drag_threshold")->getDataStaticPtr();
+            const float dragThreshold = static_cast<float>(**PDRAGTHRESHOLD);
+
             const float distanceX = std::abs(
                 mousePos.x - g_gestureState.mouseDownPos.x
             );
@@ -250,7 +265,7 @@ static void setupMouseMoveHook() {
                 mousePos.y - g_gestureState.mouseDownPos.y
             );
 
-            if (distanceX > DRAG_THRESHOLD_PX || distanceY > DRAG_THRESHOLD_PX) {
+            if (distanceX > dragThreshold || distanceY > dragThreshold) {
                 g_gestureState.dragDetected = true;
                 HyprlandAPI::addNotification(
                     PHANDLE,
@@ -264,9 +279,9 @@ static void setupMouseMoveHook() {
         // Record path point if drag is active
         if (g_gestureState.dragDetected) {
             g_gestureState.path.push_back(mousePos);
+            // Consume the event when drag is active
+            info.cancelled = true;
         }
-
-        // Do NOT consume the event - let it pass through
     };
 
     g_mouseMoveHook = g_pHookSystem->hookDynamic("mouseMove", onMouseMove);
@@ -284,6 +299,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     if (HASH != GIT_COMMIT_HASH) {
         throw std::runtime_error("[mouse-gestures] Version mismatch");
     }
+
+    // Register configuration values
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:mouse_gestures:drag_threshold", Hyprlang::INT{50});
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:mouse_gestures:action_button", Hyprlang::INT{273}); // BTN_RIGHT
 
     HyprlandAPI::addDispatcherV2(PHANDLE, "mouse-gestures", mouseGesturesDispatch);
 

@@ -58,21 +58,35 @@ constexpr float DRAG_THRESHOLD_PX = 50.0f;
 class MouseGestureTest : public ::testing::Test {
 protected:
     MouseGestureState state;
+    float dragThreshold = DRAG_THRESHOLD_PX;
+    uint32_t actionButton = BTN_RIGHT;
 
     void SetUp() override {
         state.reset();
+        dragThreshold = DRAG_THRESHOLD_PX;
+        actionButton = BTN_RIGHT;
     }
 
-    // Helper to simulate right button press
-    void simulateRightButtonPress(double x, double y) {
+    // Helper to simulate button press
+    void simulateButtonPress(double x, double y) {
         state.rightButtonPressed = true;
         state.mouseDownPos = {x, y};
         state.dragDetected = false;
     }
 
-    // Helper to simulate right button release
-    void simulateRightButtonRelease() {
+    // Helper to simulate right button press (legacy)
+    void simulateRightButtonPress(double x, double y) {
+        simulateButtonPress(x, y);
+    }
+
+    // Helper to simulate button release
+    void simulateButtonRelease() {
         state.reset();
+    }
+
+    // Helper to simulate right button release (legacy)
+    void simulateRightButtonRelease() {
+        simulateButtonRelease();
     }
 
     // Helper to check drag threshold
@@ -83,11 +97,16 @@ protected:
         const float distanceX = std::abs(currentPos.x - state.mouseDownPos.x);
         const float distanceY = std::abs(currentPos.y - state.mouseDownPos.y);
 
-        if (distanceX > DRAG_THRESHOLD_PX || distanceY > DRAG_THRESHOLD_PX) {
+        if (distanceX > dragThreshold || distanceY > dragThreshold) {
             state.dragDetected = true;
             return true;
         }
         return false;
+    }
+
+    // Helper to check if button matches action button
+    bool isActionButton(uint32_t button) {
+        return button == actionButton;
     }
 };
 
@@ -659,4 +678,177 @@ TEST_F(GestureAnalysisTest, ConsecutiveDuplicatesMerged) {
     std::vector<Direction> result = analyzeGesture(path);
     ASSERT_EQ(result.size(), 1);
     EXPECT_EQ(result[0], Direction::RIGHT);
+}
+
+// ============================================================================
+// Configuration Tests
+// ============================================================================
+
+// Test fixture for configuration tests
+class ConfigurableGestureTest : public MouseGestureTest {
+};
+
+// Test custom drag threshold (25px)
+TEST_F(ConfigurableGestureTest, CustomDragThreshold25) {
+    dragThreshold = 25.0f;
+    simulateButtonPress(100.0, 100.0);
+
+    // Move 24px - should not trigger
+    Vector2D pos1 = {124.0, 100.0};
+    bool drag1 = checkDragThreshold(pos1);
+    EXPECT_FALSE(drag1);
+    EXPECT_FALSE(state.dragDetected);
+
+    // Reset and try 26px - should trigger
+    state.reset();
+    simulateButtonPress(100.0, 100.0);
+    Vector2D pos2 = {126.0, 100.0};
+    bool drag2 = checkDragThreshold(pos2);
+    EXPECT_TRUE(drag2);
+    EXPECT_TRUE(state.dragDetected);
+}
+
+// Test custom drag threshold (100px)
+TEST_F(ConfigurableGestureTest, CustomDragThreshold100) {
+    dragThreshold = 100.0f;
+    simulateButtonPress(100.0, 100.0);
+
+    // Move 99px - should not trigger
+    Vector2D pos1 = {199.0, 100.0};
+    bool drag1 = checkDragThreshold(pos1);
+    EXPECT_FALSE(drag1);
+    EXPECT_FALSE(state.dragDetected);
+
+    // Reset and try 101px - should trigger
+    state.reset();
+    simulateButtonPress(100.0, 100.0);
+    Vector2D pos2 = {201.0, 100.0};
+    bool drag2 = checkDragThreshold(pos2);
+    EXPECT_TRUE(drag2);
+    EXPECT_TRUE(state.dragDetected);
+}
+
+// Test very small drag threshold (5px)
+TEST_F(ConfigurableGestureTest, SmallDragThreshold) {
+    dragThreshold = 5.0f;
+    simulateButtonPress(100.0, 100.0);
+
+    // Move 6px - should trigger
+    Vector2D pos = {106.0, 100.0};
+    bool drag = checkDragThreshold(pos);
+    EXPECT_TRUE(drag);
+    EXPECT_TRUE(state.dragDetected);
+}
+
+// Test very large drag threshold (200px)
+TEST_F(ConfigurableGestureTest, LargeDragThreshold) {
+    dragThreshold = 200.0f;
+    simulateButtonPress(100.0, 100.0);
+
+    // Move 150px - should not trigger
+    Vector2D pos1 = {250.0, 100.0};
+    bool drag1 = checkDragThreshold(pos1);
+    EXPECT_FALSE(drag1);
+    EXPECT_FALSE(state.dragDetected);
+
+    // Reset and try 201px - should trigger
+    state.reset();
+    simulateButtonPress(100.0, 100.0);
+    Vector2D pos2 = {301.0, 100.0};
+    bool drag2 = checkDragThreshold(pos2);
+    EXPECT_TRUE(drag2);
+    EXPECT_TRUE(state.dragDetected);
+}
+
+// Test action button configuration - right button (BTN_RIGHT = 273)
+TEST_F(ConfigurableGestureTest, ActionButtonRight) {
+    actionButton = BTN_RIGHT;
+    EXPECT_TRUE(isActionButton(BTN_RIGHT));
+    EXPECT_FALSE(isActionButton(BTN_LEFT));
+    EXPECT_FALSE(isActionButton(BTN_MIDDLE));
+}
+
+// Test action button configuration - left button (BTN_LEFT = 272)
+TEST_F(ConfigurableGestureTest, ActionButtonLeft) {
+    actionButton = BTN_LEFT;
+    EXPECT_TRUE(isActionButton(BTN_LEFT));
+    EXPECT_FALSE(isActionButton(BTN_RIGHT));
+    EXPECT_FALSE(isActionButton(BTN_MIDDLE));
+}
+
+// Test action button configuration - middle button (BTN_MIDDLE = 274)
+TEST_F(ConfigurableGestureTest, ActionButtonMiddle) {
+    actionButton = BTN_MIDDLE;
+    EXPECT_TRUE(isActionButton(BTN_MIDDLE));
+    EXPECT_FALSE(isActionButton(BTN_LEFT));
+    EXPECT_FALSE(isActionButton(BTN_RIGHT));
+}
+
+// Test that BTN_LEFT constant has correct value
+TEST(ConfigurationConstantTest, BTN_LEFT_Value) {
+    EXPECT_EQ(BTN_LEFT, 272);
+    EXPECT_EQ(BTN_LEFT, 0x110);
+}
+
+// Test that BTN_MIDDLE constant has correct value
+TEST(ConfigurationConstantTest, BTN_MIDDLE_Value) {
+    EXPECT_EQ(BTN_MIDDLE, 274);
+    EXPECT_EQ(BTN_MIDDLE, 0x112);
+}
+
+// Test default configuration values
+TEST(ConfigurationConstantTest, DefaultDragThreshold) {
+    EXPECT_EQ(DRAG_THRESHOLD_PX, 50.0f);
+}
+
+TEST(ConfigurationConstantTest, DefaultActionButton) {
+    EXPECT_EQ(BTN_RIGHT, 273);
+}
+
+// Test drag threshold with Y-axis movement
+TEST_F(ConfigurableGestureTest, CustomDragThresholdYAxis) {
+    dragThreshold = 30.0f;
+    simulateButtonPress(100.0, 100.0);
+
+    // Move 31px in Y - should trigger
+    Vector2D pos = {100.0, 131.0};
+    bool drag = checkDragThreshold(pos);
+    EXPECT_TRUE(drag);
+    EXPECT_TRUE(state.dragDetected);
+}
+
+// Test drag threshold with diagonal movement
+TEST_F(ConfigurableGestureTest, CustomDragThresholdDiagonal) {
+    dragThreshold = 40.0f;
+    simulateButtonPress(100.0, 100.0);
+
+    // Move 41px in X, 30px in Y - should trigger (X exceeds threshold)
+    Vector2D pos = {141.0, 130.0};
+    bool drag = checkDragThreshold(pos);
+    EXPECT_TRUE(drag);
+    EXPECT_TRUE(state.dragDetected);
+}
+
+// Test zero drag threshold (edge case)
+TEST_F(ConfigurableGestureTest, ZeroDragThreshold) {
+    dragThreshold = 0.0f;
+    simulateButtonPress(100.0, 100.0);
+
+    // Any movement should trigger
+    Vector2D pos = {100.1, 100.0};
+    bool drag = checkDragThreshold(pos);
+    EXPECT_TRUE(drag);
+    EXPECT_TRUE(state.dragDetected);
+}
+
+// Test action button filtering - ignore non-action buttons
+TEST_F(ConfigurableGestureTest, ActionButtonFiltering) {
+    actionButton = BTN_RIGHT;
+
+    // Simulate different button presses
+    EXPECT_TRUE(isActionButton(BTN_RIGHT));
+    EXPECT_FALSE(isActionButton(BTN_LEFT));
+    EXPECT_FALSE(isActionButton(BTN_MIDDLE));
+    EXPECT_FALSE(isActionButton(275)); // BTN_SIDE
+    EXPECT_FALSE(isActionButton(276)); // BTN_EXTRA
 }
