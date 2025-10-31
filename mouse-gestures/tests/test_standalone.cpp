@@ -1,396 +1,300 @@
 #include <gtest/gtest.h>
-#include <string>
-#include <vector>
+#include <cmath>
+#include <linux/input-event-codes.h>
 
-class StandaloneTest : public ::testing::Test {
+// Mock Vector2D struct
+struct Vector2D {
+    double x = 0;
+    double y = 0;
+};
+
+// Mock MouseGestureState
+struct MouseGestureState {
+    bool rightButtonPressed = false;
+    Vector2D mouseDownPos = {0, 0};
+    bool dragDetected = false;
+
+    void reset() {
+        rightButtonPressed = false;
+        mouseDownPos = {0, 0};
+        dragDetected = false;
+    }
+};
+
+// Constants
+constexpr float DRAG_THRESHOLD_PX = 50.0f;
+
+// Test fixture
+class MouseGestureTest : public ::testing::Test {
 protected:
+    MouseGestureState state;
+
     void SetUp() override {
+        state.reset();
     }
 
-    void TearDown() override {
+    // Helper to simulate right button press
+    void simulateRightButtonPress(double x, double y) {
+        state.rightButtonPressed = true;
+        state.mouseDownPos = {x, y};
+        state.dragDetected = false;
+    }
+
+    // Helper to simulate right button release
+    void simulateRightButtonRelease() {
+        state.reset();
+    }
+
+    // Helper to check drag threshold
+    bool checkDragThreshold(Vector2D currentPos) {
+        if (!state.rightButtonPressed || state.dragDetected)
+            return false;
+
+        const float distanceX = std::abs(currentPos.x - state.mouseDownPos.x);
+        const float distanceY = std::abs(currentPos.y - state.mouseDownPos.y);
+
+        if (distanceX > DRAG_THRESHOLD_PX || distanceY > DRAG_THRESHOLD_PX) {
+            state.dragDetected = true;
+            return true;
+        }
+        return false;
     }
 };
 
-// Mock dispatcher argument parser
-class DispatcherArgumentParser {
-public:
-    static std::string parseCommand(const std::string& arg) {
-        return arg;
-    }
+// Test right-click press records position
+TEST_F(MouseGestureTest, RightClickPressRecordsPosition) {
+    simulateRightButtonPress(100.0, 200.0);
 
-    static bool isValidCommand(const std::string& command) {
-        return command == "register" || command == "start" || command == "stop";
-    }
-};
-
-TEST_F(StandaloneTest, DispatcherArgumentParsing) {
-    EXPECT_EQ(DispatcherArgumentParser::parseCommand("register"), "register");
-    EXPECT_EQ(DispatcherArgumentParser::parseCommand("start"), "start");
-    EXPECT_EQ(DispatcherArgumentParser::parseCommand("stop"), "stop");
-    EXPECT_EQ(DispatcherArgumentParser::parseCommand(""), "");
+    EXPECT_TRUE(state.rightButtonPressed);
+    EXPECT_EQ(state.mouseDownPos.x, 100.0);
+    EXPECT_EQ(state.mouseDownPos.y, 200.0);
+    EXPECT_FALSE(state.dragDetected);
 }
 
-TEST_F(StandaloneTest, DispatcherCommandValidation) {
-    EXPECT_TRUE(DispatcherArgumentParser::isValidCommand("register"));
-    EXPECT_TRUE(DispatcherArgumentParser::isValidCommand("start"));
-    EXPECT_TRUE(DispatcherArgumentParser::isValidCommand("stop"));
-    EXPECT_FALSE(DispatcherArgumentParser::isValidCommand("invalid"));
-    EXPECT_FALSE(DispatcherArgumentParser::isValidCommand(""));
+// Test right-click release resets state
+TEST_F(MouseGestureTest, RightClickReleaseResetsState) {
+    simulateRightButtonPress(100.0, 200.0);
+    state.dragDetected = true;
+
+    simulateRightButtonRelease();
+
+    EXPECT_FALSE(state.rightButtonPressed);
+    EXPECT_EQ(state.mouseDownPos.x, 0.0);
+    EXPECT_EQ(state.mouseDownPos.y, 0.0);
+    EXPECT_FALSE(state.dragDetected);
 }
 
-// Mock notification message builder
-class NotificationMessageBuilder {
-public:
-    static std::string buildMessage(const std::string& command) {
-        if (command == "register") {
-            return "[mouse-gestures] Register command received";
-        } else if (command == "start") {
-            return "[mouse-gestures] Start command received";
-        } else if (command == "stop") {
-            return "[mouse-gestures] Stop command received";
-        }
-        return "[mouse-gestures] Unknown command";
-    }
+// Test drag not detected when movement is below threshold
+TEST_F(MouseGestureTest, NoDragBelowThreshold) {
+    simulateRightButtonPress(100.0, 100.0);
 
-    static std::string getPrefix() {
-        return "[mouse-gestures]";
-    }
-};
+    // Move 49px in X direction (below threshold)
+    Vector2D currentPos = {149.0, 100.0};
+    bool dragDetected = checkDragThreshold(currentPos);
 
-TEST_F(StandaloneTest, NotificationMessageBuilding) {
-    EXPECT_EQ(NotificationMessageBuilder::buildMessage("register"), "[mouse-gestures] Register command received");
-    EXPECT_EQ(NotificationMessageBuilder::buildMessage("start"), "[mouse-gestures] Start command received");
-    EXPECT_EQ(NotificationMessageBuilder::buildMessage("stop"), "[mouse-gestures] Stop command received");
-    EXPECT_EQ(NotificationMessageBuilder::buildMessage("invalid"), "[mouse-gestures] Unknown command");
+    EXPECT_FALSE(dragDetected);
+    EXPECT_FALSE(state.dragDetected);
 }
 
-TEST_F(StandaloneTest, NotificationPrefix) {
-    EXPECT_EQ(NotificationMessageBuilder::getPrefix(), "[mouse-gestures]");
+// Test drag detected when X movement exceeds threshold
+TEST_F(MouseGestureTest, DragDetectedXThreshold) {
+    simulateRightButtonPress(100.0, 100.0);
+
+    // Move 51px in X direction (above threshold)
+    Vector2D currentPos = {151.0, 100.0};
+    bool dragDetected = checkDragThreshold(currentPos);
+
+    EXPECT_TRUE(dragDetected);
+    EXPECT_TRUE(state.dragDetected);
 }
 
-// Mock gesture state
-class GestureState {
-private:
-    bool m_isRecording = false;
-    bool m_isEnabled = false;
-    std::vector<std::pair<int, int>> m_points;
+// Test drag detected when Y movement exceeds threshold
+TEST_F(MouseGestureTest, DragDetectedYThreshold) {
+    simulateRightButtonPress(100.0, 100.0);
 
-public:
-    void startRecording() {
-        m_isRecording = true;
-        m_points.clear();
-    }
+    // Move 51px in Y direction (above threshold)
+    Vector2D currentPos = {100.0, 151.0};
+    bool dragDetected = checkDragThreshold(currentPos);
 
-    void stopRecording() {
-        m_isRecording = false;
-    }
-
-    bool isRecording() const {
-        return m_isRecording;
-    }
-
-    void setEnabled(bool enabled) {
-        m_isEnabled = enabled;
-    }
-
-    bool isEnabled() const {
-        return m_isEnabled;
-    }
-
-    void addPoint(int x, int y) {
-        if (m_isRecording) {
-            m_points.push_back({x, y});
-        }
-    }
-
-    size_t getPointCount() const {
-        return m_points.size();
-    }
-
-    void clear() {
-        m_points.clear();
-        m_isRecording = false;
-    }
-
-    const std::vector<std::pair<int, int>>& getPoints() const {
-        return m_points;
-    }
-};
-
-TEST_F(StandaloneTest, GestureStateInitialization) {
-    GestureState state;
-    EXPECT_FALSE(state.isRecording());
-    EXPECT_FALSE(state.isEnabled());
-    EXPECT_EQ(state.getPointCount(), 0);
+    EXPECT_TRUE(dragDetected);
+    EXPECT_TRUE(state.dragDetected);
 }
 
-TEST_F(StandaloneTest, GestureRecordingControl) {
-    GestureState state;
+// Test drag detected with negative X movement
+TEST_F(MouseGestureTest, DragDetectedNegativeX) {
+    simulateRightButtonPress(100.0, 100.0);
 
-    state.startRecording();
-    EXPECT_TRUE(state.isRecording());
+    // Move -51px in X direction
+    Vector2D currentPos = {49.0, 100.0};
+    bool dragDetected = checkDragThreshold(currentPos);
 
-    state.stopRecording();
-    EXPECT_FALSE(state.isRecording());
+    EXPECT_TRUE(dragDetected);
+    EXPECT_TRUE(state.dragDetected);
 }
 
-TEST_F(StandaloneTest, GestureEnabledState) {
-    GestureState state;
+// Test drag detected with negative Y movement
+TEST_F(MouseGestureTest, DragDetectedNegativeY) {
+    simulateRightButtonPress(100.0, 100.0);
 
-    state.setEnabled(true);
-    EXPECT_TRUE(state.isEnabled());
+    // Move -51px in Y direction
+    Vector2D currentPos = {100.0, 49.0};
+    bool dragDetected = checkDragThreshold(currentPos);
 
-    state.setEnabled(false);
-    EXPECT_FALSE(state.isEnabled());
+    EXPECT_TRUE(dragDetected);
+    EXPECT_TRUE(state.dragDetected);
 }
 
-TEST_F(StandaloneTest, GesturePointTracking) {
-    GestureState state;
+// Test drag detected with diagonal movement
+TEST_F(MouseGestureTest, DragDetectedDiagonal) {
+    simulateRightButtonPress(100.0, 100.0);
 
-    // Points should not be added when not recording
-    state.addPoint(10, 20);
-    EXPECT_EQ(state.getPointCount(), 0);
+    // Move diagonally (40px X, 40px Y) - individually below threshold
+    // but one axis should exceed threshold when checked separately
+    Vector2D currentPos = {140.0, 140.0};
+    bool dragDetected = checkDragThreshold(currentPos);
 
-    // Start recording and add points
-    state.startRecording();
-    state.addPoint(10, 20);
-    state.addPoint(30, 40);
-    state.addPoint(50, 60);
-    EXPECT_EQ(state.getPointCount(), 3);
+    // Neither axis exceeds 50px threshold
+    EXPECT_FALSE(dragDetected);
+    EXPECT_FALSE(state.dragDetected);
 
-    // Verify points
-    const auto& points = state.getPoints();
-    EXPECT_EQ(points[0].first, 10);
-    EXPECT_EQ(points[0].second, 20);
-    EXPECT_EQ(points[1].first, 30);
-    EXPECT_EQ(points[1].second, 40);
-    EXPECT_EQ(points[2].first, 50);
-    EXPECT_EQ(points[2].second, 60);
+    // Now move to exceed threshold in one axis
+    currentPos = {151.0, 140.0};
+    dragDetected = checkDragThreshold(currentPos);
+    EXPECT_TRUE(dragDetected);
+    EXPECT_TRUE(state.dragDetected);
 }
 
-TEST_F(StandaloneTest, GestureStateClear) {
-    GestureState state;
+// Test exact threshold boundary (50px should not trigger)
+TEST_F(MouseGestureTest, ExactThresholdBoundary) {
+    simulateRightButtonPress(100.0, 100.0);
 
-    state.startRecording();
-    state.addPoint(10, 20);
-    state.addPoint(30, 40);
-    EXPECT_EQ(state.getPointCount(), 2);
-    EXPECT_TRUE(state.isRecording());
+    // Move exactly 50px (should not trigger as we use > not >=)
+    Vector2D currentPos = {150.0, 100.0};
+    bool dragDetected = checkDragThreshold(currentPos);
 
-    state.clear();
-    EXPECT_EQ(state.getPointCount(), 0);
-    EXPECT_FALSE(state.isRecording());
+    EXPECT_FALSE(dragDetected);
+    EXPECT_FALSE(state.dragDetected);
 }
 
-TEST_F(StandaloneTest, GesturePointsClearedOnStart) {
-    GestureState state;
+// Test just over threshold boundary (50.1px should trigger)
+TEST_F(MouseGestureTest, JustOverThresholdBoundary) {
+    simulateRightButtonPress(100.0, 100.0);
 
-    state.startRecording();
-    state.addPoint(10, 20);
-    state.addPoint(30, 40);
-    EXPECT_EQ(state.getPointCount(), 2);
+    // Move 50.1px (should trigger)
+    Vector2D currentPos = {150.1, 100.0};
+    bool dragDetected = checkDragThreshold(currentPos);
 
-    // Starting recording again should clear previous points
-    state.startRecording();
-    EXPECT_EQ(state.getPointCount(), 0);
+    EXPECT_TRUE(dragDetected);
+    EXPECT_TRUE(state.dragDetected);
 }
 
-// Mock gesture recognizer
-class GestureRecognizer {
-public:
-    enum class Direction {
-        NONE,
-        UP,
-        DOWN,
-        LEFT,
-        RIGHT
-    };
+// Test drag not checked when button not pressed
+TEST_F(MouseGestureTest, NoDragCheckWhenButtonNotPressed) {
+    // Don't press button
+    EXPECT_FALSE(state.rightButtonPressed);
 
-    static Direction recognizeSimpleGesture(const std::vector<std::pair<int, int>>& points) {
-        if (points.size() < 2) {
-            return Direction::NONE;
-        }
+    Vector2D currentPos = {200.0, 200.0};
+    bool dragDetected = checkDragThreshold(currentPos);
 
-        int dx = points.back().first - points.front().first;
-        int dy = points.back().second - points.front().second;
-
-        int absDx = abs(dx);
-        int absDy = abs(dy);
-
-        if (absDx > absDy) {
-            return (dx > 0) ? Direction::RIGHT : Direction::LEFT;
-        } else {
-            return (dy > 0) ? Direction::DOWN : Direction::UP;
-        }
-    }
-
-    static std::string directionToString(Direction dir) {
-        switch (dir) {
-            case Direction::UP: return "UP";
-            case Direction::DOWN: return "DOWN";
-            case Direction::LEFT: return "LEFT";
-            case Direction::RIGHT: return "RIGHT";
-            default: return "NONE";
-        }
-    }
-};
-
-TEST_F(StandaloneTest, GestureRecognitionInsufficientPoints) {
-    std::vector<std::pair<int, int>> emptyPoints;
-    EXPECT_EQ(GestureRecognizer::recognizeSimpleGesture(emptyPoints), GestureRecognizer::Direction::NONE);
-
-    std::vector<std::pair<int, int>> singlePoint = {{10, 10}};
-    EXPECT_EQ(GestureRecognizer::recognizeSimpleGesture(singlePoint), GestureRecognizer::Direction::NONE);
+    EXPECT_FALSE(dragDetected);
+    EXPECT_FALSE(state.dragDetected);
 }
 
-TEST_F(StandaloneTest, GestureRecognitionHorizontalGestures) {
-    // Right gesture
-    std::vector<std::pair<int, int>> rightPoints = {{0, 0}, {100, 10}};
-    EXPECT_EQ(GestureRecognizer::recognizeSimpleGesture(rightPoints), GestureRecognizer::Direction::RIGHT);
+// Test drag not checked again after already detected
+TEST_F(MouseGestureTest, NoDragCheckAfterAlreadyDetected) {
+    simulateRightButtonPress(100.0, 100.0);
 
-    // Left gesture
-    std::vector<std::pair<int, int>> leftPoints = {{100, 0}, {0, 10}};
-    EXPECT_EQ(GestureRecognizer::recognizeSimpleGesture(leftPoints), GestureRecognizer::Direction::LEFT);
+    // First drag detection
+    Vector2D currentPos = {151.0, 100.0};
+    bool dragDetected = checkDragThreshold(currentPos);
+    EXPECT_TRUE(dragDetected);
+    EXPECT_TRUE(state.dragDetected);
+
+    // Try to check again - should return false (not trigger again)
+    currentPos = {200.0, 100.0};
+    dragDetected = checkDragThreshold(currentPos);
+    EXPECT_FALSE(dragDetected);  // Already detected, so returns false
+    EXPECT_TRUE(state.dragDetected);  // State remains true
 }
 
-TEST_F(StandaloneTest, GestureRecognitionVerticalGestures) {
-    // Down gesture
-    std::vector<std::pair<int, int>> downPoints = {{0, 0}, {10, 100}};
-    EXPECT_EQ(GestureRecognizer::recognizeSimpleGesture(downPoints), GestureRecognizer::Direction::DOWN);
+// Test state reset clears all fields
+TEST_F(MouseGestureTest, ResetClearsAllFields) {
+    state.rightButtonPressed = true;
+    state.mouseDownPos = {123.45, 678.90};
+    state.dragDetected = true;
 
-    // Up gesture
-    std::vector<std::pair<int, int>> upPoints = {{0, 100}, {10, 0}};
-    EXPECT_EQ(GestureRecognizer::recognizeSimpleGesture(upPoints), GestureRecognizer::Direction::UP);
+    state.reset();
+
+    EXPECT_FALSE(state.rightButtonPressed);
+    EXPECT_EQ(state.mouseDownPos.x, 0.0);
+    EXPECT_EQ(state.mouseDownPos.y, 0.0);
+    EXPECT_FALSE(state.dragDetected);
 }
 
-TEST_F(StandaloneTest, GestureRecognitionMultiplePoints) {
-    // Right gesture with multiple points
-    std::vector<std::pair<int, int>> points = {{0, 0}, {25, 5}, {50, 8}, {75, 12}, {100, 15}};
-    EXPECT_EQ(GestureRecognizer::recognizeSimpleGesture(points), GestureRecognizer::Direction::RIGHT);
+// Test multiple press/release cycles
+TEST_F(MouseGestureTest, MultiplePressReleaseCycles) {
+    // First cycle
+    simulateRightButtonPress(100.0, 100.0);
+    Vector2D pos1 = {151.0, 100.0};
+    bool drag1 = checkDragThreshold(pos1);
+    EXPECT_TRUE(drag1);
+    simulateRightButtonRelease();
+
+    // Second cycle - should start fresh
+    simulateRightButtonPress(200.0, 200.0);
+    EXPECT_FALSE(state.dragDetected);  // Reset from previous cycle
+    Vector2D pos2 = {251.0, 200.0};
+    bool drag2 = checkDragThreshold(pos2);
+    EXPECT_TRUE(drag2);
+    simulateRightButtonRelease();
+
+    EXPECT_FALSE(state.rightButtonPressed);
+    EXPECT_FALSE(state.dragDetected);
 }
 
-TEST_F(StandaloneTest, DirectionToString) {
-    EXPECT_EQ(GestureRecognizer::directionToString(GestureRecognizer::Direction::UP), "UP");
-    EXPECT_EQ(GestureRecognizer::directionToString(GestureRecognizer::Direction::DOWN), "DOWN");
-    EXPECT_EQ(GestureRecognizer::directionToString(GestureRecognizer::Direction::LEFT), "LEFT");
-    EXPECT_EQ(GestureRecognizer::directionToString(GestureRecognizer::Direction::RIGHT), "RIGHT");
-    EXPECT_EQ(GestureRecognizer::directionToString(GestureRecognizer::Direction::NONE), "NONE");
+// Test that BTN_RIGHT constant has correct value
+TEST(MouseGestureConstantTest, BTN_RIGHT_Value) {
+    EXPECT_EQ(BTN_RIGHT, 273);
+    EXPECT_EQ(BTN_RIGHT, 0x111);
 }
 
-// Mock gesture command mapper
-class GestureCommandMapper {
-private:
-    std::map<std::string, std::string> m_commandMap;
-
-public:
-    void registerCommand(const std::string& gesture, const std::string& command) {
-        m_commandMap[gesture] = command;
-    }
-
-    std::string getCommand(const std::string& gesture) const {
-        auto it = m_commandMap.find(gesture);
-        if (it != m_commandMap.end()) {
-            return it->second;
-        }
-        return "";
-    }
-
-    bool hasCommand(const std::string& gesture) const {
-        return m_commandMap.find(gesture) != m_commandMap.end();
-    }
-
-    void clear() {
-        m_commandMap.clear();
-    }
-
-    size_t getCommandCount() const {
-        return m_commandMap.size();
-    }
-};
-
-TEST_F(StandaloneTest, CommandMapperInitialization) {
-    GestureCommandMapper mapper;
-    EXPECT_EQ(mapper.getCommandCount(), 0);
-    EXPECT_FALSE(mapper.hasCommand("UP"));
+// Test drag threshold constant
+TEST(MouseGestureConstantTest, DragThreshold) {
+    EXPECT_EQ(DRAG_THRESHOLD_PX, 50.0f);
 }
 
-TEST_F(StandaloneTest, CommandMapperRegistration) {
-    GestureCommandMapper mapper;
+// Test zero movement does not trigger drag
+TEST_F(MouseGestureTest, ZeroMovementNoDrag) {
+    simulateRightButtonPress(100.0, 100.0);
 
-    mapper.registerCommand("UP", "hyprctl dispatch workspace e-1");
-    mapper.registerCommand("DOWN", "hyprctl dispatch workspace e+1");
+    // No movement
+    Vector2D currentPos = {100.0, 100.0};
+    bool dragDetected = checkDragThreshold(currentPos);
 
-    EXPECT_EQ(mapper.getCommandCount(), 2);
-    EXPECT_TRUE(mapper.hasCommand("UP"));
-    EXPECT_TRUE(mapper.hasCommand("DOWN"));
-    EXPECT_FALSE(mapper.hasCommand("LEFT"));
+    EXPECT_FALSE(dragDetected);
+    EXPECT_FALSE(state.dragDetected);
 }
 
-TEST_F(StandaloneTest, CommandMapperRetrieval) {
-    GestureCommandMapper mapper;
+// Test very small movement (1px) does not trigger drag
+TEST_F(MouseGestureTest, TinyMovementNoDrag) {
+    simulateRightButtonPress(100.0, 100.0);
 
-    mapper.registerCommand("UP", "hyprctl dispatch workspace e-1");
-    mapper.registerCommand("DOWN", "hyprctl dispatch workspace e+1");
-    mapper.registerCommand("LEFT", "hyprctl dispatch workspace -1");
-    mapper.registerCommand("RIGHT", "hyprctl dispatch workspace +1");
+    // 1px movement
+    Vector2D currentPos = {101.0, 100.0};
+    bool dragDetected = checkDragThreshold(currentPos);
 
-    EXPECT_EQ(mapper.getCommand("UP"), "hyprctl dispatch workspace e-1");
-    EXPECT_EQ(mapper.getCommand("DOWN"), "hyprctl dispatch workspace e+1");
-    EXPECT_EQ(mapper.getCommand("LEFT"), "hyprctl dispatch workspace -1");
-    EXPECT_EQ(mapper.getCommand("RIGHT"), "hyprctl dispatch workspace +1");
-    EXPECT_EQ(mapper.getCommand("UNKNOWN"), "");
+    EXPECT_FALSE(dragDetected);
+    EXPECT_FALSE(state.dragDetected);
 }
 
-TEST_F(StandaloneTest, CommandMapperClear) {
-    GestureCommandMapper mapper;
+// Test large movement in both axes
+TEST_F(MouseGestureTest, LargeMovementBothAxes) {
+    simulateRightButtonPress(100.0, 100.0);
 
-    mapper.registerCommand("UP", "command1");
-    mapper.registerCommand("DOWN", "command2");
-    EXPECT_EQ(mapper.getCommandCount(), 2);
+    // Large movement in both directions
+    Vector2D currentPos = {200.0, 250.0};
+    bool dragDetected = checkDragThreshold(currentPos);
 
-    mapper.clear();
-    EXPECT_EQ(mapper.getCommandCount(), 0);
-    EXPECT_FALSE(mapper.hasCommand("UP"));
-}
-
-TEST_F(StandaloneTest, CommandMapperOverwrite) {
-    GestureCommandMapper mapper;
-
-    mapper.registerCommand("UP", "command1");
-    EXPECT_EQ(mapper.getCommand("UP"), "command1");
-
-    mapper.registerCommand("UP", "command2");
-    EXPECT_EQ(mapper.getCommand("UP"), "command2");
-    EXPECT_EQ(mapper.getCommandCount(), 1);
-}
-
-// Integration test for complete gesture flow
-TEST_F(StandaloneTest, CompleteGestureFlow) {
-    GestureState state;
-    GestureCommandMapper mapper;
-
-    mapper.registerCommand("RIGHT", "hyprctl dispatch workspace +1");
-    mapper.registerCommand("LEFT", "hyprctl dispatch workspace -1");
-
-    state.startRecording();
-    EXPECT_TRUE(state.isRecording());
-
-    state.addPoint(0, 50);
-    state.addPoint(25, 52);
-    state.addPoint(50, 48);
-    state.addPoint(75, 51);
-    state.addPoint(100, 49);
-
-    state.stopRecording();
-    EXPECT_FALSE(state.isRecording());
-    EXPECT_EQ(state.getPointCount(), 5);
-
-    auto direction = GestureRecognizer::recognizeSimpleGesture(state.getPoints());
-    EXPECT_EQ(direction, GestureRecognizer::Direction::RIGHT);
-
-    std::string directionStr = GestureRecognizer::directionToString(direction);
-    EXPECT_EQ(directionStr, "RIGHT");
-
-    std::string command = mapper.getCommand(directionStr);
-    EXPECT_EQ(command, "hyprctl dispatch workspace +1");
+    EXPECT_TRUE(dragDetected);
+    EXPECT_TRUE(state.dragDetected);
 }
