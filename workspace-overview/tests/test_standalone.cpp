@@ -4877,3 +4877,129 @@ TEST(ConfigurationTest, HighPlaceholderCount) {
     EXPECT_EQ(totalWorkspaces, 22);
     EXPECT_GT(totalWorkspaces, existingWorkspaces);
 }
+
+// Mouse Button Handling Tests
+
+// Helper to check if a button should be consumed
+static bool shouldConsumeButton(
+    unsigned int button,
+    unsigned int dragWindowButton,
+    unsigned int selectWorkspaceButton,
+    unsigned int dragWorkspaceButton
+) {
+    return button == dragWindowButton ||
+           button == selectWorkspaceButton ||
+           button == dragWorkspaceButton;
+}
+
+TEST(MouseButtonTest, ConsumesDragWindowButton) {
+    unsigned int dragWindowButton = 272;  // left-click
+    unsigned int selectWorkspaceButton = 272;  // same as drag
+    unsigned int dragWorkspaceButton = 274;  // middle-click
+
+    EXPECT_TRUE(shouldConsumeButton(
+        272, dragWindowButton, selectWorkspaceButton, dragWorkspaceButton
+    ));
+}
+
+TEST(MouseButtonTest, ConsumesSelectWorkspaceButton) {
+    unsigned int dragWindowButton = 272;  // left-click
+    unsigned int selectWorkspaceButton = 273;  // right-click
+    unsigned int dragWorkspaceButton = 274;  // middle-click
+
+    EXPECT_TRUE(shouldConsumeButton(
+        273, dragWindowButton, selectWorkspaceButton, dragWorkspaceButton
+    ));
+}
+
+TEST(MouseButtonTest, ConsumesDragWorkspaceButton) {
+    unsigned int dragWindowButton = 272;  // left-click
+    unsigned int selectWorkspaceButton = 272;  // same as drag
+    unsigned int dragWorkspaceButton = 274;  // middle-click
+
+    EXPECT_TRUE(shouldConsumeButton(
+        274, dragWindowButton, selectWorkspaceButton, dragWorkspaceButton
+    ));
+}
+
+TEST(MouseButtonTest, DoesNotConsumeUnhandledButton) {
+    unsigned int dragWindowButton = 272;  // left-click
+    unsigned int selectWorkspaceButton = 272;  // same as drag
+    unsigned int dragWorkspaceButton = 274;  // middle-click
+
+    // Right-click not configured
+    EXPECT_FALSE(shouldConsumeButton(
+        273, dragWindowButton, selectWorkspaceButton, dragWorkspaceButton
+    ));
+}
+
+TEST(MouseButtonTest, ConsumesAllConfiguredButtons) {
+    unsigned int dragWindowButton = 272;  // left-click
+    unsigned int selectWorkspaceButton = 273;  // right-click
+    unsigned int dragWorkspaceButton = 274;  // middle-click
+
+    EXPECT_TRUE(shouldConsumeButton(
+        272, dragWindowButton, selectWorkspaceButton, dragWorkspaceButton
+    ));
+    EXPECT_TRUE(shouldConsumeButton(
+        273, dragWindowButton, selectWorkspaceButton, dragWorkspaceButton
+    ));
+    EXPECT_TRUE(shouldConsumeButton(
+        274, dragWindowButton, selectWorkspaceButton, dragWorkspaceButton
+    ));
+}
+
+// Helper to determine if select button needs separate handling
+static bool needsSeparateSelectHandler(
+    unsigned int selectButton,
+    unsigned int dragButton
+) {
+    return selectButton != dragButton;
+}
+
+TEST(MouseButtonTest, SeparateSelectHandlerWhenDifferentButton) {
+    unsigned int dragButton = 272;  // left-click
+    unsigned int selectButton = 273;  // right-click
+
+    EXPECT_TRUE(needsSeparateSelectHandler(selectButton, dragButton));
+}
+
+TEST(MouseButtonTest, NoSeparateSelectHandlerWhenSameButton) {
+    unsigned int dragButton = 272;  // left-click
+    unsigned int selectButton = 272;  // same as drag
+
+    EXPECT_FALSE(needsSeparateSelectHandler(selectButton, dragButton));
+}
+
+// Test button configuration scenarios
+TEST(MouseButtonConfigTest, DefaultConfiguration) {
+    // Default: left-click for both drag and select, middle for workspace drag
+    unsigned int dragWindowButton = 272;
+    unsigned int selectWorkspaceButton = 272;
+    unsigned int dragWorkspaceButton = 274;
+
+    EXPECT_EQ(dragWindowButton, selectWorkspaceButton);
+    EXPECT_NE(dragWindowButton, dragWorkspaceButton);
+    EXPECT_FALSE(needsSeparateSelectHandler(selectWorkspaceButton, dragWindowButton));
+}
+
+TEST(MouseButtonConfigTest, SeparateDragAndSelectButtons) {
+    // Custom: left for drag, right for select, middle for workspace drag
+    unsigned int dragWindowButton = 272;
+    unsigned int selectWorkspaceButton = 273;
+    unsigned int dragWorkspaceButton = 274;
+
+    EXPECT_NE(dragWindowButton, selectWorkspaceButton);
+    EXPECT_TRUE(needsSeparateSelectHandler(selectWorkspaceButton, dragWindowButton));
+}
+
+TEST(MouseButtonConfigTest, AllDifferentButtons) {
+    // All three buttons different
+    unsigned int dragWindowButton = 272;  // left
+    unsigned int selectWorkspaceButton = 273;  // right
+    unsigned int dragWorkspaceButton = 274;  // middle
+
+    EXPECT_NE(dragWindowButton, selectWorkspaceButton);
+    EXPECT_NE(dragWindowButton, dragWorkspaceButton);
+    EXPECT_NE(selectWorkspaceButton, dragWorkspaceButton);
+}

@@ -79,6 +79,8 @@ class COverview {
     void renderBackgroundForLeftPanel(const CBox& monbox, float leftPreviewHeight);
     void setupMouseMoveHook();
     void setupMouseButtonHook();
+    void handleSelectWorkspaceButton(uint32_t state,
+                                      const SP<CMonitor>& clickedMonitor);
     void setupMouseAxisHook();
     void setupMonitorHooks();
 

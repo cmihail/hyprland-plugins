@@ -281,18 +281,26 @@ void COverview::setupMouseMoveHook() {
         const Vector2D globalMousePos = g_pInputManager->getMouseCoordsInternal();
         lastMousePosLocal = globalMousePos - pMonitor->m_position;
 
-        // Trigger redraw during drag to update preview position
+        // Consume mouse move events during dragging to prevent interference
         if (g_dragState.isDragging) {
+            info.cancelled = true;
             damage();
         }
 
-        // Check if we're dragging (only the overview where button was pressed detects this)
-        if (g_dragState.mouseButtonPressed && !g_dragState.isDragging) {
-            const float distanceX = std::abs(lastMousePosLocal.x - g_dragState.mouseDownPos.x);
-            const float distanceY = std::abs(lastMousePosLocal.y - g_dragState.mouseDownPos.y);
+        // Check if we're dragging (only the overview where button was pressed)
+        if (g_dragState.mouseButtonPressed && !g_dragState.isDragging &&
+            g_dragState.sourceOverview == this) {
+            const float distanceX = std::abs(
+                lastMousePosLocal.x - g_dragState.mouseDownPos.x
+            );
+            const float distanceY = std::abs(
+                lastMousePosLocal.y - g_dragState.mouseDownPos.y
+            );
 
             if (distanceX > g_dragThreshold || distanceY > g_dragThreshold) {
                 g_dragState.isDragging = true;
+                // Consume the event when drag is initiated
+                info.cancelled = true;
                 if (g_dragState.isWorkspaceDrag) {
                     // Render whole workspace preview for workspace drag
                     renderDragPreview();
@@ -323,12 +331,18 @@ void COverview::setupMouseButtonHook() {
             g_dragState.mouseButtonPressed = false;
         }
 
-        // If clicked on a different monitor and not dragging, allow the event to pass through
-        if (clickedMonitor && clickedMonitor != pMonitor.lock() && !g_dragState.isDragging) {
+        // If clicked on different monitor and not dragging, pass through
+        if (clickedMonitor && clickedMonitor != pMonitor.lock() &&
+            !g_dragState.isDragging) {
             return;
         }
 
-        info.cancelled = true;
+        // Consume events for buttons we handle (workspace drag, window drag/select)
+        if (e.button == g_dragWorkspaceActionButton ||
+            e.button == g_dragWindowActionButton ||
+            e.button == g_selectWorkspaceActionButton) {
+            info.cancelled = true;
+        }
 
         // Handle workspace drag button (default middle-click)
         if (e.button == g_dragWorkspaceActionButton) {
@@ -355,27 +369,30 @@ void COverview::setupMouseButtonHook() {
         if (e.button == g_dragWindowActionButton) {
             if (e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
                 // Mouse button pressed - record position and find window
+                // Calculate fresh mouse position relative to this monitor
+                const Vector2D currentMousePos = mousePos - pMonitor->m_position;
+
                 g_dragState.mouseButtonPressed = true;
-                g_dragState.mouseDownPos = lastMousePosLocal;
+                g_dragState.mouseDownPos = currentMousePos;
                 g_dragState.sourceOverview = this;  // Set source overview when button is pressed
                 g_dragState.isWorkspaceDrag = false;  // Window drag
 
                 // Find which workspace was clicked
                 int clickedWsIndex = findWorkspaceIndexAtPosition(
-                    lastMousePosLocal
+                    currentMousePos
                 );
 
                 // Find window at click position in that workspace
                 PHLWINDOW clickedWindow = findWindowAtPosition(
-                    lastMousePosLocal, clickedWsIndex
+                    currentMousePos, clickedWsIndex
                 );
 
                 g_dragState.sourceWorkspaceIndex = clickedWsIndex;
                 g_dragState.draggedWindow = clickedWindow;
             } else {
-                // Mouse button released (mouseButtonPressed already set to false at the start)
+                // Mouse button released (already set to false at the start)
 
-                // Only the overview where the mouse is currently positioned should handle the release
+                // Only overview where mouse is positioned handles release
                 if (clickedMonitor != pMonitor.lock()) {
                     return;
                 }
@@ -426,9 +443,34 @@ void COverview::setupMouseButtonHook() {
             }
             return;
         }
+
+        // Handle select workspace button if it's different from drag button
+        if (e.button == g_selectWorkspaceActionButton &&
+            e.button != g_dragWindowActionButton) {
+            handleSelectWorkspaceButton(e.state, clickedMonitor);
+            return;
+        }
     };
 
     mouseButtonHook = g_pHookSystem->hookDynamic("mouseButton", onMouseButton);
+}
+
+void COverview::handleSelectWorkspaceButton(
+    uint32_t state,
+    const SP<CMonitor>& clickedMonitor
+) {
+    if (state == WL_POINTER_BUTTON_STATE_PRESSED) {
+        // Button pressed - just wait for release
+        return;
+    }
+
+    // Button released - select workspace if on this monitor
+    if (clickedMonitor != pMonitor.lock()) {
+        return;
+    }
+
+    selectWorkspaceAtPosition(lastMousePosLocal);
+    close();
 }
 
 void COverview::setupMouseAxisHook() {
