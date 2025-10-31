@@ -44,7 +44,7 @@ COverview::~COverview() {
     g_pHyprOpenGL->markBlurDirtyForMonitor(pMonitor.lock());
 }
 
-COverview::COverview(PHLWORKSPACE startedOn_, OverviewAnimationType animType) : startedOn(startedOn_) {
+COverview::COverview(PHLWORKSPACE startedOn_, bool skipAnimation) : startedOn(startedOn_) {
     const auto PMONITOR = g_pCompositor->m_lastMonitor.lock();
     pMonitor            = PMONITOR;
 
@@ -240,59 +240,36 @@ COverview::COverview(PHLWORKSPACE startedOn_, OverviewAnimationType animType) : 
     size->setUpdateCallback(damageMonitor);
     pos->setUpdateCallback(damageMonitor);
 
-    switch (animType) {
-        case OverviewAnimationType::NONE:
-            // No animation - directly set to normal view
-            size->setValue(monitorSize);
-            pos->setValue(Vector2D{0, 0});
-            *size = monitorSize;
-            *pos  = Vector2D{0, 0};
-            break;
+    if (skipAnimation) {
+        // No animation - directly set to normal view
+        size->setValue(monitorSize);
+        pos->setValue(Vector2D{0, 0});
+        *size = monitorSize;
+        *pos  = Vector2D{0, 0};
+    } else {
+        // Animate from zoomed in to normal view
+        // Start with the view zoomed into the active workspace (right side)
+        const auto& activeBox = images[activeIndex].box;
 
-        case OverviewAnimationType::SLIDE_UP:
-            // Start below screen, slide up to normal position
-            size->setValue(monitorSize);
-            pos->setValue(Vector2D{0.0, monitorSize.y});
-            *size = monitorSize;
-            *pos  = Vector2D{0, 0};
-            size->setCallbackOnEnd([this](auto) { redrawAll(true); });
-            break;
+        // Calculate scale needed to zoom the active box to fill the screen
+        const float scaleX = monitorSize.x / activeBox.w;
+        const float scaleY = monitorSize.y / activeBox.h;
+        const float scale = std::min(scaleX, scaleY);
 
-        case OverviewAnimationType::SLIDE_DOWN:
-            // Start above screen, slide down to normal position
-            size->setValue(monitorSize);
-            pos->setValue(Vector2D{0.0, -monitorSize.y});
-            *size = monitorSize;
-            *pos  = Vector2D{0, 0};
-            size->setCallbackOnEnd([this](auto) { redrawAll(true); });
-            break;
+        // Starting position: zoomed into active workspace
+        const Vector2D activeCenter = Vector2D{activeBox.x + activeBox.w / 2.0f,
+                                               activeBox.y + activeBox.h / 2.0f};
+        const Vector2D screenCenter = monitorSize / 2.0f;
 
-        case OverviewAnimationType::ZOOM_IN:
-        default:
-            // Animate from zoomed in to normal view
-            // Start with the view zoomed into the active workspace (right side)
-            const auto& activeBox = images[activeIndex].box;
+        // Set initial value (zoomed in)
+        size->setValue(monitorSize * scale);
+        pos->setValue((screenCenter - activeCenter) * scale);
 
-            // Calculate scale needed to zoom the active box to fill the screen
-            const float scaleX = monitorSize.x / activeBox.w;
-            const float scaleY = monitorSize.y / activeBox.h;
-            const float scale = std::min(scaleX, scaleY);
+        // Set goal (normal view) - this starts the animation
+        *size = monitorSize;
+        *pos  = Vector2D{0, 0};
 
-            // Starting position: zoomed into active workspace
-            const Vector2D activeCenter = Vector2D{activeBox.x + activeBox.w / 2.0f,
-                                                   activeBox.y + activeBox.h / 2.0f};
-            const Vector2D screenCenter = monitorSize / 2.0f;
-
-            // Set initial value (zoomed in)
-            size->setValue(monitorSize * scale);
-            pos->setValue((screenCenter - activeCenter) * scale);
-
-            // Set goal (normal view) - this starts the animation
-            *size = monitorSize;
-            *pos  = Vector2D{0, 0};
-
-            size->setCallbackOnEnd([this](auto) { redrawAll(true); });
-            break;
+        size->setCallbackOnEnd([this](auto) { redrawAll(true); });
     }
 
     setupEventHooks();
@@ -616,23 +593,11 @@ void COverview::setupWorkspaceChangeHook() {
             if (!monitor || workspaceMonitor != monitor)
                 return;
 
-            // Get old workspace ID before recreating
-            int64_t oldWorkspaceID = startedOn ? startedOn->m_id : 0;
-            int64_t newWorkspaceID = newWorkspace->m_id;
-
-            // Determine animation direction based on workspace IDs
-            OverviewAnimationType animType;
-            if (newWorkspaceID > oldWorkspaceID) {
-                animType = OverviewAnimationType::SLIDE_UP;  // Moving to higher workspace
-            } else if (newWorkspaceID < oldWorkspaceID) {
-                animType = OverviewAnimationType::SLIDE_DOWN;  // Moving to lower workspace
-            } else {
-                animType = OverviewAnimationType::NONE;  // Same workspace, no animation
-            }
-
-            // Recreate the overview with the new workspace and slide animation
+            // Recreate the overview with the new workspace
+            // This is simpler and more reliable than trying to update indices
+            // Skip animation for instant recreation
             g_pOverviews.erase(monitor);
-            g_pOverviews[monitor] = std::make_unique<COverview>(newWorkspace, animType);
+            g_pOverviews[monitor] = std::make_unique<COverview>(newWorkspace, true);
         } catch (const std::exception& e) {
             Debug::log(ERR, "[Overview] Exception in workspace change handler: {}", e.what());
         }
