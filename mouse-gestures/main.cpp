@@ -5,13 +5,16 @@
 #include <cmath>
 #include <vector>
 #include <fstream>
+#include <chrono>
 #include <wayland-server.h>
+#include <wayland-server-protocol.h>
 #include <linux/input-event-codes.h>
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #define private public
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/managers/HookSystemManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
+#include <hyprland/src/managers/SeatManager.hpp>
 #include <hyprland/src/devices/IPointer.hpp>
 #undef private
 
@@ -50,12 +53,17 @@ struct MouseGestureState {
     Vector2D mouseDownPos = {0, 0};
     bool dragDetected = false;
     std::vector<Vector2D> path;
+    std::chrono::steady_clock::time_point pressTime;
+    uint32_t pressButton = 0;
+    uint32_t pressTimeMs = 0;
 
     void reset() {
         rightButtonPressed = false;
         mouseDownPos = {0, 0};
         dragDetected = false;
         path.clear();
+        pressButton = 0;
+        pressTimeMs = 0;
     }
 };
 
@@ -172,6 +180,85 @@ static void writeGestureToFile(const std::vector<Direction>& gesture) {
     file.close();
 }
 
+// Handle detected gesture - analyze path and display result
+static void handleGestureDetected() {
+    if (g_gestureState.path.size() <= 1) {
+        return;
+    }
+
+    std::vector<Direction> gesture = analyzeGesture(g_gestureState.path);
+    writeGestureToFile(gesture);
+
+    // Build gesture string for notification
+    std::string gestureStr = "Gesture: ";
+    if (gesture.empty()) {
+        gestureStr += "NONE";
+    } else {
+        for (size_t i = 0; i < gesture.size(); i++) {
+            gestureStr += directionToString(gesture[i]);
+            if (i < gesture.size() - 1) {
+                gestureStr += " -> ";
+            }
+        }
+    }
+
+    HyprlandAPI::addNotification(
+        PHANDLE,
+        "[mouse-gestures] " + gestureStr,
+        {0, 1, 0, 1},
+        3000
+    );
+}
+
+// Handle no gesture detected - replay press and release events
+static void replayButtonEvents(uint32_t releaseTimeMs) {
+    if (!g_pSeatManager) {
+        return;
+    }
+
+    g_pSeatManager->sendPointerButton(
+        g_gestureState.pressTimeMs,
+        g_gestureState.pressButton,
+        WL_POINTER_BUTTON_STATE_PRESSED
+    );
+    g_pSeatManager->sendPointerButton(
+        releaseTimeMs,
+        g_gestureState.pressButton,
+        WL_POINTER_BUTTON_STATE_RELEASED
+    );
+}
+
+// Check if drag threshold is exceeded within time window
+static bool checkDragThresholdExceeded(const Vector2D& mousePos) {
+    // Calculate time elapsed since button press
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now - g_gestureState.pressTime
+    ).count();
+
+    // Only detect gesture if within 100ms window
+    if (elapsed > 100) {
+        return false;
+    }
+
+    // Get configured drag threshold (default: 50.0)
+    static auto* const PDRAGTHRESHOLD = (Hyprlang::INT* const*)
+        HyprlandAPI::getConfigValue(
+            PHANDLE,
+            "plugin:mouse_gestures:drag_threshold"
+        )->getDataStaticPtr();
+    const float dragThreshold = static_cast<float>(**PDRAGTHRESHOLD);
+
+    const float distanceX = std::abs(
+        mousePos.x - g_gestureState.mouseDownPos.x
+    );
+    const float distanceY = std::abs(
+        mousePos.y - g_gestureState.mouseDownPos.y
+    );
+
+    return (distanceX > dragThreshold || distanceY > dragThreshold);
+}
+
 static SDispatchResult mouseGesturesDispatch(std::string arg) {
     if (arg == "register") {
         HyprlandAPI::addNotification(PHANDLE, "[mouse-gestures] Register command received", {0, 0.5, 1, 1}, 5000);
@@ -192,53 +279,32 @@ static void setupMouseButtonHook() {
             return;
 
         if (e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
-            // Action button pressed - record position
+            // Action button pressed - record position and time
             const Vector2D mousePos = g_pInputManager->getMouseCoordsInternal();
             g_gestureState.rightButtonPressed = true;
             g_gestureState.mouseDownPos = mousePos;
             g_gestureState.dragDetected = false;
             g_gestureState.path.clear();
             g_gestureState.path.push_back(mousePos);
+            g_gestureState.pressTime = std::chrono::steady_clock::now();
+            g_gestureState.pressButton = actionButton;
+            g_gestureState.pressTimeMs = e.timeMs;
+
+            // Consume the press - will replay on release if no drag detected
+            info.cancelled = true;
         } else {
-            // Action button released - analyze gesture if drag detected
-            if (g_gestureState.dragDetected && g_gestureState.path.size() > 1) {
-                std::vector<Direction> gesture = analyzeGesture(
-                    g_gestureState.path
-                );
-                writeGestureToFile(gesture);
-
-                // Show notification with detected gesture
-                std::string gestureStr = "Gesture: ";
-                if (gesture.empty()) {
-                    gestureStr += "NONE";
-                } else {
-                    for (size_t i = 0; i < gesture.size(); i++) {
-                        gestureStr += directionToString(gesture[i]);
-                        if (i < gesture.size() - 1) {
-                            gestureStr += " -> ";
-                        }
-                    }
-                }
-                HyprlandAPI::addNotification(
-                    PHANDLE,
-                    "[mouse-gestures] " + gestureStr,
-                    {0, 1, 0, 1},
-                    3000
-                );
-            }
-
-            // Consume event if drag was detected
+            // Action button released
             if (g_gestureState.dragDetected) {
-                info.cancelled = true;
+                handleGestureDetected();
+            } else {
+                replayButtonEvents(e.timeMs);
             }
+
+            // Always consume the release event
+            info.cancelled = true;
 
             // Reset state
             g_gestureState.reset();
-        }
-
-        // Consume event if drag is detected
-        if (g_gestureState.dragDetected) {
-            info.cancelled = true;
         }
     };
 
@@ -254,18 +320,7 @@ static void setupMouseMoveHook() {
 
         // Check if drag threshold exceeded (if not yet detected)
         if (!g_gestureState.dragDetected) {
-            // Get configured drag threshold (default: 50.0)
-            static auto* const PDRAGTHRESHOLD = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:mouse_gestures:drag_threshold")->getDataStaticPtr();
-            const float dragThreshold = static_cast<float>(**PDRAGTHRESHOLD);
-
-            const float distanceX = std::abs(
-                mousePos.x - g_gestureState.mouseDownPos.x
-            );
-            const float distanceY = std::abs(
-                mousePos.y - g_gestureState.mouseDownPos.y
-            );
-
-            if (distanceX > dragThreshold || distanceY > dragThreshold) {
+            if (checkDragThresholdExceeded(mousePos)) {
                 g_gestureState.dragDetected = true;
                 HyprlandAPI::addNotification(
                     PHANDLE,
@@ -276,11 +331,9 @@ static void setupMouseMoveHook() {
             }
         }
 
-        // Record path point if drag is active
+        // Record path point if drag is active (but don't consume move events)
         if (g_gestureState.dragDetected) {
             g_gestureState.path.push_back(mousePos);
-            // Consume the event when drag is active
-            info.cancelled = true;
         }
     };
 

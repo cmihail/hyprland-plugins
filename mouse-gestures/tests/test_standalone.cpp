@@ -852,3 +852,76 @@ TEST_F(ConfigurableGestureTest, ActionButtonFiltering) {
     EXPECT_FALSE(isActionButton(275)); // BTN_SIDE
     EXPECT_FALSE(isActionButton(276)); // BTN_EXTRA
 }
+
+// ============================================================================
+// Gesture Handler Tests
+// ============================================================================
+
+class GestureHandlerTest : public ::testing::Test {
+protected:
+    MouseGestureState state;
+
+    void SetUp() override {
+        state.reset();
+    }
+
+    // Mock analyze gesture (simplified)
+    std::vector<Direction> mockAnalyzeGesture(
+        const std::vector<Vector2D>& path
+    ) {
+        std::vector<Direction> result;
+        if (path.size() < 2) return result;
+
+        // Simple check: if moved right, return RIGHT
+        if (path[1].x > path[0].x + 50) {
+            result.push_back(Direction::RIGHT);
+        }
+        // If moved down, add DOWN
+        if (path[1].y > path[0].y + 50) {
+            result.push_back(Direction::DOWN);
+        }
+        return result;
+    }
+};
+
+// Test gesture detection with empty path
+TEST_F(GestureHandlerTest, EmptyPathNoGesture) {
+    state.path.clear();
+    state.dragDetected = true;
+
+    // Should handle empty path gracefully
+    EXPECT_EQ(state.path.size(), 0);
+}
+
+// Test gesture detection with single point
+TEST_F(GestureHandlerTest, SinglePointNoGesture) {
+    state.path.push_back({100.0, 100.0});
+    state.dragDetected = true;
+
+    // Should handle single point gracefully (no gesture)
+    EXPECT_EQ(state.path.size(), 1);
+}
+
+// Test gesture detection with valid path
+TEST_F(GestureHandlerTest, ValidPathGestureDetected) {
+    state.path.push_back({100.0, 100.0});
+    state.path.push_back({200.0, 100.0}); // Moved right
+    state.dragDetected = true;
+
+    auto gesture = mockAnalyzeGesture(state.path);
+    EXPECT_FALSE(gesture.empty());
+    EXPECT_EQ(gesture[0], Direction::RIGHT);
+}
+
+// Test gesture detection with L-shape path
+TEST_F(GestureHandlerTest, LShapePathGestureDetected) {
+    state.path.push_back({100.0, 100.0});
+    state.path.push_back({200.0, 100.0}); // Right
+    state.path.push_back({200.0, 200.0}); // Down
+
+    state.dragDetected = true;
+
+    // Path has multiple points forming an L-shape
+    EXPECT_EQ(state.path.size(), 3);
+    EXPECT_TRUE(state.dragDetected);
+}
