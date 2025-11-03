@@ -1472,9 +1472,9 @@ std::pair<int, int> COverview::findDropZoneBetweenWorkspaces(const Vector2D& pos
     // Returns {lastIndex, -3} if below the last workspace
     // Returns {i, i+1} if between workspaces i and i+1
     //
-    // Logic: When cursor is over a workspace, check if it's in the top or bottom half:
-    // - Top half: select drop zone ABOVE the workspace
-    // - Bottom half: select drop zone BELOW the workspace
+    // Logic: When cursor is over a workspace, check if it's in the top or bottom third:
+    // - Top third: select drop zone ABOVE the workspace
+    // - Bottom third: select drop zone BELOW the workspace
 
     const Vector2D monitorSize = pMonitor->m_size;
     const Vector2D currentSize = size->value();
@@ -1511,12 +1511,13 @@ std::pair<int, int> COverview::findDropZoneBetweenWorkspaces(const Vector2D& pos
         float workspaceHeightTransformed = this->leftPreviewHeight * zoomScale;
         float yBottomTransformed = yPosTransformed + workspaceHeightTransformed;
 
-        // Check if cursor is within this workspace's bounds
+        // Check if cursor is within this workspace\'s bounds
         if (pos.y >= yPosTransformed && pos.y <= yBottomTransformed) {
-            float yMiddle = yPosTransformed + workspaceHeightTransformed / 2.0f;
+            float yTopThird = yPosTransformed + workspaceHeightTransformed / 3.0f;
+            float yBottomThird = yPosTransformed + workspaceHeightTransformed * 2.0f / 3.0f;
 
-            if (pos.y < yMiddle) {
-                // Cursor in TOP half - select drop zone ABOVE this workspace
+            if (pos.y < yTopThird) {
+                // Cursor in TOP third - select drop zone ABOVE this workspace
                 if (i == 0) {
                     // First workspace - drop zone is above it
                     return {-2, 0};
@@ -1524,8 +1525,8 @@ std::pair<int, int> COverview::findDropZoneBetweenWorkspaces(const Vector2D& pos
                     // Drop zone is between workspace i-1 and i
                     return {i - 1, i};
                 }
-            } else {
-                // Cursor in BOTTOM half - select drop zone BELOW this workspace
+            } else if (pos.y > yBottomThird) {
+                // Cursor in BOTTOM third - select drop zone BELOW this workspace
                 if (i == activeIndex - 1) {
                     // Last workspace - drop zone is below it
                     return {i, -3};

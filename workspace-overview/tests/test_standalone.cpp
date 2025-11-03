@@ -3219,10 +3219,8 @@ TEST(MonitorEventTest, MonitorAddedClosesAllOverviews) {
     
     EXPECT_TRUE(overview1.closeCalled);
     EXPECT_TRUE(overview2.closeCalled);
-    
-    g_mockOverviews.clear();
+g_mockOverviews.clear();
 }
-
 TEST(MonitorEventTest, MonitorRemovedClosesAllOverviews) {
     g_mockOverviews.clear();
     
@@ -3997,7 +3995,6 @@ TEST(DropZoneFilteringTest, EdgeCase_EmptyWorkspaceList) {
     DropZoneResult dropZone(0, 1);
 
     bool shouldFilter = shouldFilterPlaceholderDropZone(dropZone, workspaces);
-
     EXPECT_FALSE(shouldFilter) << "Should NOT filter when workspace list is empty";
 }
 
@@ -4558,7 +4555,7 @@ TEST(CrossMonitorWorkspaceDragTest, TargetMonitorWindowsMovedDown) {
         workspacesToMove.push_back(i);
     }
 
-    EXPECT_EQ(workspacesToMove.size(), 2);
+    ASSERT_EQ(workspacesToMove.size(), 2);
     EXPECT_EQ(workspacesToMove[0], 4); // Processed first (highest index)
     EXPECT_EQ(workspacesToMove[1], 3); // Processed second
 
@@ -5009,3 +5006,81 @@ TEST(MouseButtonConfigTest, AllDifferentButtons) {
 // new workspace when the active workspace changes externally. This approach
 // is simpler and more reliable than trying to update indices and re-render
 // specific workspaces.
+
+// ============================================================================
+// Drop Zone Detection Tests
+// ============================================================================
+
+// Helper function to simulate findDropZoneBetweenWorkspaces
+static std::pair<int, int> findDropZone(float posY, float yPosTransformed, float workspaceHeightTransformed, int i, int activeIndex) {
+    float yBottomTransformed = yPosTransformed + workspaceHeightTransformed;
+
+    if (posY >= yPosTransformed && posY <= yBottomTransformed) {
+        float yTopThird = yPosTransformed + workspaceHeightTransformed / 3.0f;
+        float yBottomThird = yPosTransformed + workspaceHeightTransformed * 2.0f / 3.0f;
+
+        if (posY < yTopThird) {
+            if (i == 0) {
+                return {-2, 0};
+            } else {
+                return {i - 1, i};
+            }
+        } else if (posY > yBottomThird) {
+            if (i == activeIndex - 1) {
+                return {i, -3};
+            } else {
+                return {i, i + 1};
+            }
+        }
+    }
+    return {-1, -1};
+}
+
+TEST(DropZoneDetectionTest, TopThirdOfFirstWorkspace) {
+    // Cursor in top third of the first workspace (index 0)
+    auto dropZone = findDropZone(110.0f, 100.0f, 90.0f, 0, 5);
+    EXPECT_EQ(dropZone.first, -2);
+    EXPECT_EQ(dropZone.second, 0);
+}
+
+TEST(DropZoneDetectionTest, BottomThirdOfFirstWorkspace) {
+    // Cursor in bottom third of the first workspace (index 0)
+    auto dropZone = findDropZone(170.0f, 100.0f, 90.0f, 0, 5);
+    EXPECT_EQ(dropZone.first, 0);
+    EXPECT_EQ(dropZone.second, 1);
+}
+
+TEST(DropZoneDetectionTest, MiddleThirdOfWorkspace) {
+    // Cursor in middle third of a workspace
+    auto dropZone = findDropZone(145.0f, 100.0f, 90.0f, 1, 5);
+    EXPECT_EQ(dropZone.first, -1);
+    EXPECT_EQ(dropZone.second, -1);
+}
+
+TEST(DropZoneDetectionTest, TopThirdOfMiddleWorkspace) {
+    // Cursor in top third of a middle workspace (index 2)
+    auto dropZone = findDropZone(310.0f, 300.0f, 90.0f, 2, 5);
+    EXPECT_EQ(dropZone.first, 1);
+    EXPECT_EQ(dropZone.second, 2);
+}
+
+TEST(DropZoneDetectionTest, BottomThirdOfMiddleWorkspace) {
+    // Cursor in bottom third of a middle workspace (index 2)
+    auto dropZone = findDropZone(370.0f, 300.0f, 90.0f, 2, 5);
+    EXPECT_EQ(dropZone.first, 2);
+    EXPECT_EQ(dropZone.second, 3);
+}
+
+TEST(DropZoneDetectionTest, TopThirdOfLastWorkspace) {
+    // Cursor in top third of the last workspace (index 4)
+    auto dropZone = findDropZone(510.0f, 500.0f, 90.0f, 4, 5);
+    EXPECT_EQ(dropZone.first, 3);
+    EXPECT_EQ(dropZone.second, 4);
+}
+
+TEST(DropZoneDetectionTest, BottomThirdOfLastWorkspace) {
+    // Cursor in bottom third of the last workspace (index 4)
+    auto dropZone = findDropZone(570.0f, 500.0f, 90.0f, 4, 5);
+    EXPECT_EQ(dropZone.first, 4);
+    EXPECT_EQ(dropZone.second, -3);
+}
