@@ -439,6 +439,10 @@ void COverview::setupMouseButtonHook() {
                                         g_dragState.sourceWorkspaceIndex
                                     );
                                 }
+                            } else {
+                                // Dropping on same workspace - trigger single refresh to clear drag preview
+                                std::vector<int> workspacesToRefresh = {targetIndex};
+                                setupSingleWorkspaceRefresh(targetOverview, workspacesToRefresh, 50);
                             }
                         }
                     }
@@ -1684,7 +1688,8 @@ std::pair<COverview*, int> COverview::findWorkspaceAtGlobalPosition(
 
 void COverview::setupSourceWorkspaceRefreshTimer(
     COverview* sourceOverview,
-    const std::vector<int>& workspaceIndices
+    const std::vector<int>& workspaceIndices,
+    int durationMs
 ) {
     if (!sourceOverview || workspaceIndices.empty())
         return;
@@ -1692,12 +1697,15 @@ void COverview::setupSourceWorkspaceRefreshTimer(
     struct TimerData {
         std::vector<int> workspaceIndices;
         int tickCount;
+        int maxTicks;
         wl_event_source* timerSource;
         PHLMONITOR monitor;
     };
 
     auto srcMon = sourceOverview->pMonitor.lock();
-    auto* timerData = new TimerData{workspaceIndices, 0, nullptr, srcMon};
+    // Calculate max ticks: redraw every 50ms for specified duration
+    int maxTicks = durationMs / 50;
+    auto* timerData = new TimerData{workspaceIndices, 0, maxTicks, nullptr, srcMon};
 
     auto* timer = wl_event_loop_add_timer(
         wl_display_get_event_loop(g_pCompositor->m_wlDisplay),
@@ -1714,13 +1722,13 @@ void COverview::setupSourceWorkspaceRefreshTimer(
                 it->second->damage();
 
                 td->tickCount++;
-                // Redraw every 50ms for up to 1 second (20 ticks)
-                if (td->tickCount < 20) {
+                // Redraw every 50ms for specified duration
+                if (td->tickCount < td->maxTicks) {
                     wl_event_source_timer_update(td->timerSource, 50);
                     return 0;
                 }
             }
-            // Clean up after 20 ticks or if overview is closed
+            // Clean up after max ticks or if overview is closed
             delete td;
             return 0;
         },
@@ -1729,6 +1737,47 @@ void COverview::setupSourceWorkspaceRefreshTimer(
 
     timerData->timerSource = timer;
     wl_event_source_timer_update(timer, 50);
+}
+
+void COverview::setupSingleWorkspaceRefresh(
+    COverview* sourceOverview,
+    const std::vector<int>& workspaceIndices,
+    int delayMs
+) {
+    if (!sourceOverview || workspaceIndices.empty())
+        return;
+
+    struct TimerData {
+        std::vector<int> workspaceIndices;
+        PHLMONITOR monitor;
+    };
+
+    auto srcMon = sourceOverview->pMonitor.lock();
+    auto* timerData = new TimerData{workspaceIndices, srcMon};
+
+    auto* timer = wl_event_loop_add_timer(
+        wl_display_get_event_loop(g_pCompositor->m_wlDisplay),
+        [](void* data) -> int {
+            auto* td = static_cast<TimerData*>(data);
+
+            // Check if overview still exists for this monitor
+            auto it = g_pOverviews.find(td->monitor);
+            if (it != g_pOverviews.end() && it->second) {
+                // Redraw source workspace once
+                for (int wsIdx : td->workspaceIndices) {
+                    it->second->redrawID(wsIdx);
+                }
+                it->second->damage();
+            }
+
+            // Clean up immediately after single refresh
+            delete td;
+            return 0;
+        },
+        timerData
+    );
+
+    wl_event_source_timer_update(timer, delayMs);
 }
 
 void COverview::refreshSourceWorkspacesAfterCrossMonitorMove(
@@ -2227,6 +2276,13 @@ void COverview::handleSameMonitorDrop(int sourceIdx) {
         return;
 
     if (dropZoneAbove >= 0 && dropZoneAbove == dropZoneBelow) {
+        // Dropping on middle third of a workspace - check if dropping on itself first
+        if (dropZoneAbove == sourceIdx) {
+            // Dropping workspace on itself - trigger single refresh to clear drag preview
+            std::vector<int> workspacesToRefresh = {sourceIdx};
+            setupSingleWorkspaceRefresh(this, workspacesToRefresh, 50);
+            return;
+        }
         handleMiddleThirdDrop(this, sourceIdx, dropZoneAbove, false);
         return;
     }
@@ -2234,8 +2290,15 @@ void COverview::handleSameMonitorDrop(int sourceIdx) {
     int targetIdx =
         calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow);
 
-    if (targetIdx < 0 || sourceIdx == targetIdx)
+    if (targetIdx < 0)
         return;
+
+    if (sourceIdx == targetIdx) {
+        // Dropping workspace on itself - trigger single refresh to clear drag preview
+        std::vector<int> workspacesToRefresh = {sourceIdx};
+        setupSingleWorkspaceRefresh(this, workspacesToRefresh, 50);
+        return;
+    }
 
     reorderWorkspace(sourceIdx, targetIdx);
 }

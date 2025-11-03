@@ -145,7 +145,13 @@ class COverview {
     );
     static void setupSourceWorkspaceRefreshTimer(
         COverview* sourceOverview,
-        const std::vector<int>& workspaceIndices
+        const std::vector<int>& workspaceIndices,
+        int durationMs = 1000  // Default 1 second, can be reduced for same-workspace drops
+    );
+    static void setupSingleWorkspaceRefresh(
+        COverview* sourceOverview,
+        const std::vector<int>& workspaceIndices,
+        int delayMs = 50  // Single refresh after delay
     );
     static void refreshSourceWorkspacesAfterCrossMonitorMove(
         COverview* sourceOverview,
