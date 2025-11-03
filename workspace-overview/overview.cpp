@@ -347,10 +347,11 @@ void COverview::setupMouseButtonHook() {
             return;
         }
 
-        // Consume events for buttons we handle (workspace drag, window drag/select)
+        // Consume events for buttons we handle (workspace drag, window drag/select, kill window)
         if (e.button == g_dragWorkspaceActionButton ||
             e.button == g_dragWindowActionButton ||
-            e.button == g_selectWorkspaceActionButton) {
+            e.button == g_selectWorkspaceActionButton ||
+            (g_killWindowActionButton.has_value() && e.button == g_killWindowActionButton.value())) {
             info.cancelled = true;
         }
 
@@ -462,6 +463,48 @@ void COverview::setupMouseButtonHook() {
         if (e.button == g_selectWorkspaceActionButton &&
             e.button != g_dragWindowActionButton) {
             handleSelectWorkspaceButton(e.state, clickedMonitor);
+            return;
+        }
+
+        // Handle kill window button if configured
+        if (g_killWindowActionButton.has_value() &&
+            e.button == g_killWindowActionButton.value()) {
+            if (e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
+                // Button pressed - find window under cursor
+                const Vector2D currentMousePos = mousePos - pMonitor->m_position;
+                int clickedWsIndex = findWorkspaceIndexAtPosition(currentMousePos);
+                PHLWINDOW windowToKill = findWindowAtPosition(currentMousePos, clickedWsIndex);
+
+                if (windowToKill) {
+                    // Kill the window
+                    g_pCompositor->closeWindow(windowToKill);
+
+                    // Determine which workspace indices to refresh
+                    std::vector<int> workspacesToRefresh;
+
+                    if (clickedWsIndex == activeIndex) {
+                        // Killed window on right panel (active workspace)
+                        // Need to find and refresh the corresponding workspace on the left panel
+                        int64_t activeWorkspaceID = images[activeIndex].workspaceID;
+                        for (size_t i = 0; i < leftWorkspaceCount; ++i) {
+                            if (images[i].workspaceID == activeWorkspaceID) {
+                                workspacesToRefresh.push_back(i);
+                                break;
+                            }
+                        }
+                    } else {
+                        // Killed window on left panel - refresh that workspace
+                        workspacesToRefresh.push_back(clickedWsIndex);
+                    }
+
+                    if (!workspacesToRefresh.empty()) {
+                        setupSourceWorkspaceRefreshTimer(this, workspacesToRefresh, 1000);
+                    }
+
+                    // Cancel the event to prevent other handlers from processing it
+                    info.cancelled = true;
+                }
+            }
             return;
         }
     };
@@ -968,18 +1011,18 @@ namespace {
                 );
                 if (!isNonInteractivePlaceholder) {
                     CBox topBorder = {scaledBox.x, scaledBox.y, scaledBox.w, g_activeBorderSize};
-                    g_pHyprOpenGL->renderRect(topBorder, g_dropZoneColor, {.damage = &damage});
+                    g_pHyprOpenGL->renderRect(topBorder, g_dropWorkspaceColor, {.damage = &damage});
 
                     CBox bottomBorder = {scaledBox.x, scaledBox.y + scaledBox.h - g_activeBorderSize,
                                         scaledBox.w, g_activeBorderSize};
-                    g_pHyprOpenGL->renderRect(bottomBorder, g_dropZoneColor, {.damage = &damage});
+                    g_pHyprOpenGL->renderRect(bottomBorder, g_dropWorkspaceColor, {.damage = &damage});
 
                     CBox leftBorder = {scaledBox.x, scaledBox.y, g_activeBorderSize, scaledBox.h};
-                    g_pHyprOpenGL->renderRect(leftBorder, g_dropZoneColor, {.damage = &damage});
+                    g_pHyprOpenGL->renderRect(leftBorder, g_dropWorkspaceColor, {.damage = &damage});
 
                     CBox rightBorder = {scaledBox.x + scaledBox.w - g_activeBorderSize, scaledBox.y,
                                         g_activeBorderSize, scaledBox.h};
-                    g_pHyprOpenGL->renderRect(rightBorder, g_dropZoneColor, {.damage = &damage});
+                    g_pHyprOpenGL->renderRect(rightBorder, g_dropWorkspaceColor, {.damage = &damage});
                 }
             }
         } else if (g_dragState.draggedWindow && windowDragTargetIndex == (int)i) {
@@ -993,26 +1036,26 @@ namespace {
             if (!isSourceWorkspace) {
                 CBox topBorder = {scaledBox.x, scaledBox.y, scaledBox.w,
                                   g_activeBorderSize};
-                g_pHyprOpenGL->renderRect(topBorder, g_dropZoneColor,
+                g_pHyprOpenGL->renderRect(topBorder, g_dropWindowColor,
                                           {.damage = &damage});
 
                 CBox bottomBorder = {scaledBox.x,
                                      scaledBox.y + scaledBox.h -
                                      g_activeBorderSize,
                                      scaledBox.w, g_activeBorderSize};
-                g_pHyprOpenGL->renderRect(bottomBorder, g_dropZoneColor,
+                g_pHyprOpenGL->renderRect(bottomBorder, g_dropWindowColor,
                                           {.damage = &damage});
 
                 CBox leftBorder = {scaledBox.x, scaledBox.y,
                                    g_activeBorderSize, scaledBox.h};
-                g_pHyprOpenGL->renderRect(leftBorder, g_dropZoneColor,
+                g_pHyprOpenGL->renderRect(leftBorder, g_dropWindowColor,
                                           {.damage = &damage});
 
                 CBox rightBorder = {scaledBox.x + scaledBox.w -
                                     g_activeBorderSize,
                                     scaledBox.y, g_activeBorderSize,
                                     scaledBox.h};
-                g_pHyprOpenGL->renderRect(rightBorder, g_dropZoneColor,
+                g_pHyprOpenGL->renderRect(rightBorder, g_dropWindowColor,
                                           {.damage = &damage});
             }
         }
@@ -1212,23 +1255,23 @@ void COverview::renderWorkspace(size_t i, const Vector2D& monitorSize,
     if (i != (size_t)activeIndex && image.isActive) {
         CBox topBorder = {scaledBox.x, scaledBox.y, scaledBox.w,
                           g_activeBorderSize};
-        g_pHyprOpenGL->renderRect(topBorder, g_activeBorderColor,
+        g_pHyprOpenGL->renderRect(topBorder, g_activeWorkspaceColor,
                                   {.damage = &damage});
 
         CBox bottomBorder = {scaledBox.x,
                              scaledBox.y + scaledBox.h - g_activeBorderSize,
                              scaledBox.w, g_activeBorderSize};
-        g_pHyprOpenGL->renderRect(bottomBorder, g_activeBorderColor,
+        g_pHyprOpenGL->renderRect(bottomBorder, g_activeWorkspaceColor,
                                   {.damage = &damage});
 
         CBox leftBorder = {scaledBox.x, scaledBox.y, g_activeBorderSize,
                            scaledBox.h};
-        g_pHyprOpenGL->renderRect(leftBorder, g_activeBorderColor,
+        g_pHyprOpenGL->renderRect(leftBorder, g_activeWorkspaceColor,
                                   {.damage = &damage});
 
         CBox rightBorder = {scaledBox.x + scaledBox.w - g_activeBorderSize,
                             scaledBox.y, g_activeBorderSize, scaledBox.h};
-        g_pHyprOpenGL->renderRect(rightBorder, g_activeBorderColor,
+        g_pHyprOpenGL->renderRect(rightBorder, g_activeWorkspaceColor,
                                   {.damage = &damage});
     }
 
@@ -1456,7 +1499,7 @@ void COverview::renderDropZoneAboveFirst() {
     dropZoneBox.round();
 
     CRegion damage{0, 0, INT16_MAX, INT16_MAX};
-    g_pHyprOpenGL->renderRect(dropZoneBox, g_dropZoneColor,
+    g_pHyprOpenGL->renderRect(dropZoneBox, g_dropWorkspaceColor,
                                {.damage = &damage});
 }
 
@@ -1493,7 +1536,7 @@ void COverview::renderDropZoneBelowLast(int lastIndex) {
     dropZoneBox.round();
 
     CRegion damage{0, 0, INT16_MAX, INT16_MAX};
-    g_pHyprOpenGL->renderRect(dropZoneBox, g_dropZoneColor,
+    g_pHyprOpenGL->renderRect(dropZoneBox, g_dropWorkspaceColor,
                                {.damage = &damage});
 }
 
@@ -1545,7 +1588,7 @@ void COverview::renderDropZoneBetween(int above, int below) {
     dropZoneBox.round();
 
     CRegion damage{0, 0, INT16_MAX, INT16_MAX};
-    g_pHyprOpenGL->renderRect(dropZoneBox, g_dropZoneColor,
+    g_pHyprOpenGL->renderRect(dropZoneBox, g_dropWorkspaceColor,
                                {.damage = &damage});
 }
 

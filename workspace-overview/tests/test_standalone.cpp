@@ -4947,7 +4947,7 @@ TEST(ConfigurationTest, BorderSizeNegativeInvalid) {
 }
 
 TEST(ConfigurationTest, DropColorOpacityVariations) {
-    // Test drop_color with different opacity values
+    // Test drop zone colors with different opacity values
     std::vector<uint32_t> testColors = {
         0xffffff00,  // Fully transparent white
         0xffffff40,  // 25% opacity white
@@ -4964,7 +4964,7 @@ TEST(ConfigurationTest, DropColorOpacityVariations) {
 }
 
 TEST(ConfigurationTest, DropColorDifferentColors) {
-    // Test drop_color with various colors
+    // Test drop zone colors with various colors
     struct TestCase {
         uint32_t rgba;
         float r, g, b;
@@ -5008,9 +5008,9 @@ TEST(ConfigurationTest, BorderSizeImpactsRendering) {
 }
 
 TEST(ConfigurationTest, DropColorConsistentFormat) {
-    // Verify that drop_color uses consistent RGBA format across different values
-    uint32_t color1 = 0x4c7fa6ff;  // Similar to active_border_color
-    uint32_t color2 = 0xffffffcc;  // Default drop_color
+    // Verify that drop zone colors use consistent RGBA format across different values
+    uint32_t color1 = 0x4c7fa6ff;  // Similar to active_workspace_color
+    uint32_t color2 = 0xffffffcc;  // Default drop zone color
 
     ConfigColor c1(color1);
     ConfigColor c2(color2);
@@ -5052,7 +5052,7 @@ TEST(ConfigurationTest, BorderSizeScaling) {
 }
 
 TEST(ConfigurationTest, DropColorTransparencyEffects) {
-    // Test that drop_color transparency affects visibility
+    // Test that drop zone color transparency affects visibility
     uint32_t fullyOpaque = 0xff0000ff;      // Red, 100% opacity
     uint32_t halfOpaque = 0xff000080;       // Red, 50% opacity
     uint32_t nearlyTransparent = 0xff000010; // Red, ~6% opacity

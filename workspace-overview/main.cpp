@@ -202,7 +202,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     // Register config options
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:background_path",
                                  Hyprlang::STRING{""});
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:active_border_color",
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:active_workspace_color",
                                  Hyprlang::INT{0x4c7fa6ff});
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:border_size",
                                  Hyprlang::FLOAT{4.0f});
@@ -210,7 +210,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                                  Hyprlang::INT{0xffffffcc});
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:placeholder_plus_size",
                                  Hyprlang::FLOAT{8.0f});
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:drop_color",
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:drop_window_color",
+                                 Hyprlang::INT{0xffffffcc});
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:drop_workspace_color",
                                  Hyprlang::INT{0xffffffcc});
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:placeholders_num",
                                  Hyprlang::INT{5});
@@ -222,6 +224,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                                  Hyprlang::INT{274});
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:select_workspace_action_button",
                                  Hyprlang::INT{272});
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:kill_window_action_button",
+                                 Hyprlang::INT{0});
 
     // Register config change callback to reload all config values
     static auto configCallback = HyprlandAPI::registerCallbackDynamic(
@@ -242,18 +246,18 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                 }
             }
 
-            // Load active border color
-            auto* const PACTIVEBORDERCOLOR =
+            // Load active workspace color
+            auto* const PACTIVEWORKSPACECOLOR =
                 HyprlandAPI::getConfigValue(PHANDLE,
-                                            "plugin:workspace_overview:active_border_color");
-            if (PACTIVEBORDERCOLOR) {
+                                            "plugin:workspace_overview:active_workspace_color");
+            if (PACTIVEWORKSPACECOLOR) {
                 try {
-                    auto colorValue = PACTIVEBORDERCOLOR->getValue();
+                    auto colorValue = PACTIVEWORKSPACECOLOR->getValue();
                     int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
-                    g_activeBorderColor = CHyprColor{(uint32_t)colorInt};
+                    g_activeWorkspaceColor = CHyprColor{(uint32_t)colorInt};
                 } catch (const std::bad_any_cast& e) {
                     Debug::log(ERR,
-                               "[workspace-overview] Failed to read active_border_color: {}",
+                               "[workspace-overview] Failed to read active_workspace_color: {}",
                                e.what());
                 }
             }
@@ -304,18 +308,34 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                 }
             }
 
-            // Load drop color
-            auto* const PDROPCOLOR =
+            // Load drop window color
+            auto* const PDROPWINDOWCOLOR =
                 HyprlandAPI::getConfigValue(PHANDLE,
-                                            "plugin:workspace_overview:drop_color");
-            if (PDROPCOLOR) {
+                                            "plugin:workspace_overview:drop_window_color");
+            if (PDROPWINDOWCOLOR) {
                 try {
-                    auto colorValue = PDROPCOLOR->getValue();
+                    auto colorValue = PDROPWINDOWCOLOR->getValue();
                     int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
-                    g_dropZoneColor = CHyprColor{(uint32_t)colorInt};
+                    g_dropWindowColor = CHyprColor{(uint32_t)colorInt};
                 } catch (const std::bad_any_cast& e) {
                     Debug::log(ERR,
-                               "[workspace-overview] Failed to read drop_color: {}",
+                               "[workspace-overview] Failed to read drop_window_color: {}",
+                               e.what());
+                }
+            }
+
+            // Load drop workspace color
+            auto* const PDROPWORKSPACECOLOR =
+                HyprlandAPI::getConfigValue(PHANDLE,
+                                            "plugin:workspace_overview:drop_workspace_color");
+            if (PDROPWORKSPACECOLOR) {
+                try {
+                    auto colorValue = PDROPWORKSPACECOLOR->getValue();
+                    int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
+                    g_dropWorkspaceColor = CHyprColor{(uint32_t)colorInt};
+                } catch (const std::bad_any_cast& e) {
+                    Debug::log(ERR,
+                               "[workspace-overview] Failed to read drop_workspace_color: {}",
                                e.what());
                 }
             }
@@ -398,6 +418,26 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                                e.what());
                 }
             }
+
+            // Load kill window action button
+            auto* const PKILLWINDOWBUTTON =
+                HyprlandAPI::getConfigValue(PHANDLE,
+                                            "plugin:workspace_overview:kill_window_action_button");
+            if (PKILLWINDOWBUTTON) {
+                try {
+                    auto buttonValue = PKILLWINDOWBUTTON->getValue();
+                    int64_t buttonInt = std::any_cast<Hyprlang::INT>(buttonValue);
+                    if (buttonInt == 0) {
+                        g_killWindowActionButton = std::nullopt;
+                    } else {
+                        g_killWindowActionButton = (uint32_t)buttonInt;
+                    }
+                } catch (const std::bad_any_cast& e) {
+                    Debug::log(ERR,
+                               "[workspace-overview] Failed to read kill_window_action_button: {}",
+                               e.what());
+                }
+            }
         });
 
     // Load all config values on startup
@@ -416,15 +456,15 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         }
     }
 
-    auto* const PACTIVEBORDERCOLOR =
-        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:active_border_color");
-    if (PACTIVEBORDERCOLOR) {
+    auto* const PACTIVEWORKSPACECOLOR =
+        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:active_workspace_color");
+    if (PACTIVEWORKSPACECOLOR) {
         try {
-            auto colorValue = PACTIVEBORDERCOLOR->getValue();
+            auto colorValue = PACTIVEWORKSPACECOLOR->getValue();
             int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
-            g_activeBorderColor = CHyprColor{(uint32_t)colorInt};
+            g_activeWorkspaceColor = CHyprColor{(uint32_t)colorInt};
         } catch (const std::bad_any_cast& e) {
-            Debug::log(ERR, "[workspace-overview] Failed to read active_border_color: {}",
+            Debug::log(ERR, "[workspace-overview] Failed to read active_workspace_color: {}",
                        e.what());
         }
     }
@@ -466,15 +506,28 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         }
     }
 
-    auto* const PDROPCOLOR =
-        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:drop_color");
-    if (PDROPCOLOR) {
+    auto* const PDROPWINDOWCOLOR =
+        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:drop_window_color");
+    if (PDROPWINDOWCOLOR) {
         try {
-            auto colorValue = PDROPCOLOR->getValue();
+            auto colorValue = PDROPWINDOWCOLOR->getValue();
             int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
-            g_dropZoneColor = CHyprColor{(uint32_t)colorInt};
+            g_dropWindowColor = CHyprColor{(uint32_t)colorInt};
         } catch (const std::bad_any_cast& e) {
-            Debug::log(ERR, "[workspace-overview] Failed to read drop_color: {}",
+            Debug::log(ERR, "[workspace-overview] Failed to read drop_window_color: {}",
+                       e.what());
+        }
+    }
+
+    auto* const PDROPWORKSPACECOLOR =
+        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:drop_workspace_color");
+    if (PDROPWORKSPACECOLOR) {
+        try {
+            auto colorValue = PDROPWORKSPACECOLOR->getValue();
+            int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
+            g_dropWorkspaceColor = CHyprColor{(uint32_t)colorInt};
+        } catch (const std::bad_any_cast& e) {
+            Debug::log(ERR, "[workspace-overview] Failed to read drop_workspace_color: {}",
                        e.what());
         }
     }
@@ -539,6 +592,23 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             g_selectWorkspaceActionButton = (uint32_t)buttonInt;
         } catch (const std::bad_any_cast& e) {
             Debug::log(ERR, "[workspace-overview] Failed to read select_workspace_action_button: {}",
+                       e.what());
+        }
+    }
+
+    auto* const PKILLWINDOWBUTTON =
+        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:kill_window_action_button");
+    if (PKILLWINDOWBUTTON) {
+        try {
+            auto buttonValue = PKILLWINDOWBUTTON->getValue();
+            int64_t buttonInt = std::any_cast<Hyprlang::INT>(buttonValue);
+            if (buttonInt == 0) {
+                g_killWindowActionButton = std::nullopt;
+            } else {
+                g_killWindowActionButton = (uint32_t)buttonInt;
+            }
+        } catch (const std::bad_any_cast& e) {
+            Debug::log(ERR, "[workspace-overview] Failed to read kill_window_action_button: {}",
                        e.what());
         }
     }

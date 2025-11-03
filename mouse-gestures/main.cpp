@@ -18,6 +18,9 @@
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
 #include <hyprland/src/devices/IPointer.hpp>
+#include <hyprland/src/render/Renderer.hpp>
+#include <hyprland/src/render/OpenGL.hpp>
+#include <hyprland/src/render/pass/PassElement.hpp>
 #undef private
 
 inline HANDLE PHANDLE = nullptr;
@@ -94,9 +97,251 @@ std::vector<GestureAction> g_gestureActions;
 // Hook handles
 SP<HOOK_CALLBACK_FN> g_mouseButtonHook;
 SP<HOOK_CALLBACK_FN> g_mouseMoveHook;
+SP<HOOK_CALLBACK_FN> g_renderHook;
+
+// Gesture line visualization state
+struct GestureLineState {
+    bool isVisible = false;
+    Vector2D startPos;
+    Vector2D endPos;
+    CHyprColor color = CHyprColor{1.0, 1.0, 1.0, 0.8};
+    wl_event_source* hideTimer = nullptr;
+};
+
+GestureLineState g_lineState;
 
 // Constants
 constexpr float MIN_SEGMENT_LENGTH = 10.0f;
+constexpr float GESTURE_LINE_WIDTH = 3.0f;
+
+// Debug logging helper
+static void debugLog(const std::string& message) {
+    std::ofstream file("/tmp/hyprland-debug", std::ios::app);
+    if (file.is_open()) {
+        auto now = std::chrono::system_clock::now();
+        auto time = std::chrono::system_clock::to_time_t(now);
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()
+        ) % 1000;
+
+        char timeStr[100];
+        std::strftime(timeStr, sizeof(timeStr), "%H:%M:%S", std::localtime(&time));
+
+        file << "[" << timeStr << "." << ms.count() << "] " << message << "\n";
+        file.close();
+    }
+}
+
+// PassElement for rendering gesture line
+class CGestureLinePassElement : public IPassElement {
+  public:
+    CGestureLinePassElement() = default;
+    virtual ~CGestureLinePassElement() = default;
+
+    virtual void draw(const CRegion& damage) {
+        try {
+            if (!g_lineState.isVisible) {
+                debugLog("draw() called but line not visible");
+                return;
+            }
+
+            debugLog("draw() called - rendering line");
+            CRegion damageCopy{0, 0, INT16_MAX, INT16_MAX};
+
+            // Calculate line parameters
+            float dx = g_lineState.endPos.x - g_lineState.startPos.x;
+            float dy = g_lineState.endPos.y - g_lineState.startPos.y;
+            float length = std::sqrt(dx * dx + dy * dy);
+
+            debugLog("Line params: dx=" + std::to_string(dx) +
+                    " dy=" + std::to_string(dy) +
+                    " length=" + std::to_string(length));
+
+            if (length < 1.0f) {
+                debugLog("Line too short, skipping render");
+                return;
+            }
+
+            // Draw line as a rotated rectangle
+            // For simplicity, draw as horizontal/vertical approximation
+            CBox lineBox;
+            if (std::abs(dx) > std::abs(dy)) {
+                // More horizontal
+                lineBox = CBox{
+                    std::min(g_lineState.startPos.x, g_lineState.endPos.x),
+                    g_lineState.startPos.y - GESTURE_LINE_WIDTH / 2.0f,
+                    std::abs(dx),
+                    GESTURE_LINE_WIDTH
+                };
+                debugLog("Drawing horizontal line");
+            } else {
+                // More vertical
+                lineBox = CBox{
+                    g_lineState.startPos.x - GESTURE_LINE_WIDTH / 2.0f,
+                    std::min(g_lineState.startPos.y, g_lineState.endPos.y),
+                    GESTURE_LINE_WIDTH,
+                    std::abs(dy)
+                };
+                debugLog("Drawing vertical line");
+            }
+
+            debugLog("LineBox: x=" + std::to_string(lineBox.x) +
+                    " y=" + std::to_string(lineBox.y) +
+                    " w=" + std::to_string(lineBox.w) +
+                    " h=" + std::to_string(lineBox.h));
+
+            g_pHyprOpenGL->renderRect(lineBox, g_lineState.color, {.damage = &damageCopy});
+            debugLog("renderRect completed successfully");
+        } catch (const std::exception& e) {
+            debugLog("Exception in draw(): " + std::string(e.what()));
+            HyprlandAPI::addNotification(
+                PHANDLE,
+                "[mouse-gestures] Error rendering gesture line: " + std::string(e.what()),
+                {1, 0, 0, 1},
+                3000
+            );
+            // Hide the line to prevent repeated errors
+            g_lineState.isVisible = false;
+        } catch (...) {
+            debugLog("Unknown exception in draw()");
+            HyprlandAPI::addNotification(
+                PHANDLE,
+                "[mouse-gestures] Unknown error rendering gesture line",
+                {1, 0, 0, 1},
+                3000
+            );
+            // Hide the line to prevent repeated errors
+            g_lineState.isVisible = false;
+        }
+    }
+
+    virtual bool needsLiveBlur() { return false; }
+    virtual bool needsPrecomputeBlur() { return false; }
+
+    virtual std::optional<CBox> boundingBox() {
+        debugLog("boundingBox() called, isVisible=" + std::to_string(g_lineState.isVisible));
+
+        if (!g_lineState.isVisible) {
+            debugLog("boundingBox() returning nullopt - line not visible");
+            return std::nullopt;
+        }
+
+        float minX = std::min(g_lineState.startPos.x, g_lineState.endPos.x);
+        float minY = std::min(g_lineState.startPos.y, g_lineState.endPos.y);
+        float maxX = std::max(g_lineState.startPos.x, g_lineState.endPos.x);
+        float maxY = std::max(g_lineState.startPos.y, g_lineState.endPos.y);
+
+        CBox box = CBox{
+            minX - GESTURE_LINE_WIDTH,
+            minY - GESTURE_LINE_WIDTH,
+            maxX - minX + GESTURE_LINE_WIDTH * 2,
+            maxY - minY + GESTURE_LINE_WIDTH * 2
+        };
+
+        debugLog("boundingBox() returning box: x=" + std::to_string(box.x) +
+                " y=" + std::to_string(box.y) +
+                " w=" + std::to_string(box.w) +
+                " h=" + std::to_string(box.h));
+
+        return box;
+    }
+
+    virtual CRegion opaqueRegion() { return CRegion(); }
+    virtual const char* passName() { return "CGestureLinePassElement"; }
+};
+
+// Hide gesture line and clean up
+static void hideGestureLine() {
+    debugLog("hideGestureLine() called");
+    g_lineState.isVisible = false;
+
+    if (g_lineState.hideTimer) {
+        wl_event_source_remove(g_lineState.hideTimer);
+        g_lineState.hideTimer = nullptr;
+        debugLog("Timer removed");
+    }
+
+    // No need to remove from render pass - we add it per-frame in the render hook
+    debugLog("Line hidden (will no longer be added by render hook)");
+
+    auto monitor = g_pCompositor->m_lastMonitor.lock();
+    if (monitor) {
+        g_pHyprRenderer->damageMonitor(monitor);
+        debugLog("Monitor damaged for redraw");
+    } else {
+        debugLog("No monitor available for damage");
+    }
+}
+
+// Show gesture line and schedule hide after 3 seconds
+static void showGestureLine(const Vector2D& start, const Vector2D& end) {
+    try {
+        debugLog("showGestureLine() called - start: (" +
+                std::to_string(start.x) + "," + std::to_string(start.y) +
+                ") end: (" + std::to_string(end.x) + "," + std::to_string(end.y) + ")");
+
+        // Clean up any existing line
+        hideGestureLine();
+
+        // Set up new line
+        g_lineState.isVisible = true;
+        g_lineState.startPos = start;
+        g_lineState.endPos = end;
+        debugLog("Line state set to visible");
+
+        // Don't add to render pass here - it will be added by the render hook
+        debugLog("Line ready to render (will be added by render hook)");
+
+        // Damage monitor to trigger redraw
+        auto monitor = g_pCompositor->m_lastMonitor.lock();
+        if (monitor) {
+            g_pHyprRenderer->damageMonitor(monitor);
+            debugLog("Monitor damaged - should trigger redraw");
+        } else {
+            debugLog("WARNING: No monitor available to damage!");
+        }
+
+        // Schedule hide after 3 seconds
+        auto* timer = wl_event_loop_add_timer(
+            wl_display_get_event_loop(g_pCompositor->m_wlDisplay),
+            [](void* data) -> int {
+                std::ofstream file("/tmp/hyprland-debug", std::ios::app);
+                if (file.is_open()) {
+                    file << "Timer expired - hiding line\n";
+                    file.close();
+                }
+                hideGestureLine();
+                return 0;
+            },
+            nullptr
+        );
+
+        if (timer) {
+            g_lineState.hideTimer = timer;
+            wl_event_source_timer_update(timer, 3000);
+            debugLog("Timer scheduled for 3000ms");
+        } else {
+            debugLog("ERROR: Failed to create timer!");
+            throw std::runtime_error("Failed to create timer for gesture line");
+        }
+    } catch (const std::exception& e) {
+        debugLog("Exception in showGestureLine(): " + std::string(e.what()));
+        HyprlandAPI::addNotification(
+            PHANDLE,
+            "[mouse-gestures] Error drawing gesture line: " + std::string(e.what()),
+            {1, 0, 0, 1},
+            3000
+        );
+    } catch (...) {
+        debugLog("Unknown exception in showGestureLine()");
+        HyprlandAPI::addNotification(
+            PHANDLE,
+            "[mouse-gestures] Unknown error drawing gesture line",
+            {1, 0, 0, 1},
+            3000
+        );
+    }
+}
 
 // Calculate direction from two points
 static Direction calculateDirection(const Vector2D& from, const Vector2D& to) {
@@ -242,6 +487,16 @@ static void handleGestureDetected() {
 
     std::vector<Direction> gesture = analyzeGesture(g_gestureState.path);
     writeGestureToFile(gesture);
+
+    // Draw line from start to end point
+    if (!g_gestureState.path.empty()) {
+        Vector2D startPos = g_gestureState.path.front();
+        Vector2D endPos = g_gestureState.path.back();
+        debugLog("handleGestureDetected() - calling showGestureLine");
+        showGestureLine(startPos, endPos);
+    } else {
+        debugLog("handleGestureDetected() - path is empty, cannot draw line");
+    }
 
     // Build gesture string for notification
     std::string gestureStr = "Gesture: ";
@@ -519,6 +774,40 @@ static void setupMouseMoveHook() {
     g_mouseMoveHook = g_pHookSystem->hookDynamic("mouseMove", onMouseMove);
 }
 
+static void setupRenderHook() {
+    auto onRender = [](void* self, SCallbackInfo& info, std::any param) {
+        try {
+            if (!g_lineState.isVisible)
+                return;
+
+            debugLog("PreRender hook - adding CGestureLinePassElement to render pass");
+            g_pHyprRenderer->m_renderPass.add(makeUnique<CGestureLinePassElement>());
+        } catch (const std::exception& e) {
+            debugLog("Exception in preRender hook: " + std::string(e.what()));
+            HyprlandAPI::addNotification(
+                PHANDLE,
+                "[mouse-gestures] Error in preRender hook: " + std::string(e.what()),
+                {1, 0, 0, 1},
+                3000
+            );
+            // Hide the line to prevent repeated errors
+            g_lineState.isVisible = false;
+        } catch (...) {
+            debugLog("Unknown exception in preRender hook");
+            HyprlandAPI::addNotification(
+                PHANDLE,
+                "[mouse-gestures] Unknown error in preRender hook",
+                {1, 0, 0, 1},
+                3000
+            );
+            // Hide the line to prevent repeated errors
+            g_lineState.isVisible = false;
+        }
+    };
+
+    g_renderHook = g_pHookSystem->hookDynamic("preRender", onRender);
+}
+
 APICALL EXPORT std::string PLUGIN_API_VERSION() {
     return HYPRLAND_API_VERSION;
 }
@@ -577,6 +866,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     // Setup mouse event hooks
     setupMouseButtonHook();
     setupMouseMoveHook();
+    setupRenderHook();
 
     HyprlandAPI::addNotification(
         PHANDLE,
@@ -589,4 +879,5 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
+    hideGestureLine();
 }
