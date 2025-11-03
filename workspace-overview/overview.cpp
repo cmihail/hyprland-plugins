@@ -942,6 +942,38 @@ void COverview::render() {
     g_pHyprRenderer->m_renderPass.add(makeUnique<COverviewPassElement>(this));
 }
 
+namespace {
+    void renderDropTargetBorder(const CBox& scaledBox, bool isWorkspace, size_t i,
+                                int activeIndex, int dropZoneAbove, int dropZoneBelow,
+                                int firstPlaceholderIndex, CRegion& damage) {
+        if (g_dragState.isDragging && g_dragState.isWorkspaceDrag) {
+            if (dropZoneAbove >= 0 && dropZoneAbove == dropZoneBelow && (int)i == dropZoneAbove && (int)i != g_dragState.sourceWorkspaceIndex) {
+                bool isNonInteractivePlaceholder = (
+                    !isWorkspace &&
+                    i < (size_t)activeIndex &&
+                    firstPlaceholderIndex >= 0 &&
+                    (int)i > firstPlaceholderIndex
+                );
+                if (!isNonInteractivePlaceholder) {
+                    CBox topBorder = {scaledBox.x, scaledBox.y, scaledBox.w, g_activeBorderSize};
+                    g_pHyprOpenGL->renderRect(topBorder, g_dropZoneColor, {.damage = &damage});
+
+                    CBox bottomBorder = {scaledBox.x, scaledBox.y + scaledBox.h - g_activeBorderSize,
+                                        scaledBox.w, g_activeBorderSize};
+                    g_pHyprOpenGL->renderRect(bottomBorder, g_dropZoneColor, {.damage = &damage});
+
+                    CBox leftBorder = {scaledBox.x, scaledBox.y, g_activeBorderSize, scaledBox.h};
+                    g_pHyprOpenGL->renderRect(leftBorder, g_dropZoneColor, {.damage = &damage});
+
+                    CBox rightBorder = {scaledBox.x + scaledBox.w - g_activeBorderSize, scaledBox.y,
+                                        g_activeBorderSize, scaledBox.h};
+                    g_pHyprOpenGL->renderRect(rightBorder, g_dropZoneColor, {.damage = &damage});
+                }
+            }
+        }
+    }
+}
+
 void COverview::fullRender() {
     g_pHyprOpenGL->clear(BG_COLOR.stripA());
 
@@ -1023,6 +1055,8 @@ void COverview::fullRender() {
             break;
         }
     }
+
+    auto [dropZoneAbove, dropZoneBelow] = findDropZoneBetweenWorkspaces(lastMousePosLocal);
 
     for (size_t i = 0; i < images.size(); ++i) {
         auto& image = images[i];
@@ -1119,7 +1153,7 @@ void COverview::fullRender() {
 
             // Bottom border
             CBox bottomBorder = {scaledBox.x, scaledBox.y + scaledBox.h - g_activeBorderSize,
-                                scaledBox.w, g_activeBorderSize};
+                                 scaledBox.w, g_activeBorderSize};
             g_pHyprOpenGL->renderRect(bottomBorder, g_activeBorderColor, {.damage = &damage});
 
             // Left border
@@ -1128,9 +1162,12 @@ void COverview::fullRender() {
 
             // Right border
             CBox rightBorder = {scaledBox.x + scaledBox.w - g_activeBorderSize, scaledBox.y,
-                               g_activeBorderSize, scaledBox.h};
+                                g_activeBorderSize, scaledBox.h};
             g_pHyprOpenGL->renderRect(rightBorder, g_activeBorderColor, {.damage = &damage});
         }
+
+        renderDropTargetBorder(scaledBox, (bool)image.pWorkspace, i, activeIndex,
+                               dropZoneAbove, dropZoneBelow, firstPlaceholderIndex, damage);
 
         // Render workspace indicator (number or plus sign for new workspaces)
         bool isNewWorkspace = !image.pWorkspace;
@@ -1208,47 +1245,48 @@ void COverview::fullRender() {
 
     // Render drop zone indicator when dragging workspace
     if (g_dragState.isDragging && g_dragState.isWorkspaceDrag) {
-        auto [dropZoneAbove, dropZoneBelow] =
-            findDropZoneBetweenWorkspaces(lastMousePosLocal);
+        if (dropZoneAbove >= 0 && dropZoneAbove == dropZoneBelow) {
+            // This is handled in the render loop
+        } else {
+            bool isAdjacentToSource = false;
+            int sourceIdx = g_dragState.sourceWorkspaceIndex;
 
-        bool isAdjacentToSource = false;
-        int sourceIdx = g_dragState.sourceWorkspaceIndex;
+            if (sourceIdx >= 0 && g_dragState.sourceOverview == this) {
+                if ((dropZoneAbove == sourceIdx && dropZoneBelow >= 0) ||
+                    (dropZoneBelow == sourceIdx && dropZoneAbove >= 0) ||
+                    (dropZoneAbove >= 0 && dropZoneBelow == sourceIdx) ||
+                    (dropZoneBelow >= 0 && dropZoneAbove == sourceIdx)) {
+                    isAdjacentToSource = true;
+                }
 
-        if (sourceIdx >= 0 && g_dragState.sourceOverview == this) {
-            if ((dropZoneAbove == sourceIdx && dropZoneBelow >= 0) ||
-                (dropZoneBelow == sourceIdx && dropZoneAbove >= 0) ||
-                (dropZoneAbove >= 0 && dropZoneBelow == sourceIdx) ||
-                (dropZoneBelow >= 0 && dropZoneAbove == sourceIdx)) {
-                isAdjacentToSource = true;
+                if (sourceIdx == 0 &&
+                    dropZoneAbove == -2 && dropZoneBelow == 0) {
+                    isAdjacentToSource = true;
+                }
+
+                int lastLeftIndex = activeIndex - 1;
+                if (sourceIdx == lastLeftIndex &&
+                    dropZoneAbove == lastLeftIndex && dropZoneBelow == -3) {
+                    isAdjacentToSource = true;
+                }
             }
 
-            if (sourceIdx == 0 &&
-                dropZoneAbove == -2 && dropZoneBelow == 0) {
-                isAdjacentToSource = true;
+            bool isAfterPlaceholder = false;
+            if (dropZoneAbove >= 0 &&
+                dropZoneAbove < (int)images.size()) {
+                if (!images[dropZoneAbove].pWorkspace) {
+                    isAfterPlaceholder = true;
+                }
             }
 
-            int lastLeftIndex = activeIndex - 1;
-            if (sourceIdx == lastLeftIndex &&
-                dropZoneAbove == lastLeftIndex && dropZoneBelow == -3) {
-                isAdjacentToSource = true;
-            }
-        }
-
-        bool isAfterPlaceholder = false;
-        if (dropZoneAbove >= 0 &&
-            dropZoneAbove < (int)images.size()) {
-            if (!images[dropZoneAbove].pWorkspace) {
-                isAfterPlaceholder = true;
-            }
-        }
-
-        if (!isAdjacentToSource && !isAfterPlaceholder) {
-            if (dropZoneAbove == -2 && dropZoneBelow == 0) {
-                renderDropZoneAboveFirst();
-            } else if (dropZoneBelow == -3 && dropZoneAbove >= 0) {
-                renderDropZoneBelowLast(dropZoneAbove);
-            } else if (dropZoneAbove >= 0 && dropZoneBelow >= 0) {
-                renderDropZoneBetween(dropZoneAbove, dropZoneBelow);
+            if (!isAdjacentToSource && !isAfterPlaceholder) {
+                if (dropZoneAbove == -2 && dropZoneBelow == 0) {
+                    renderDropZoneAboveFirst();
+                } else if (dropZoneBelow == -3 && dropZoneAbove >= 0) {
+                    renderDropZoneBelowLast(dropZoneAbove);
+                } else if (dropZoneAbove >= 0 && dropZoneBelow >= 0) {
+                    renderDropZoneBetween(dropZoneAbove, dropZoneBelow);
+                }
             }
         }
     }
@@ -1534,6 +1572,9 @@ std::pair<int, int> COverview::findDropZoneBetweenWorkspaces(const Vector2D& pos
                     // Drop zone is between workspace i and i+1
                     return {i, i + 1};
                 }
+            } else {
+                // Cursor in MIDDLE third - target this workspace
+                return {i, i};
             }
         }
     }
