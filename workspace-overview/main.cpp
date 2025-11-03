@@ -204,13 +204,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                                  Hyprlang::STRING{""});
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:active_border_color",
                                  Hyprlang::INT{0x4c7fa6ff});
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:active_border_size",
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:border_size",
                                  Hyprlang::FLOAT{4.0f});
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:placeholder_plus_color",
                                  Hyprlang::INT{0xffffffcc});
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:placeholder_plus_size",
                                  Hyprlang::FLOAT{8.0f});
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:drop_zone_color",
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:drop_color",
                                  Hyprlang::INT{0xffffffcc});
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:placeholders_num",
                                  Hyprlang::INT{5});
@@ -258,17 +258,17 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                 }
             }
 
-            // Load active border size
-            auto* const PACTIVEBORDERSIZE =
+            // Load border size
+            auto* const PBORDERSIZE =
                 HyprlandAPI::getConfigValue(PHANDLE,
-                                            "plugin:workspace_overview:active_border_size");
-            if (PACTIVEBORDERSIZE) {
+                                            "plugin:workspace_overview:border_size");
+            if (PBORDERSIZE) {
                 try {
-                    auto sizeValue = PACTIVEBORDERSIZE->getValue();
+                    auto sizeValue = PBORDERSIZE->getValue();
                     g_activeBorderSize = std::any_cast<Hyprlang::FLOAT>(sizeValue);
                 } catch (const std::bad_any_cast& e) {
                     Debug::log(ERR,
-                               "[workspace-overview] Failed to read active_border_size: {}",
+                               "[workspace-overview] Failed to read border_size: {}",
                                e.what());
                 }
             }
@@ -304,18 +304,18 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                 }
             }
 
-            // Load drop zone color
-            auto* const PDROPZONECOLOR =
+            // Load drop color
+            auto* const PDROPCOLOR =
                 HyprlandAPI::getConfigValue(PHANDLE,
-                                            "plugin:workspace_overview:drop_zone_color");
-            if (PDROPZONECOLOR) {
+                                            "plugin:workspace_overview:drop_color");
+            if (PDROPCOLOR) {
                 try {
-                    auto colorValue = PDROPZONECOLOR->getValue();
+                    auto colorValue = PDROPCOLOR->getValue();
                     int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
                     g_dropZoneColor = CHyprColor{(uint32_t)colorInt};
                 } catch (const std::bad_any_cast& e) {
                     Debug::log(ERR,
-                               "[workspace-overview] Failed to read drop_zone_color: {}",
+                               "[workspace-overview] Failed to read drop_color: {}",
                                e.what());
                 }
             }
@@ -429,14 +429,14 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         }
     }
 
-    auto* const PACTIVEBORDERSIZE =
-        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:active_border_size");
-    if (PACTIVEBORDERSIZE) {
+    auto* const PBORDERSIZE =
+        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:border_size");
+    if (PBORDERSIZE) {
         try {
-            auto sizeValue = PACTIVEBORDERSIZE->getValue();
+            auto sizeValue = PBORDERSIZE->getValue();
             g_activeBorderSize = std::any_cast<Hyprlang::FLOAT>(sizeValue);
         } catch (const std::bad_any_cast& e) {
-            Debug::log(ERR, "[workspace-overview] Failed to read active_border_size: {}",
+            Debug::log(ERR, "[workspace-overview] Failed to read border_size: {}",
                        e.what());
         }
     }
@@ -466,15 +466,15 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         }
     }
 
-    auto* const PDROPZONECOLOR =
-        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:drop_zone_color");
-    if (PDROPZONECOLOR) {
+    auto* const PDROPCOLOR =
+        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:drop_color");
+    if (PDROPCOLOR) {
         try {
-            auto colorValue = PDROPZONECOLOR->getValue();
+            auto colorValue = PDROPCOLOR->getValue();
             int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
             g_dropZoneColor = CHyprColor{(uint32_t)colorInt};
         } catch (const std::bad_any_cast& e) {
-            Debug::log(ERR, "[workspace-overview] Failed to read drop_zone_color: {}",
+            Debug::log(ERR, "[workspace-overview] Failed to read drop_color: {}",
                        e.what());
         }
     }

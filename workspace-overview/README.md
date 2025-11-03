@@ -175,7 +175,7 @@ plugin:workspace_overview:background_path = /path/to/your/background.png
 plugin:workspace_overview:active_border_color = 0x4c7fa6ff  # Blue (default)
 
 # Active workspace border thickness (pixels)
-plugin:workspace_overview:active_border_size = 4.0
+plugin:workspace_overview:border_size = 4.0
 
 # Placeholder workspace plus sign color (hex RGBA format: 0xRRGGBBAA)
 plugin:workspace_overview:placeholder_plus_color = 0xffffffcc  # White with 80% opacity (default)
@@ -184,7 +184,7 @@ plugin:workspace_overview:placeholder_plus_color = 0xffffffcc  # White with 80% 
 plugin:workspace_overview:placeholder_plus_size = 8.0
 
 # Drop zone indicator color during drag-and-drop (hex RGBA format: 0xRRGGBBAA)
-plugin:workspace_overview:drop_zone_color = 0xffffffcc  # White with 80% opacity (default)
+plugin:workspace_overview:drop_color = 0xffffffcc  # White with 80% opacity (default)
 
 # Number of placeholder (empty) workspaces to show
 plugin:workspace_overview:placeholders_num = 5

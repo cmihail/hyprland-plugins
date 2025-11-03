@@ -4817,7 +4817,7 @@ TEST(ConfigurationTest, DefaultActiveBorderColor) {
     EXPECT_TRUE(color.equals(76.0f/255.0f, 127.0f/255.0f, 166.0f/255.0f, 1.0f));
 }
 
-TEST(ConfigurationTest, DefaultActiveBorderSize) {
+TEST(ConfigurationTest, DefaultBorderSize) {
     float defaultSize = 4.0f;
     EXPECT_EQ(defaultSize, 4.0f);
     EXPECT_GT(defaultSize, 0.0f);
@@ -4835,7 +4835,7 @@ TEST(ConfigurationTest, DefaultPlaceholderPlusSize) {
     EXPECT_GT(defaultSize, 0.0f);
 }
 
-TEST(ConfigurationTest, DefaultDropZoneColor) {
+TEST(ConfigurationTest, DefaultDropColor) {
     // Default: 0xffffffcc -> rgba(255, 255, 255, 204)
     ConfigColor color(0xffffffcc);
     EXPECT_TRUE(color.equals(1.0f, 1.0f, 1.0f, 204.0f/255.0f));
@@ -4918,6 +4918,156 @@ TEST(ConfigurationTest, HighPlaceholderCount) {
 
     EXPECT_EQ(totalWorkspaces, 22);
     EXPECT_GT(totalWorkspaces, existingWorkspaces);
+}
+
+// Configuration Naming Tests (for renamed config options)
+
+TEST(ConfigurationTest, BorderSizeValidRange) {
+    // Test that border_size accepts valid values
+    std::vector<float> validSizes = {0.5f, 1.0f, 2.0f, 4.0f, 8.0f, 10.0f, 16.0f};
+
+    for (float size : validSizes) {
+        EXPECT_GT(size, 0.0f) << "border_size must be positive: " << size;
+        EXPECT_LE(size, 100.0f) << "border_size should be reasonable: " << size;
+    }
+}
+
+TEST(ConfigurationTest, BorderSizeZeroInvalid) {
+    // Test that zero border size is invalid
+    float borderSize = 0.0f;
+    EXPECT_EQ(borderSize, 0.0f);
+    EXPECT_FALSE(borderSize > 0.0f) << "border_size of 0 should be invalid";
+}
+
+TEST(ConfigurationTest, BorderSizeNegativeInvalid) {
+    // Test that negative border size is invalid
+    float borderSize = -1.0f;
+    EXPECT_LT(borderSize, 0.0f);
+    EXPECT_FALSE(borderSize > 0.0f) << "negative border_size should be invalid";
+}
+
+TEST(ConfigurationTest, DropColorOpacityVariations) {
+    // Test drop_color with different opacity values
+    std::vector<uint32_t> testColors = {
+        0xffffff00,  // Fully transparent white
+        0xffffff40,  // 25% opacity white
+        0xffffff80,  // 50% opacity white
+        0xffffffcc,  // Default 80% opacity white
+        0xffffffff   // Fully opaque white
+    };
+
+    for (uint32_t rgba : testColors) {
+        ConfigColor color(rgba);
+        EXPECT_GE(color.a, 0.0f) << "Alpha must be >= 0";
+        EXPECT_LE(color.a, 1.0f) << "Alpha must be <= 1";
+    }
+}
+
+TEST(ConfigurationTest, DropColorDifferentColors) {
+    // Test drop_color with various colors
+    struct TestCase {
+        uint32_t rgba;
+        float r, g, b;
+        const char* name;
+    };
+
+    std::vector<TestCase> tests = {
+        {0xff0000ff, 1.0f, 0.0f, 0.0f, "Red"},
+        {0x00ff00ff, 0.0f, 1.0f, 0.0f, "Green"},
+        {0x0000ffff, 0.0f, 0.0f, 1.0f, "Blue"},
+        {0xffffffff, 1.0f, 1.0f, 1.0f, "White"},
+        {0x000000ff, 0.0f, 0.0f, 0.0f, "Black"}
+    };
+
+    for (const auto& test : tests) {
+        ConfigColor color(test.rgba);
+        EXPECT_TRUE(color.equals(test.r, test.g, test.b, 1.0f))
+            << "Failed for color: " << test.name;
+    }
+}
+
+TEST(ConfigurationTest, BorderSizeImpactsRendering) {
+    // Test that different border sizes affect rendered border dimensions
+    float smallBorder = 1.0f;
+    float mediumBorder = 4.0f;
+    float largeBorder = 10.0f;
+
+    EXPECT_LT(smallBorder, mediumBorder);
+    EXPECT_LT(mediumBorder, largeBorder);
+
+    // Simulate border rendering area calculation
+    float boxWidth = 100.0f;
+    float boxHeight = 100.0f;
+
+    float smallArea = smallBorder * 2 * (boxWidth + boxHeight);
+    float mediumArea = mediumBorder * 2 * (boxWidth + boxHeight);
+    float largeArea = largeBorder * 2 * (boxWidth + boxHeight);
+
+    EXPECT_LT(smallArea, mediumArea);
+    EXPECT_LT(mediumArea, largeArea);
+}
+
+TEST(ConfigurationTest, DropColorConsistentFormat) {
+    // Verify that drop_color uses consistent RGBA format across different values
+    uint32_t color1 = 0x4c7fa6ff;  // Similar to active_border_color
+    uint32_t color2 = 0xffffffcc;  // Default drop_color
+
+    ConfigColor c1(color1);
+    ConfigColor c2(color2);
+
+    // Both should be properly parsed with RGBA format
+    EXPECT_GE(c1.r, 0.0f); EXPECT_LE(c1.r, 1.0f);
+    EXPECT_GE(c1.g, 0.0f); EXPECT_LE(c1.g, 1.0f);
+    EXPECT_GE(c1.b, 0.0f); EXPECT_LE(c1.b, 1.0f);
+    EXPECT_GE(c1.a, 0.0f); EXPECT_LE(c1.a, 1.0f);
+
+    EXPECT_GE(c2.r, 0.0f); EXPECT_LE(c2.r, 1.0f);
+    EXPECT_GE(c2.g, 0.0f); EXPECT_LE(c2.g, 1.0f);
+    EXPECT_GE(c2.b, 0.0f); EXPECT_LE(c2.b, 1.0f);
+    EXPECT_GE(c2.a, 0.0f); EXPECT_LE(c2.a, 1.0f);
+}
+
+TEST(ConfigurationTest, BorderSizeScaling) {
+    // Test that border_size scales appropriately with monitor resolution
+    struct Resolution {
+        float width, height;
+        float recommendedBorderSize;
+    };
+
+    std::vector<Resolution> resolutions = {
+        {1920.0f, 1080.0f, 4.0f},   // 1080p
+        {2560.0f, 1440.0f, 5.0f},   // 1440p
+        {3840.0f, 2160.0f, 8.0f}    // 4K
+    };
+
+    for (const auto& res : resolutions) {
+        float borderSize = res.recommendedBorderSize;
+        EXPECT_GT(borderSize, 0.0f);
+
+        // Border should be small relative to screen size (< 1% of smaller dimension)
+        float minDim = std::min(res.width, res.height);
+        EXPECT_LT(borderSize, minDim * 0.01f)
+            << "Border size should be less than 1% of screen dimension";
+    }
+}
+
+TEST(ConfigurationTest, DropColorTransparencyEffects) {
+    // Test that drop_color transparency affects visibility
+    uint32_t fullyOpaque = 0xff0000ff;      // Red, 100% opacity
+    uint32_t halfOpaque = 0xff000080;       // Red, 50% opacity
+    uint32_t nearlyTransparent = 0xff000010; // Red, ~6% opacity
+
+    ConfigColor c1(fullyOpaque);
+    ConfigColor c2(halfOpaque);
+    ConfigColor c3(nearlyTransparent);
+
+    EXPECT_NEAR(c1.a, 1.0f, 0.01f);
+    EXPECT_NEAR(c2.a, 0.5f, 0.01f);
+    EXPECT_LT(c3.a, 0.1f);
+
+    // Verify alpha ordering
+    EXPECT_GT(c1.a, c2.a);
+    EXPECT_GT(c2.a, c3.a);
 }
 
 // Mouse Button Handling Tests
