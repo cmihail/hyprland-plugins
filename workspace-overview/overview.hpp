@@ -111,7 +111,17 @@ class COverview {
     void        renderDropZoneBelowLast(int lastIndex);
     void        renderDropZoneBetween(int above, int below);
     void        handleWorkspaceReordering();
+    void        handleSameMonitorDrop(int sourceIdx);
+    void        handleCrossMonitorDrop(int sourceIdx);
+    void        handleMiddleThirdDrop(COverview* targetOverview, int sourceIdx,
+                                       int targetIdx, bool isCrossMonitor);
+    void        handleCrossMonitorPlaceholderDrop(COverview* targetOverview,
+                                                    int sourceIdx, int targetIdx);
+    int         findFirstPlaceholderIndex() const;
     void        reorderWorkspace(int sourceIdx, int targetIdx);
+    void        mergeWorkspace(int sourceIdx, int targetIdx);
+    void        moveWorkspaceToPlaceholder(int sourceIdx, int placeholderIdx);
+    void        removeWorkspaceAndShiftWindows(int workspaceIdx);
     int         calculateTargetIndexFromDropZone(int sourceIdx, int dropZoneAbove,
                                                   int dropZoneBelow);
     void        collectWorkspaceWindowsForReorder(
@@ -123,6 +133,8 @@ class COverview {
     void        scheduleWorkspaceRefreshes(int sourceIdx, int targetIdx);
     static void moveCrossMonitorWorkspace(COverview* sourceOverview, int sourceIdx,
                                           COverview* targetOverview, int targetIdx);
+    static void mergeCrossMonitorWorkspace(COverview* sourceOverview, int sourceIdx,
+                                           COverview* targetOverview, int targetIdx);
     static void moveSourceMonitorWindowsUp(COverview* sourceOverview, int sourceIdx);
     static void moveTargetMonitorWindowsDown(COverview* targetOverview, int targetIdx);
     void        recalculateMaxScrollOffset();

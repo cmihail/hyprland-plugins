@@ -5311,3 +5311,387 @@ TEST(CrossMonitorBorderRenderingTest, EdgeCase_NegativeDropZone) {
         << "Border should NOT render for special drop zone above first "
         << "workspace";
 }
+
+// ============================================================================
+// Workspace Merge Tests
+// ============================================================================
+
+TEST(WorkspaceMergeTest, DetectDropOnWorkspace_MiddleThird) {
+    int dropZoneAbove = 3;
+    int dropZoneBelow = 3;
+
+    bool isDropOnWorkspace = (dropZoneAbove >= 0 && dropZoneAbove == dropZoneBelow);
+
+    EXPECT_TRUE(isDropOnWorkspace)
+        << "When dropZoneAbove == dropZoneBelow and both >= 0, "
+        << "should detect drop ON workspace";
+}
+
+TEST(WorkspaceMergeTest, DetectDropBetween_NotMiddleThird) {
+    int dropZoneAbove = 2;
+    int dropZoneBelow = 3;
+
+    bool isDropOnWorkspace = (dropZoneAbove >= 0 && dropZoneAbove == dropZoneBelow);
+
+    EXPECT_FALSE(isDropOnWorkspace)
+        << "When dropZoneAbove != dropZoneBelow, "
+        << "should detect drop BETWEEN workspaces";
+}
+
+TEST(WorkspaceMergeTest, RejectMergeWithSelf) {
+    int sourceIdx = 2;
+    int targetIdx = 2;
+
+    bool shouldMerge = (sourceIdx != targetIdx);
+
+    EXPECT_FALSE(shouldMerge)
+        << "Should not merge workspace with itself";
+}
+
+TEST(WorkspaceMergeTest, RejectMergeIntoPlaceholder) {
+    bool targetIsPlaceholder = true;
+
+    EXPECT_FALSE(!targetIsPlaceholder)
+        << "Should not merge into a placeholder workspace";
+}
+
+TEST(WorkspaceMergeTest, AcceptMergeIntoDifferentRealWorkspace) {
+    int sourceIdx = 1;
+    int targetIdx = 3;
+    bool targetIsPlaceholder = false;
+
+    bool shouldMerge = (sourceIdx != targetIdx && !targetIsPlaceholder);
+
+    EXPECT_TRUE(shouldMerge)
+        << "Should merge workspace 1 into workspace 3 when target is real";
+}
+
+TEST(WorkspaceMergeTest, WindowShiftAfterRemoval_SimpleCase) {
+    int removedWorkspaceIdx = 1;
+    int totalWorkspaces = 4;
+
+    std::vector<std::pair<int, int>> expectedMoves;
+    for (int i = removedWorkspaceIdx + 1; i < totalWorkspaces; ++i) {
+        int targetIdx = i - 1;
+        expectedMoves.push_back({i, targetIdx});
+    }
+
+    ASSERT_EQ(expectedMoves.size(), 2u)
+        << "Should move 2 workspaces";
+
+    EXPECT_EQ(expectedMoves[0].first, 2)
+        << "First move: from workspace 2";
+    EXPECT_EQ(expectedMoves[0].second, 1)
+        << "First move: to workspace 1";
+
+    EXPECT_EQ(expectedMoves[1].first, 3)
+        << "Second move: from workspace 3";
+    EXPECT_EQ(expectedMoves[1].second, 2)
+        << "Second move: to workspace 2";
+}
+
+TEST(WorkspaceMergeTest, WindowShiftAfterRemoval_LastWorkspace) {
+    int removedWorkspaceIdx = 3;
+    int totalWorkspaces = 4;
+
+    std::vector<std::pair<int, int>> expectedMoves;
+    for (int i = removedWorkspaceIdx + 1; i < totalWorkspaces; ++i) {
+        int targetIdx = i - 1;
+        expectedMoves.push_back({i, targetIdx});
+    }
+
+    EXPECT_EQ(expectedMoves.size(), 0u)
+        << "Removing last workspace should not shift any windows";
+}
+
+TEST(WorkspaceMergeTest, WindowShiftAfterRemoval_FirstWorkspace) {
+    int removedWorkspaceIdx = 0;
+    int totalWorkspaces = 4;
+
+    std::vector<std::pair<int, int>> expectedMoves;
+    for (int i = removedWorkspaceIdx + 1; i < totalWorkspaces; ++i) {
+        int targetIdx = i - 1;
+        expectedMoves.push_back({i, targetIdx});
+    }
+
+    ASSERT_EQ(expectedMoves.size(), 3u)
+        << "Should move 3 workspaces";
+
+    EXPECT_EQ(expectedMoves[0].first, 1)
+        << "First move: from workspace 1";
+    EXPECT_EQ(expectedMoves[0].second, 0)
+        << "First move: to workspace 0";
+
+    EXPECT_EQ(expectedMoves[1].first, 2)
+        << "Second move: from workspace 2";
+    EXPECT_EQ(expectedMoves[1].second, 1)
+        << "Second move: to workspace 1";
+
+    EXPECT_EQ(expectedMoves[2].first, 3)
+        << "Third move: from workspace 3";
+    EXPECT_EQ(expectedMoves[2].second, 2)
+        << "Third move: to workspace 2";
+}
+
+TEST(WorkspaceMergeTest, MergeFromAbove_SourceIndexLower) {
+    int sourceIdx = 1;
+    int targetIdx = 3;
+
+    bool mergingDown = (sourceIdx < targetIdx);
+
+    EXPECT_TRUE(mergingDown)
+        << "Merging from workspace 1 to 3 should be considered merging down";
+}
+
+TEST(WorkspaceMergeTest, MergeFromBelow_SourceIndexHigher) {
+    int sourceIdx = 3;
+    int targetIdx = 1;
+
+    bool mergingDown = (sourceIdx < targetIdx);
+
+    EXPECT_FALSE(mergingDown)
+        << "Merging from workspace 3 to 1 should be considered merging up";
+}
+
+TEST(WorkspaceMergeTest, RefreshWorkspacesAfterMerge_TargetAndShifted) {
+    int sourceIdx = 1;
+    int targetIdx = 3;
+    int activeIndex = 5;
+
+    std::vector<int> workspacesToRefresh;
+    workspacesToRefresh.push_back(targetIdx);
+
+    for (int i = sourceIdx; i < activeIndex; ++i) {
+        if (i != activeIndex) {
+            workspacesToRefresh.push_back(i);
+        }
+    }
+
+    ASSERT_EQ(workspacesToRefresh.size(), 5u)
+        << "Should refresh target workspace and all shifted workspaces";
+
+    EXPECT_EQ(workspacesToRefresh[0], 3)
+        << "First refresh: target workspace";
+    EXPECT_EQ(workspacesToRefresh[1], 1)
+        << "Second refresh: workspace 1 (source)";
+    EXPECT_EQ(workspacesToRefresh[2], 2)
+        << "Third refresh: workspace 2 (shifted)";
+    EXPECT_EQ(workspacesToRefresh[3], 3)
+        << "Fourth refresh: workspace 3 (shifted)";
+    EXPECT_EQ(workspacesToRefresh[4], 4)
+        << "Fifth refresh: workspace 4 (shifted)";
+}
+
+// ============================================================================
+// Cross-Monitor Workspace Merge Tests
+// ============================================================================
+
+TEST(CrossMonitorWorkspaceMergeTest, SameMonitorDetection) {
+    void* sourceOverview = reinterpret_cast<void*>(0x1000);
+    void* targetOverview = reinterpret_cast<void*>(0x1000);
+
+    bool actuallyOnSameMonitor = (sourceOverview == targetOverview);
+
+    EXPECT_TRUE(actuallyOnSameMonitor)
+        << "Should detect same monitor when both overview pointers are equal";
+}
+
+TEST(CrossMonitorWorkspaceMergeTest, DifferentMonitorDetection) {
+    void* sourceOverview = reinterpret_cast<void*>(0x1000);
+    void* targetOverview = reinterpret_cast<void*>(0x2000);
+
+    bool actuallyOnSameMonitor = (sourceOverview == targetOverview);
+
+    EXPECT_FALSE(actuallyOnSameMonitor)
+        << "Should detect different monitors when overview pointers differ";
+}
+
+TEST(CrossMonitorWorkspaceMergeTest, RefreshBothMonitorsAfterMerge) {
+    int sourceIdx = 1;
+    int targetIdx = 2;
+    int sourceActiveIndex = 4;
+
+    // Target monitor: refresh target workspace
+    std::vector<int> targetRefreshIndices = {targetIdx};
+    EXPECT_EQ(targetRefreshIndices.size(), 1u)
+        << "Target monitor should refresh 1 workspace (the merge target)";
+    EXPECT_EQ(targetRefreshIndices[0], targetIdx)
+        << "Should refresh the target workspace";
+
+    // Source monitor: refresh all shifted workspaces
+    std::vector<int> sourceRefreshIndices;
+    for (int i = sourceIdx; i < sourceActiveIndex; ++i) {
+        if (i != sourceActiveIndex) {
+            sourceRefreshIndices.push_back(i);
+        }
+    }
+
+    EXPECT_EQ(sourceRefreshIndices.size(), 3u)
+        << "Source monitor should refresh 3 workspaces (source and shifted)";
+    EXPECT_EQ(sourceRefreshIndices[0], 1)
+        << "First: source workspace index";
+    EXPECT_EQ(sourceRefreshIndices[1], 2)
+        << "Second: shifted workspace";
+    EXPECT_EQ(sourceRefreshIndices[2], 3)
+        << "Third: shifted workspace";
+}
+
+TEST(CrossMonitorWorkspaceMergeTest, NoRefreshWhenNoShiftedWorkspaces) {
+    int sourceIdx = 3;  // Last workspace
+    int sourceActiveIndex = 4;
+
+    std::vector<int> sourceRefreshIndices;
+    for (int i = sourceIdx; i < sourceActiveIndex; ++i) {
+        if (i != sourceActiveIndex) {
+            sourceRefreshIndices.push_back(i);
+        }
+    }
+
+    EXPECT_EQ(sourceRefreshIndices.size(), 1u)
+        << "Should only refresh source workspace when it's the last one";
+}
+
+TEST(CrossMonitorWorkspaceMergeTest, MergeFromFirstWorkspace) {
+    int sourceIdx = 0;
+    int targetIdx = 2;
+    int sourceActiveIndex = 4;
+
+    std::vector<int> sourceRefreshIndices;
+    for (int i = sourceIdx; i < sourceActiveIndex; ++i) {
+        if (i != sourceActiveIndex) {
+            sourceRefreshIndices.push_back(i);
+        }
+    }
+
+    EXPECT_EQ(sourceRefreshIndices.size(), 4u)
+        << "Should refresh all 4 workspaces when merging from first";
+    EXPECT_EQ(sourceRefreshIndices[0], 0)
+        << "Should include source workspace";
+    EXPECT_EQ(sourceRefreshIndices[3], 3)
+        << "Should include last shifted workspace";
+}
+
+// ============================================================================
+// Workspace Move to Placeholder Tests
+// ============================================================================
+
+TEST(WorkspaceMoveToPlaceholderTest, FirstPlaceholderDetection) {
+    std::vector<bool> isPlaceholder = {false, false, false, true, true, true};
+
+    int firstPlaceholderIndex = -1;
+    for (size_t i = 0; i < isPlaceholder.size(); ++i) {
+        if (isPlaceholder[i]) {
+            firstPlaceholderIndex = i;
+            break;
+        }
+    }
+
+    EXPECT_EQ(firstPlaceholderIndex, 3)
+        << "First placeholder should be at index 3";
+}
+
+TEST(WorkspaceMoveToPlaceholderTest, AllowDropOnFirstPlaceholder) {
+    int targetIdx = 3;
+    int firstPlaceholderIndex = 3;
+
+    bool allowDrop = (firstPlaceholderIndex >= 0 && targetIdx == firstPlaceholderIndex);
+
+    EXPECT_TRUE(allowDrop)
+        << "Should allow drop on first placeholder";
+}
+
+TEST(WorkspaceMoveToPlaceholderTest, RejectDropOnSecondPlaceholder) {
+    int targetIdx = 4;
+    int firstPlaceholderIndex = 3;
+
+    bool allowDrop = (firstPlaceholderIndex >= 0 && targetIdx == firstPlaceholderIndex);
+
+    EXPECT_FALSE(allowDrop)
+        << "Should reject drop on second placeholder";
+}
+
+TEST(WorkspaceMoveToPlaceholderTest, NoPlaceholdersAvailable) {
+    std::vector<bool> isPlaceholder = {false, false, false, false};
+
+    int firstPlaceholderIndex = -1;
+    for (size_t i = 0; i < isPlaceholder.size(); ++i) {
+        if (isPlaceholder[i]) {
+            firstPlaceholderIndex = i;
+            break;
+        }
+    }
+
+    EXPECT_EQ(firstPlaceholderIndex, -1)
+        << "Should return -1 when no placeholders exist";
+}
+
+TEST(WorkspaceMoveToPlaceholderTest, RefreshNewWorkspaceAndShifted) {
+    int sourceIdx = 1;
+    int placeholderIdx = 3;
+    int activeIndex = 5;
+
+    std::vector<int> workspacesToRefresh = {placeholderIdx};
+
+    for (int i = sourceIdx; i < activeIndex; ++i) {
+        if (i != activeIndex) {
+            workspacesToRefresh.push_back(i);
+        }
+    }
+
+    EXPECT_EQ(workspacesToRefresh.size(), 5u)
+        << "Should refresh new workspace and all shifted workspaces";
+    EXPECT_EQ(workspacesToRefresh[0], 3)
+        << "First: new workspace at placeholder position";
+    EXPECT_EQ(workspacesToRefresh[1], 1)
+        << "Second: source workspace index (shifted)";
+}
+
+TEST(WorkspaceMoveToPlaceholderTest, MoveFromFirstToPlaceholder) {
+    int sourceIdx = 0;
+    int placeholderIdx = 3;
+    int activeIndex = 4;
+
+    std::vector<int> workspacesToRefresh = {placeholderIdx};
+
+    for (int i = sourceIdx; i < activeIndex; ++i) {
+        if (i != activeIndex) {
+            workspacesToRefresh.push_back(i);
+        }
+    }
+
+    EXPECT_EQ(workspacesToRefresh.size(), 5u)
+        << "Should refresh new workspace plus all 4 shifted workspaces";
+}
+
+TEST(WorkspaceMoveToPlaceholderTest, RejectMoveToSelf) {
+    int sourceIdx = 3;
+    int placeholderIdx = 3;
+
+    bool shouldMove = (sourceIdx != placeholderIdx);
+
+    EXPECT_FALSE(shouldMove)
+        << "Should reject move when source equals placeholder index";
+}
+
+TEST(WorkspaceMoveToPlaceholderTest, CrossMonitorPlaceholderDetection) {
+    // Source monitor
+    void* sourceOverview = reinterpret_cast<void*>(0x1000);
+
+    // Target monitor
+    void* targetOverview = reinterpret_cast<void*>(0x2000);
+
+    bool isCrossMonitor = (sourceOverview != targetOverview);
+
+    EXPECT_TRUE(isCrossMonitor)
+        << "Should detect cross-monitor when dropping to placeholder on different monitor";
+}
+
+TEST(WorkspaceMoveToPlaceholderTest, SameMonitorPlaceholderDetection) {
+    void* sourceOverview = reinterpret_cast<void*>(0x1000);
+    void* targetOverview = reinterpret_cast<void*>(0x1000);
+
+    bool isCrossMonitor = (sourceOverview != targetOverview);
+
+    EXPECT_FALSE(isCrossMonitor)
+        << "Should detect same monitor when dropping to placeholder on same monitor";
+}

@@ -2161,56 +2161,155 @@ void COverview::handleWorkspaceReordering() {
     if (sourceIdx < 0 || sourceIdx >= g_dragState.sourceOverview->activeIndex)
         return;
 
-    // Don't allow reordering placeholders
     if (!g_dragState.sourceOverview->images[sourceIdx].pWorkspace)
         return;
 
-    // Check if this is a cross-monitor drop
     bool isCrossMonitor = (g_dragState.sourceOverview != this);
 
-    if (isCrossMonitor) {
-        // Cross-monitor workspace drag - need to find target monitor first
-        auto mousePos = g_pInputManager->getMouseCoordsInternal();
+    if (isCrossMonitor)
+        handleCrossMonitorDrop(sourceIdx);
+    else
+        handleSameMonitorDrop(sourceIdx);
+}
 
-        const auto monitor = g_pCompositor->getMonitorFromVector(mousePos);
-        if (!monitor)
-            return;
+void COverview::handleSameMonitorDrop(int sourceIdx) {
+    auto [dropZoneAbove, dropZoneBelow] =
+        findDropZoneBetweenWorkspaces(lastMousePosLocal);
 
-        auto it = g_pOverviews.find(monitor);
-        if (it == g_pOverviews.end() || !it->second)
-            return;
+    if (dropZoneAbove < 0 && dropZoneBelow < 0)
+        return;
 
-        COverview* targetOverview = it->second.get();
-        Vector2D localPos = mousePos - monitor->m_position;
-
-        // Find drop zone on target monitor
-        auto [dropZoneAbove, dropZoneBelow] = targetOverview->findDropZoneBetweenWorkspaces(localPos);
-
-        if (dropZoneAbove < 0 && dropZoneBelow < 0)
-            return;
-
-        // Calculate target index from drop zone (use -1 for sourceIdx since it's cross-monitor)
-        int targetIdx = targetOverview->calculateTargetIndexFromDropZone(-1, dropZoneAbove, dropZoneBelow);
-
-        if (targetIdx < 0)
-            return;
-
-        // Perform cross-monitor workspace move
-        moveCrossMonitorWorkspace(g_dragState.sourceOverview, sourceIdx, targetOverview, targetIdx);
-    } else {
-        // Same-monitor workspace reordering
-        auto [dropZoneAbove, dropZoneBelow] = findDropZoneBetweenWorkspaces(lastMousePosLocal);
-
-        if (dropZoneAbove < 0 && dropZoneBelow < 0)
-            return;
-
-        int targetIdx = calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow);
-
-        if (targetIdx < 0 || sourceIdx == targetIdx)
-            return;
-
-        reorderWorkspace(sourceIdx, targetIdx);
+    if (dropZoneAbove >= 0 && dropZoneAbove == dropZoneBelow) {
+        handleMiddleThirdDrop(this, sourceIdx, dropZoneAbove, false);
+        return;
     }
+
+    int targetIdx =
+        calculateTargetIndexFromDropZone(sourceIdx, dropZoneAbove, dropZoneBelow);
+
+    if (targetIdx < 0 || sourceIdx == targetIdx)
+        return;
+
+    reorderWorkspace(sourceIdx, targetIdx);
+}
+
+void COverview::handleCrossMonitorDrop(int sourceIdx) {
+    auto mousePos = g_pInputManager->getMouseCoordsInternal();
+
+    const auto monitor = g_pCompositor->getMonitorFromVector(mousePos);
+    if (!monitor)
+        return;
+
+    auto it = g_pOverviews.find(monitor);
+    if (it == g_pOverviews.end() || !it->second)
+        return;
+
+    COverview* targetOverview = it->second.get();
+    Vector2D localPos = mousePos - monitor->m_position;
+
+    auto [dropZoneAbove, dropZoneBelow] =
+        targetOverview->findDropZoneBetweenWorkspaces(localPos);
+
+    if (dropZoneAbove < 0 && dropZoneBelow < 0)
+        return;
+
+    if (dropZoneAbove >= 0 && dropZoneAbove == dropZoneBelow) {
+        bool actuallyOnSameMonitor =
+            (g_dragState.sourceOverview == targetOverview);
+        handleMiddleThirdDrop(targetOverview, sourceIdx, dropZoneAbove,
+                              !actuallyOnSameMonitor);
+        return;
+    }
+
+    int targetIdx = targetOverview->calculateTargetIndexFromDropZone(
+        -1, dropZoneAbove, dropZoneBelow);
+
+    if (targetIdx < 0)
+        return;
+
+    moveCrossMonitorWorkspace(g_dragState.sourceOverview, sourceIdx,
+                              targetOverview, targetIdx);
+}
+
+void COverview::handleMiddleThirdDrop(COverview* targetOverview, int sourceIdx,
+                                       int targetIdx, bool isCrossMonitor) {
+    if (sourceIdx == targetIdx && !isCrossMonitor)
+        return;
+
+    if (targetIdx >= (int)targetOverview->images.size() ||
+        !targetOverview->images[targetIdx].pWorkspace) {
+        int firstPlaceholderIndex = targetOverview->findFirstPlaceholderIndex();
+
+        if (firstPlaceholderIndex >= 0 && targetIdx == firstPlaceholderIndex) {
+            if (isCrossMonitor)
+                handleCrossMonitorPlaceholderDrop(targetOverview, sourceIdx,
+                                                   targetIdx);
+            else
+                targetOverview->moveWorkspaceToPlaceholder(sourceIdx, targetIdx);
+        }
+        return;
+    }
+
+    if (isCrossMonitor)
+        mergeCrossMonitorWorkspace(g_dragState.sourceOverview, sourceIdx,
+                                   targetOverview, targetIdx);
+    else
+        targetOverview->mergeWorkspace(sourceIdx, targetIdx);
+}
+
+void COverview::handleCrossMonitorPlaceholderDrop(COverview* targetOverview,
+                                                   int sourceIdx,
+                                                   int targetIdx) {
+    auto& sourceImage = g_dragState.sourceOverview->images[sourceIdx];
+    if (!sourceImage.pWorkspace)
+        return;
+
+    std::vector<PHLWINDOW> sourceWindows;
+    for (auto& w : g_pCompositor->m_windows) {
+        if (w->m_workspace == sourceImage.pWorkspace && !w->isHidden() &&
+            w->m_isMapped) {
+            sourceWindows.push_back(w);
+        }
+    }
+
+    const int64_t workspaceID = targetOverview->findFirstAvailableWorkspaceID();
+    const auto monitorID = targetOverview->pMonitor->m_id;
+    auto& targetImage = targetOverview->images[targetIdx];
+    targetImage.workspaceID = workspaceID;
+    targetImage.pWorkspace =
+        g_pCompositor->createNewWorkspace(workspaceID, monitorID, "");
+
+    for (auto& win : sourceWindows) {
+        g_pCompositor->moveWindowToWorkspaceSafe(win, targetImage.pWorkspace);
+    }
+
+    g_dragState.sourceOverview->removeWorkspaceAndShiftWindows(sourceIdx);
+
+    std::vector<int> targetRefreshIndices = {targetIdx};
+    setupSourceWorkspaceRefreshTimer(targetOverview, targetRefreshIndices);
+
+    std::vector<int> sourceRefreshIndices;
+    for (int i = sourceIdx; i < g_dragState.sourceOverview->activeIndex; ++i) {
+        if (i != g_dragState.sourceOverview->activeIndex) {
+            sourceRefreshIndices.push_back(i);
+        }
+    }
+    if (!sourceRefreshIndices.empty()) {
+        setupSourceWorkspaceRefreshTimer(g_dragState.sourceOverview,
+                                         sourceRefreshIndices);
+    }
+
+    g_dragState.sourceOverview->recalculateMaxScrollOffset();
+    targetOverview->recalculateMaxScrollOffset();
+}
+
+int COverview::findFirstPlaceholderIndex() const {
+    for (int i = 0; i < activeIndex; ++i) {
+        if (!images[i].pWorkspace) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 int COverview::calculateTargetIndexFromDropZone(int sourceIdx, int dropZoneAbove,
@@ -2263,6 +2362,139 @@ void COverview::reorderWorkspace(int sourceIdx, int targetIdx) {
     collectWorkspaceWindowsForReorder(sourceIdx, targetIdx, workspaceWindows);
     moveWindowsForReorder(sourceIdx, targetIdx, workspaceWindows);
     scheduleWorkspaceRefreshes(sourceIdx, targetIdx);
+}
+
+void COverview::mergeWorkspace(int sourceIdx, int targetIdx) {
+    if (sourceIdx < 0 || sourceIdx >= activeIndex ||
+        targetIdx < 0 || targetIdx >= activeIndex)
+        return;
+
+    if (sourceIdx == targetIdx)
+        return;
+
+    // Don't allow merging placeholders
+    if (!images[sourceIdx].pWorkspace || !images[targetIdx].pWorkspace)
+        return;
+
+    // Step 1: Move all windows from source workspace to target workspace
+    std::vector<PHLWINDOW> sourceWindows;
+    for (auto& w : g_pCompositor->m_windows) {
+        if (w->m_workspace == images[sourceIdx].pWorkspace &&
+            !w->isHidden() && w->m_isMapped) {
+            sourceWindows.push_back(w);
+        }
+    }
+
+    for (auto& win : sourceWindows) {
+        g_pCompositor->moveWindowToWorkspaceSafe(
+            win, images[targetIdx].pWorkspace
+        );
+    }
+
+    // Step 2: Remove the source workspace by shifting windows
+    removeWorkspaceAndShiftWindows(sourceIdx);
+
+    // Step 3: Schedule refresh for target workspace
+    std::vector<int> workspacesToRefresh = {targetIdx};
+
+    // Also refresh all workspaces after sourceIdx as they've been shifted
+    for (int i = sourceIdx; i < activeIndex; ++i) {
+        if (i != activeIndex) {
+            workspacesToRefresh.push_back(i);
+        }
+    }
+
+    setupSourceWorkspaceRefreshTimer(this, workspacesToRefresh);
+}
+
+void COverview::moveWorkspaceToPlaceholder(int sourceIdx, int placeholderIdx) {
+    if (sourceIdx < 0 || sourceIdx >= activeIndex ||
+        placeholderIdx < 0 || placeholderIdx >= activeIndex)
+        return;
+
+    if (sourceIdx == placeholderIdx)
+        return;
+
+    // Source must be a real workspace
+    if (!images[sourceIdx].pWorkspace)
+        return;
+
+    // Target must be a placeholder
+    if (images[placeholderIdx].pWorkspace)
+        return;
+
+    // Collect windows from source workspace
+    std::vector<PHLWINDOW> sourceWindows;
+    for (auto& w : g_pCompositor->m_windows) {
+        if (w->m_workspace == images[sourceIdx].pWorkspace &&
+            !w->isHidden() && w->m_isMapped) {
+            sourceWindows.push_back(w);
+        }
+    }
+
+    // Create new workspace at placeholder position
+    const int64_t workspaceID = findFirstAvailableWorkspaceID();
+    const auto monitorID = pMonitor->m_id;
+    auto& targetImage = images[placeholderIdx];
+    targetImage.workspaceID = workspaceID;
+    targetImage.pWorkspace = g_pCompositor->createNewWorkspace(workspaceID, monitorID, "");
+
+    // Move windows to new workspace
+    for (auto& win : sourceWindows) {
+        g_pCompositor->moveWindowToWorkspaceSafe(win, targetImage.pWorkspace);
+    }
+
+    // Remove source workspace by shifting windows
+    removeWorkspaceAndShiftWindows(sourceIdx);
+
+    // Schedule refresh for new workspace and all shifted workspaces
+    std::vector<int> workspacesToRefresh = {placeholderIdx};
+
+    // Also refresh all workspaces after sourceIdx as they've been shifted
+    for (int i = sourceIdx; i < activeIndex; ++i) {
+        if (i != activeIndex) {
+            workspacesToRefresh.push_back(i);
+        }
+    }
+
+    setupSourceWorkspaceRefreshTimer(this, workspacesToRefresh);
+}
+
+void COverview::removeWorkspaceAndShiftWindows(int workspaceIdx) {
+    if (workspaceIdx < 0 || workspaceIdx >= activeIndex)
+        return;
+
+    if (!images[workspaceIdx].pWorkspace)
+        return;
+
+    // Shift all windows from workspaces after this one
+    for (int i = workspaceIdx + 1; i < activeIndex; ++i) {
+        if (!images[i].pWorkspace)
+            continue;
+
+        // Get target workspace (the one before current)
+        int targetIdx = i - 1;
+        if (targetIdx < 0 || targetIdx >= activeIndex)
+            continue;
+
+        if (!images[targetIdx].pWorkspace)
+            continue;
+
+        // Move all windows from workspace i to workspace targetIdx
+        std::vector<PHLWINDOW> windows;
+        for (auto& w : g_pCompositor->m_windows) {
+            if (w->m_workspace == images[i].pWorkspace &&
+                !w->isHidden() && w->m_isMapped) {
+                windows.push_back(w);
+            }
+        }
+
+        for (auto& win : windows) {
+            g_pCompositor->moveWindowToWorkspaceSafe(
+                win, images[targetIdx].pWorkspace
+            );
+        }
+    }
 }
 
 void COverview::collectWorkspaceWindowsForReorder(
@@ -2405,6 +2637,57 @@ void COverview::moveCrossMonitorWorkspace(COverview* sourceOverview, int sourceI
     }
     if (!targetRefreshIndices.empty()) {
         setupSourceWorkspaceRefreshTimer(targetOverview, targetRefreshIndices);
+    }
+
+    // Recalculate max scroll offset for both monitors
+    sourceOverview->recalculateMaxScrollOffset();
+    targetOverview->recalculateMaxScrollOffset();
+}
+
+void COverview::mergeCrossMonitorWorkspace(COverview* sourceOverview, int sourceIdx,
+                                           COverview* targetOverview, int targetIdx) {
+    if (!sourceOverview || !targetOverview || sourceIdx < 0 || targetIdx < 0)
+        return;
+
+    if (sourceIdx >= sourceOverview->activeIndex || targetIdx >= targetOverview->activeIndex)
+        return;
+
+    auto& sourceImage = sourceOverview->images[sourceIdx];
+    if (!sourceImage.pWorkspace)
+        return;
+
+    auto& targetImage = targetOverview->images[targetIdx];
+    if (!targetImage.pWorkspace)
+        return;
+
+    // Step 1: Move all windows from source workspace to target workspace
+    std::vector<PHLWINDOW> sourceWindows;
+    for (auto& w : g_pCompositor->m_windows) {
+        if (w->m_workspace == sourceImage.pWorkspace && !w->isHidden() && w->m_isMapped) {
+            sourceWindows.push_back(w);
+        }
+    }
+
+    for (auto& win : sourceWindows) {
+        g_pCompositor->moveWindowToWorkspaceSafe(win, targetImage.pWorkspace);
+    }
+
+    // Step 2: Remove the source workspace by shifting windows on source monitor
+    sourceOverview->removeWorkspaceAndShiftWindows(sourceIdx);
+
+    // Step 3: Schedule refresh for target workspace
+    std::vector<int> targetRefreshIndices = {targetIdx};
+    setupSourceWorkspaceRefreshTimer(targetOverview, targetRefreshIndices);
+
+    // Step 4: Schedule refresh for all shifted workspaces on source monitor
+    std::vector<int> sourceRefreshIndices;
+    for (int i = sourceIdx; i < sourceOverview->activeIndex; ++i) {
+        if (i != sourceOverview->activeIndex) {
+            sourceRefreshIndices.push_back(i);
+        }
+    }
+    if (!sourceRefreshIndices.empty()) {
+        setupSourceWorkspaceRefreshTimer(sourceOverview, sourceRefreshIndices);
     }
 
     // Recalculate max scroll offset for both monitors
