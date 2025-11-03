@@ -5695,3 +5695,139 @@ TEST(WorkspaceMoveToPlaceholderTest, SameMonitorPlaceholderDetection) {
     EXPECT_FALSE(isCrossMonitor)
         << "Should detect same monitor when dropping to placeholder on same monitor";
 }
+
+// Helper function to determine if window drag border should be rendered
+// Mirrors logic in renderDropTargetBorder() for window drag operations
+bool shouldRenderWindowDragBorder(int workspaceIndex, int targetIndex,
+                                   int sourceWorkspaceIndex,
+                                   void* sourceOverview,
+                                   void* currentOverview) {
+    if (targetIndex != workspaceIndex)
+        return false;
+
+    bool isSourceWorkspace = (sourceOverview == currentOverview &&
+                              sourceWorkspaceIndex == workspaceIndex);
+    return !isSourceWorkspace;
+}
+
+TEST(WindowDragBorderRenderingTest, TargetWorkspace_ShouldRender) {
+    void* monitor1 = reinterpret_cast<void*>(0x1000);
+    int workspaceIndex = 3;
+    int targetIndex = 3;
+    int sourceWorkspaceIndex = 1;
+
+    bool shouldRender = shouldRenderWindowDragBorder(
+        workspaceIndex, targetIndex, sourceWorkspaceIndex,
+        monitor1, monitor1
+    );
+
+    EXPECT_TRUE(shouldRender)
+        << "Border should render on target workspace during window drag";
+}
+
+TEST(WindowDragBorderRenderingTest, SourceWorkspace_ShouldNotRender) {
+    void* monitor1 = reinterpret_cast<void*>(0x1000);
+    int workspaceIndex = 2;
+    int targetIndex = 2;
+    int sourceWorkspaceIndex = 2;
+
+    bool shouldRender = shouldRenderWindowDragBorder(
+        workspaceIndex, targetIndex, sourceWorkspaceIndex,
+        monitor1, monitor1
+    );
+
+    EXPECT_FALSE(shouldRender)
+        << "Border should NOT render on source workspace during window drag";
+}
+
+TEST(WindowDragBorderRenderingTest, NonTargetWorkspace_ShouldNotRender) {
+    void* monitor1 = reinterpret_cast<void*>(0x1000);
+    int workspaceIndex = 5;
+    int targetIndex = 3;
+    int sourceWorkspaceIndex = 1;
+
+    bool shouldRender = shouldRenderWindowDragBorder(
+        workspaceIndex, targetIndex, sourceWorkspaceIndex,
+        monitor1, monitor1
+    );
+
+    EXPECT_FALSE(shouldRender)
+        << "Border should NOT render on non-target workspace during window drag";
+}
+
+TEST(WindowDragBorderRenderingTest, CrossMonitorTargetWorkspace_ShouldRender) {
+    void* monitor1 = reinterpret_cast<void*>(0x1000);
+    void* monitor2 = reinterpret_cast<void*>(0x2000);
+    int workspaceIndex = 3;
+    int targetIndex = 3;
+    int sourceWorkspaceIndex = 2;
+
+    bool shouldRender = shouldRenderWindowDragBorder(
+        workspaceIndex, targetIndex, sourceWorkspaceIndex,
+        monitor1, monitor2
+    );
+
+    EXPECT_TRUE(shouldRender)
+        << "Border should render when dragging window to different monitor";
+}
+
+TEST(WindowDragBorderRenderingTest, CrossMonitorSameIndex_ShouldRender) {
+    void* monitor1 = reinterpret_cast<void*>(0x1000);
+    void* monitor2 = reinterpret_cast<void*>(0x2000);
+    int workspaceIndex = 3;
+    int targetIndex = 3;
+    int sourceWorkspaceIndex = 3;
+
+    bool shouldRender = shouldRenderWindowDragBorder(
+        workspaceIndex, targetIndex, sourceWorkspaceIndex,
+        monitor1, monitor2
+    );
+
+    EXPECT_TRUE(shouldRender)
+        << "Border should render when dragging to same index on different monitor";
+}
+
+TEST(WindowDragBorderRenderingTest, InvalidTarget_ShouldNotRender) {
+    void* monitor1 = reinterpret_cast<void*>(0x1000);
+    int workspaceIndex = 3;
+    int targetIndex = -1;
+    int sourceWorkspaceIndex = 1;
+
+    bool shouldRender = shouldRenderWindowDragBorder(
+        workspaceIndex, targetIndex, sourceWorkspaceIndex,
+        monitor1, monitor1
+    );
+
+    EXPECT_FALSE(shouldRender)
+        << "Border should NOT render when target index is invalid";
+}
+
+TEST(WindowDragBorderRenderingTest, FirstWorkspaceTarget_ShouldRender) {
+    void* monitor1 = reinterpret_cast<void*>(0x1000);
+    int workspaceIndex = 0;
+    int targetIndex = 0;
+    int sourceWorkspaceIndex = 2;
+
+    bool shouldRender = shouldRenderWindowDragBorder(
+        workspaceIndex, targetIndex, sourceWorkspaceIndex,
+        monitor1, monitor1
+    );
+
+    EXPECT_TRUE(shouldRender)
+        << "Border should render when targeting first workspace";
+}
+
+TEST(WindowDragBorderRenderingTest, LastWorkspaceTarget_ShouldRender) {
+    void* monitor1 = reinterpret_cast<void*>(0x1000);
+    int workspaceIndex = 7;
+    int targetIndex = 7;
+    int sourceWorkspaceIndex = 3;
+
+    bool shouldRender = shouldRenderWindowDragBorder(
+        workspaceIndex, targetIndex, sourceWorkspaceIndex,
+        monitor1, monitor1
+    );
+
+    EXPECT_TRUE(shouldRender)
+        << "Border should render when targeting last visible workspace";
+}

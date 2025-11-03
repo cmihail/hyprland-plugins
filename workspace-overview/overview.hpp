@@ -75,7 +75,7 @@ class COverview {
     void renderWorkspace(size_t i, const Vector2D& monitorSize, float monScale,
                          float zoomScale, const Vector2D& currentPos,
                          int dropZoneAbove, int dropZoneBelow,
-                         int firstPlaceholderIndex);
+                         int firstPlaceholderIndex, int windowDragTargetIndex);
     void renderWorkspaceIndicator(const CBox& scaledBox, size_t i, float alpha,
                                    CRegion& damage);
     void renderDropZoneIndicator(int dropZoneAbove, int dropZoneBelow);

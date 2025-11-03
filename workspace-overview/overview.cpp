@@ -946,8 +946,11 @@ namespace {
     void renderDropTargetBorder(const CBox& scaledBox, bool isWorkspace, size_t i,
                                 int activeIndex, int dropZoneAbove, int dropZoneBelow,
                                 int firstPlaceholderIndex, CRegion& damage,
-                                COverview* currentOverview) {
-        if (g_dragState.isDragging && g_dragState.isWorkspaceDrag) {
+                                COverview* currentOverview, int windowDragTargetIndex) {
+        if (!g_dragState.isDragging)
+            return;
+
+        if (g_dragState.isWorkspaceDrag) {
             bool isCrossMonitorDrag = (g_dragState.sourceOverview != currentOverview);
             bool isDraggingOnSelf = ((int)i == g_dragState.sourceWorkspaceIndex &&
                                      !isCrossMonitorDrag);
@@ -974,6 +977,39 @@ namespace {
                                         g_activeBorderSize, scaledBox.h};
                     g_pHyprOpenGL->renderRect(rightBorder, g_dropZoneColor, {.damage = &damage});
                 }
+            }
+        } else if (g_dragState.draggedWindow && windowDragTargetIndex == (int)i) {
+            // Window drag: highlight target workspace under cursor
+            // Check if this is not the source workspace
+            bool isSourceWorkspace = (
+                g_dragState.sourceOverview == currentOverview &&
+                g_dragState.sourceWorkspaceIndex == (int)i
+            );
+
+            if (!isSourceWorkspace) {
+                CBox topBorder = {scaledBox.x, scaledBox.y, scaledBox.w,
+                                  g_activeBorderSize};
+                g_pHyprOpenGL->renderRect(topBorder, g_dropZoneColor,
+                                          {.damage = &damage});
+
+                CBox bottomBorder = {scaledBox.x,
+                                     scaledBox.y + scaledBox.h -
+                                     g_activeBorderSize,
+                                     scaledBox.w, g_activeBorderSize};
+                g_pHyprOpenGL->renderRect(bottomBorder, g_dropZoneColor,
+                                          {.damage = &damage});
+
+                CBox leftBorder = {scaledBox.x, scaledBox.y,
+                                   g_activeBorderSize, scaledBox.h};
+                g_pHyprOpenGL->renderRect(leftBorder, g_dropZoneColor,
+                                          {.damage = &damage});
+
+                CBox rightBorder = {scaledBox.x + scaledBox.w -
+                                    g_activeBorderSize,
+                                    scaledBox.y, g_activeBorderSize,
+                                    scaledBox.h};
+                g_pHyprOpenGL->renderRect(rightBorder, g_dropZoneColor,
+                                          {.damage = &damage});
             }
         }
     }
@@ -1105,8 +1141,8 @@ void COverview::renderWorkspaceIndicator(const CBox& scaledBox, size_t i,
 void COverview::renderWorkspace(size_t i, const Vector2D& monitorSize,
                                  float monScale, float zoomScale,
                                  const Vector2D& currentPos, int dropZoneAbove,
-                                 int dropZoneBelow,
-                                 int firstPlaceholderIndex) {
+                                 int dropZoneBelow, int firstPlaceholderIndex,
+                                 int windowDragTargetIndex) {
     auto& image = images[i];
 
     CBox texbox = image.box;
@@ -1194,7 +1230,7 @@ void COverview::renderWorkspace(size_t i, const Vector2D& monitorSize,
 
     renderDropTargetBorder(scaledBox, (bool)image.pWorkspace, i, activeIndex,
                            dropZoneAbove, dropZoneBelow, firstPlaceholderIndex,
-                           damage, this);
+                           damage, this, windowDragTargetIndex);
 
     renderWorkspaceIndicator(scaledBox, i, alpha, damage);
 }
@@ -1295,6 +1331,16 @@ void COverview::fullRender() {
     auto [dropZoneAbove, dropZoneBelow] =
         findDropZoneBetweenWorkspaces(lastMousePosLocal);
 
+    int windowDragTargetIndex = -1;
+    if (g_dragState.isDragging && g_dragState.draggedWindow) {
+        auto mousePos = g_pInputManager->getMouseCoordsInternal();
+        auto [targetOverview, targetIndex] =
+            findWorkspaceAtGlobalPosition(mousePos);
+        if (targetOverview == this) {
+            windowDragTargetIndex = targetIndex;
+        }
+    }
+
     for (size_t i = 0; i < images.size(); ++i) {
         auto& image = images[i];
 
@@ -1306,7 +1352,8 @@ void COverview::fullRender() {
             continue;
 
         renderWorkspace(i, monitorSize, monScale, zoomScale, currentPos,
-                        dropZoneAbove, dropZoneBelow, firstPlaceholderIndex);
+                        dropZoneAbove, dropZoneBelow, firstPlaceholderIndex,
+                        windowDragTargetIndex);
     }
 
     renderDropZoneIndicator(dropZoneAbove, dropZoneBelow);
