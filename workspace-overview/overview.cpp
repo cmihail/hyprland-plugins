@@ -281,6 +281,7 @@ void COverview::setupEventHooks() {
     setupMouseAxisHook();
     setupMonitorHooks();
     setupWorkspaceChangeHook();
+    setupWindowEventHooks();
 }
 
 void COverview::setupMouseMoveHook() {
@@ -651,6 +652,59 @@ void COverview::setupWorkspaceChangeHook() {
     };
 
     workspaceChangeHook = g_pHookSystem->hookDynamic("workspace", onWorkspaceChange);
+}
+
+void COverview::setupWindowEventHooks() {
+    auto scheduleWorkspaceRefresh = [this](PHLWINDOW window) {
+        if (!window || closing)
+            return;
+
+        auto workspace = window->m_workspace;
+        if (!workspace)
+            return;
+
+        int workspaceIndex = -1;
+        for (size_t i = 0; i < images.size(); ++i) {
+            if (images[i].pWorkspace && images[i].pWorkspace == workspace) {
+                workspaceIndex = i;
+                break;
+            }
+        }
+
+        if (workspaceIndex < 0)
+            return;
+
+        std::vector<int> workspacesToRefresh = {workspaceIndex};
+        setupSourceWorkspaceRefreshTimer(this, workspacesToRefresh, 1000);
+    };
+
+    auto onOpenWindow = [this, scheduleWorkspaceRefresh](
+        void* self, SCallbackInfo& info, std::any param
+    ) {
+        auto window = std::any_cast<PHLWINDOW>(param);
+        scheduleWorkspaceRefresh(window);
+    };
+
+    auto onCloseWindow = [this, scheduleWorkspaceRefresh](
+        void* self, SCallbackInfo& info, std::any param
+    ) {
+        auto window = std::any_cast<PHLWINDOW>(param);
+        scheduleWorkspaceRefresh(window);
+    };
+
+    auto onMoveWindow = [this, scheduleWorkspaceRefresh](
+        void* self, SCallbackInfo& info, std::any param
+    ) {
+        auto data = std::any_cast<std::vector<std::any>>(param);
+        if (data.size() >= 2) {
+            auto window = std::any_cast<PHLWINDOW>(data[0]);
+            scheduleWorkspaceRefresh(window);
+        }
+    };
+
+    openWindowHook = g_pHookSystem->hookDynamic("openWindow", onOpenWindow);
+    closeWindowHook = g_pHookSystem->hookDynamic("closeWindow", onCloseWindow);
+    moveWindowHook = g_pHookSystem->hookDynamic("moveWindow", onMoveWindow);
 }
 
 void COverview::setInitialScrollPosition(float availableHeight) {
