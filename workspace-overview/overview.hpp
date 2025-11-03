@@ -67,6 +67,20 @@ class COverview {
     void redrawAll(bool forcelowres = false);
     void fullRender();
 
+    // Helper functions for fullRender
+    void renderBackgroundImage(const Vector2D& monitorSize, float monScale);
+    void renderEmptyWorkspaceSlots(const Vector2D& monitorSize,
+                                    const Vector2D& currentSize,
+                                    const Vector2D& currentPos, float monScale);
+    void renderWorkspace(size_t i, const Vector2D& monitorSize, float monScale,
+                         float zoomScale, const Vector2D& currentPos,
+                         int dropZoneAbove, int dropZoneBelow,
+                         int firstPlaceholderIndex);
+    void renderWorkspaceIndicator(const CBox& scaledBox, size_t i, float alpha,
+                                   CRegion& damage);
+    void renderDropZoneIndicator(int dropZoneAbove, int dropZoneBelow);
+    void renderDragPreviewAtCursor(float monScale);
+
     // Helper functions for constructor
     void setupWorkspaceIDs(int currentID);
     void calculateLayoutBoxes(const Vector2D& monitorSize);

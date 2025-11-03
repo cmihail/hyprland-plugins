@@ -3645,93 +3645,138 @@ TEST(WorkspaceDragTest, DifferentMonitorResolutions) {
 // ============================================================================
 
 // Helper function to test middle-click workspace drag permission logic
-static bool isMiddleClickWorkspaceDragAllowed(int clickedWorkspaceIndex, int activeIndex) {
-    // Middle-click workspace dragging is only allowed for left side workspaces
-    // (not the active workspace displayed on the right side)
-    return clickedWorkspaceIndex >= 0 && clickedWorkspaceIndex != activeIndex;
+static bool isMiddleClickWorkspaceDragAllowed(int clickedWorkspaceIndex,
+                                                int activeIndex,
+                                                const std::vector<bool>& isPlaceholder) {
+    if (clickedWorkspaceIndex < 0 || clickedWorkspaceIndex == activeIndex)
+        return false;
+
+    if (clickedWorkspaceIndex >= (int)isPlaceholder.size())
+        return false;
+
+    return !isPlaceholder[clickedWorkspaceIndex];
 }
 
 // Test: Middle-click allowed on workspace that is not active
 TEST(MiddleClickWorkspaceDragTest, AllowedOnLeftSideWorkspace) {
     int activeIndex = 3;
+    std::vector<bool> isPlaceholder = {false, false, false, false, false, false};
 
-    // Test workspaces that are not active (on left side)
-    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(0, activeIndex));
-    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(1, activeIndex));
-    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(2, activeIndex));
-    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(4, activeIndex));
-    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(5, activeIndex));
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(0, activeIndex, isPlaceholder));
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(1, activeIndex, isPlaceholder));
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(2, activeIndex, isPlaceholder));
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(4, activeIndex, isPlaceholder));
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(5, activeIndex, isPlaceholder));
 }
 
 // Test: Middle-click not allowed on active workspace (right side)
 TEST(MiddleClickWorkspaceDragTest, NotAllowedOnActiveWorkspace) {
     int activeIndex = 3;
+    std::vector<bool> isPlaceholder = {false, false, false, false, false, false};
 
-    // Middle-click on active workspace should be disallowed
-    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(3, activeIndex));
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(3, activeIndex, isPlaceholder));
 
-    // Test different active workspace positions
-    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(0, 0));
-    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(5, 5));
-    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(7, 7));
+    std::vector<bool> emptyPlaceholder = {false};
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(0, 0, emptyPlaceholder));
+
+    std::vector<bool> longerPlaceholder(8, false);
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(5, 5, longerPlaceholder));
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(7, 7, longerPlaceholder));
 }
 
 // Test: Middle-click not allowed with invalid workspace index
 TEST(MiddleClickWorkspaceDragTest, NotAllowedWithInvalidIndex) {
     int activeIndex = 3;
+    std::vector<bool> isPlaceholder = {false, false, false, false, false, false};
 
-    // Negative index (no workspace clicked) should be disallowed
-    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(-1, activeIndex));
-    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(-2, activeIndex));
-    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(-10, activeIndex));
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(-1, activeIndex, isPlaceholder));
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(-2, activeIndex, isPlaceholder));
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(-10, activeIndex, isPlaceholder));
 }
 
 // Test: Edge case with first workspace as active
 TEST(MiddleClickWorkspaceDragTest, FirstWorkspaceActive) {
     int activeIndex = 0;
+    std::vector<bool> isPlaceholder(8, false);
 
-    // Active workspace (0) should be disallowed
-    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(0, activeIndex));
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(0, activeIndex, isPlaceholder));
 
-    // Other workspaces should be allowed
-    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(1, activeIndex));
-    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(2, activeIndex));
-    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(7, activeIndex));
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(1, activeIndex, isPlaceholder));
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(2, activeIndex, isPlaceholder));
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(7, activeIndex, isPlaceholder));
 }
 
 // Test: Edge case with last workspace as active
 TEST(MiddleClickWorkspaceDragTest, LastWorkspaceActive) {
     int activeIndex = 7;
+    std::vector<bool> isPlaceholder(8, false);
 
-    // Active workspace (7) should be disallowed
-    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(7, activeIndex));
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(7, activeIndex, isPlaceholder));
 
-    // Other workspaces should be allowed
-    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(0, activeIndex));
-    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(3, activeIndex));
-    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(6, activeIndex));
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(0, activeIndex, isPlaceholder));
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(3, activeIndex, isPlaceholder));
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(6, activeIndex, isPlaceholder));
 }
 
 // Test: Boundary with invalid index and active workspace
 TEST(MiddleClickWorkspaceDragTest, InvalidIndexWithActiveWorkspace) {
-    // Test with various active indices
-    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(-1, 0));
-    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(-1, 5));
-    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(-1, 10));
+    std::vector<bool> isPlaceholder = {false};
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(-1, 0, isPlaceholder));
+
+    std::vector<bool> longerPlaceholder(10, false);
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(-1, 5, longerPlaceholder));
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(-1, 10, longerPlaceholder));
 }
 
 // Test: Sequential workspace indices
 TEST(MiddleClickWorkspaceDragTest, SequentialWorkspaceCheck) {
     int activeIndex = 4;
+    std::vector<bool> isPlaceholder(10, false);
 
-    // Check workspaces in sequence
     for (int i = 0; i < 10; ++i) {
         if (i == activeIndex) {
-            EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(i, activeIndex));
+            EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(i, activeIndex,
+                                                            isPlaceholder));
         } else {
-            EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(i, activeIndex));
+            EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(i, activeIndex,
+                                                           isPlaceholder));
         }
     }
+}
+
+// Test: Cannot drag placeholder workspaces
+TEST(MiddleClickWorkspaceDragTest, NotAllowedOnPlaceholder) {
+    int activeIndex = 5;
+    std::vector<bool> isPlaceholder = {false, false, false, true, true, false};
+
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(0, activeIndex, isPlaceholder));
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(1, activeIndex, isPlaceholder));
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(2, activeIndex, isPlaceholder));
+
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(3, activeIndex,
+                                                     isPlaceholder));
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(4, activeIndex,
+                                                     isPlaceholder));
+}
+
+// Test: Mixed placeholders and real workspaces
+TEST(MiddleClickWorkspaceDragTest, MixedPlaceholdersAndReal) {
+    int activeIndex = 7;
+    std::vector<bool> isPlaceholder = {false, false, true, false, true, false,
+                                       true, false};
+
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(0, activeIndex, isPlaceholder));
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(1, activeIndex, isPlaceholder));
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(2, activeIndex,
+                                                     isPlaceholder));
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(3, activeIndex, isPlaceholder));
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(4, activeIndex,
+                                                     isPlaceholder));
+    EXPECT_TRUE(isMiddleClickWorkspaceDragAllowed(5, activeIndex, isPlaceholder));
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(6, activeIndex,
+                                                     isPlaceholder));
+    EXPECT_FALSE(isMiddleClickWorkspaceDragAllowed(7, activeIndex,
+                                                     isPlaceholder));
 }
 
 // ============================================================================
@@ -5083,4 +5128,186 @@ TEST(DropZoneDetectionTest, BottomThirdOfLastWorkspace) {
     auto dropZone = findDropZone(570.0f, 500.0f, 90.0f, 4, 5);
     EXPECT_EQ(dropZone.first, 4);
     EXPECT_EQ(dropZone.second, -3);
+}
+
+// Helper function to determine if border should be rendered
+// This mirrors the logic in renderDropTargetBorder() from overview.cpp
+bool shouldRenderDropTargetBorder(int workspaceIndex, int dropZoneAbove,
+                                   int dropZoneBelow, int sourceWorkspaceIndex,
+                                   void* sourceOverview,
+                                   void* currentOverview) {
+    bool isCrossMonitorDrag = (sourceOverview != currentOverview);
+    bool isDraggingOnSelf = (workspaceIndex == sourceWorkspaceIndex &&
+                             !isCrossMonitorDrag);
+    return (dropZoneAbove >= 0 && dropZoneAbove == dropZoneBelow &&
+            workspaceIndex == dropZoneAbove && !isDraggingOnSelf);
+}
+
+TEST(CrossMonitorBorderRenderingTest, SameIndexDifferentMonitor_ShouldRender) {
+    // Dragging workspace 3 from monitor 1 to workspace 3 on monitor 2
+    int monitor1 = 1;
+    int monitor2 = 2;
+
+    int workspaceIndex = 3;
+    int dropZoneAbove = 3;
+    int dropZoneBelow = 3;
+    int sourceWorkspaceIndex = 3;
+
+    bool shouldRender = shouldRenderDropTargetBorder(
+        workspaceIndex, dropZoneAbove, dropZoneBelow,
+        sourceWorkspaceIndex, &monitor1, &monitor2
+    );
+
+    EXPECT_TRUE(shouldRender)
+        << "Border should render when dragging workspace 3 from monitor 1 to "
+        << "workspace 3 on monitor 2";
+}
+
+TEST(CrossMonitorBorderRenderingTest, SameIndexSameMonitor_ShouldNotRender) {
+    // Dragging workspace 3 to itself on same monitor
+    int monitor1 = 1;
+
+    int workspaceIndex = 3;
+    int dropZoneAbove = 3;
+    int dropZoneBelow = 3;
+    int sourceWorkspaceIndex = 3;
+
+    bool shouldRender = shouldRenderDropTargetBorder(
+        workspaceIndex, dropZoneAbove, dropZoneBelow,
+        sourceWorkspaceIndex, &monitor1, &monitor1
+    );
+
+    EXPECT_FALSE(shouldRender)
+        << "Border should NOT render when dragging workspace 3 to itself on "
+        << "same monitor";
+}
+
+TEST(CrossMonitorBorderRenderingTest, DifferentIndexDifferentMonitor_ShouldRender) {
+    // Dragging workspace 2 from monitor 1 to workspace 5 on monitor 2
+    int monitor1 = 1;
+    int monitor2 = 2;
+
+    int workspaceIndex = 5;
+    int dropZoneAbove = 5;
+    int dropZoneBelow = 5;
+    int sourceWorkspaceIndex = 2;
+
+    bool shouldRender = shouldRenderDropTargetBorder(
+        workspaceIndex, dropZoneAbove, dropZoneBelow,
+        sourceWorkspaceIndex, &monitor1, &monitor2
+    );
+
+    EXPECT_TRUE(shouldRender)
+        << "Border should render when dragging workspace 2 from monitor 1 to "
+        << "workspace 5 on monitor 2";
+}
+
+TEST(CrossMonitorBorderRenderingTest, DifferentIndexSameMonitor_ShouldRender) {
+    // Dragging workspace 2 to workspace 5 on same monitor
+    int monitor1 = 1;
+
+    int workspaceIndex = 5;
+    int dropZoneAbove = 5;
+    int dropZoneBelow = 5;
+    int sourceWorkspaceIndex = 2;
+
+    bool shouldRender = shouldRenderDropTargetBorder(
+        workspaceIndex, dropZoneAbove, dropZoneBelow,
+        sourceWorkspaceIndex, &monitor1, &monitor1
+    );
+
+    EXPECT_TRUE(shouldRender)
+        << "Border should render when dragging workspace 2 to workspace 5 on "
+        << "same monitor";
+}
+
+TEST(CrossMonitorBorderRenderingTest, InvalidDropZone_ShouldNotRender) {
+    // Drop zone is not valid (above != below)
+    int monitor1 = 1;
+    int monitor2 = 2;
+
+    int workspaceIndex = 3;
+    int dropZoneAbove = 3;
+    int dropZoneBelow = 4;  // Different from above
+    int sourceWorkspaceIndex = 3;
+
+    bool shouldRender = shouldRenderDropTargetBorder(
+        workspaceIndex, dropZoneAbove, dropZoneBelow,
+        sourceWorkspaceIndex, &monitor1, &monitor2
+    );
+
+    EXPECT_FALSE(shouldRender)
+        << "Border should NOT render when drop zone is between two workspaces";
+}
+
+TEST(CrossMonitorBorderRenderingTest, WorkspaceIndexMismatch_ShouldNotRender) {
+    // Hovering over workspace 3 but drop zone points to workspace 4
+    int monitor1 = 1;
+    int monitor2 = 2;
+
+    int workspaceIndex = 3;
+    int dropZoneAbove = 4;
+    int dropZoneBelow = 4;
+    int sourceWorkspaceIndex = 5;
+
+    bool shouldRender = shouldRenderDropTargetBorder(
+        workspaceIndex, dropZoneAbove, dropZoneBelow,
+        sourceWorkspaceIndex, &monitor1, &monitor2
+    );
+
+    EXPECT_FALSE(shouldRender)
+        << "Border should NOT render when workspace index doesn't match "
+        << "drop zone";
+}
+
+TEST(CrossMonitorBorderRenderingTest, ThreeMonitorScenario) {
+    // Dragging workspace 1 from monitor 1 to workspace 1 on monitor 3
+    int monitor1 = 1;
+    int monitor2 = 2;
+    int monitor3 = 3;
+
+    int workspaceIndex = 1;
+    int dropZoneAbove = 1;
+    int dropZoneBelow = 1;
+    int sourceWorkspaceIndex = 1;
+
+    // Should render on monitor 3 (different from source monitor 1)
+    bool shouldRenderMonitor3 = shouldRenderDropTargetBorder(
+        workspaceIndex, dropZoneAbove, dropZoneBelow,
+        sourceWorkspaceIndex, &monitor1, &monitor3
+    );
+
+    EXPECT_TRUE(shouldRenderMonitor3)
+        << "Border should render on monitor 3 when dragging from monitor 1";
+
+    // Should NOT render on monitor 2 if checking wrong workspace
+    int differentWorkspaceIndex = 2;
+    bool shouldNotRenderMonitor2 = shouldRenderDropTargetBorder(
+        differentWorkspaceIndex, dropZoneAbove, dropZoneBelow,
+        sourceWorkspaceIndex, &monitor1, &monitor2
+    );
+
+    EXPECT_FALSE(shouldNotRenderMonitor2)
+        << "Border should NOT render on workspace 2 when drop zone is for "
+        << "workspace 1";
+}
+
+TEST(CrossMonitorBorderRenderingTest, EdgeCase_NegativeDropZone) {
+    // Special drop zones like -2 (above first) should not trigger border
+    int monitor1 = 1;
+    int monitor2 = 2;
+
+    int workspaceIndex = 0;
+    int dropZoneAbove = -2;
+    int dropZoneBelow = 0;
+    int sourceWorkspaceIndex = 0;
+
+    bool shouldRender = shouldRenderDropTargetBorder(
+        workspaceIndex, dropZoneAbove, dropZoneBelow,
+        sourceWorkspaceIndex, &monitor1, &monitor2
+    );
+
+    EXPECT_FALSE(shouldRender)
+        << "Border should NOT render for special drop zone above first "
+        << "workspace";
 }

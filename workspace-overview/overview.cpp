@@ -945,9 +945,14 @@ void COverview::render() {
 namespace {
     void renderDropTargetBorder(const CBox& scaledBox, bool isWorkspace, size_t i,
                                 int activeIndex, int dropZoneAbove, int dropZoneBelow,
-                                int firstPlaceholderIndex, CRegion& damage) {
+                                int firstPlaceholderIndex, CRegion& damage,
+                                COverview* currentOverview) {
         if (g_dragState.isDragging && g_dragState.isWorkspaceDrag) {
-            if (dropZoneAbove >= 0 && dropZoneAbove == dropZoneBelow && (int)i == dropZoneAbove && (int)i != g_dragState.sourceWorkspaceIndex) {
+            bool isCrossMonitorDrag = (g_dragState.sourceOverview != currentOverview);
+            bool isDraggingOnSelf = ((int)i == g_dragState.sourceWorkspaceIndex &&
+                                     !isCrossMonitorDrag);
+            if (dropZoneAbove >= 0 && dropZoneAbove == dropZoneBelow &&
+                (int)i == dropZoneAbove && !isDraggingOnSelf) {
                 bool isNonInteractivePlaceholder = (
                     !isWorkspace &&
                     i < (size_t)activeIndex &&
@@ -974,80 +979,311 @@ namespace {
     }
 }
 
+void COverview::renderBackgroundImage(const Vector2D& monitorSize,
+                                       float monScale) {
+    if (!g_pBackgroundTexture || g_pBackgroundTexture->m_texID == 0)
+        return;
+
+    const Vector2D texSize = g_pBackgroundTexture->m_size;
+    CBox bgBox = {{0, 0}, monitorSize};
+
+    const float monitorAspect = monitorSize.x / monitorSize.y;
+    const float textureAspect = texSize.x / texSize.y;
+
+    if (textureAspect > monitorAspect) {
+        const float scale = monitorSize.y / texSize.y;
+        const float scaledWidth = texSize.x * scale;
+        bgBox.x = -(scaledWidth - monitorSize.x) / 2.0f;
+        bgBox.w = scaledWidth;
+    } else {
+        const float scale = monitorSize.x / texSize.x;
+        const float scaledHeight = texSize.y * scale;
+        bgBox.y = -(scaledHeight - monitorSize.y) / 2.0f;
+        bgBox.h = scaledHeight;
+    }
+
+    bgBox.scale(monScale);
+    bgBox.round();
+
+    g_pHyprOpenGL->renderTexture(g_pBackgroundTexture, bgBox, {});
+}
+
+void COverview::renderEmptyWorkspaceSlots(const Vector2D& monitorSize,
+                                           const Vector2D& currentSize,
+                                           const Vector2D& currentPos,
+                                           float monScale) {
+    size_t numLeftWorkspaces = images.size() - 1;
+    if (numLeftWorkspaces >= leftWorkspaceCount)
+        return;
+
+    const float zoomScale = currentSize.x / monitorSize.x;
+    const float availableHeight = monitorSize.y - (2 * PADDING);
+    const float totalGaps = (leftWorkspaceCount - 1) * GAP_WIDTH;
+    const float leftPreviewHeight = (availableHeight - totalGaps) /
+                                    leftWorkspaceCount;
+    const float monitorAspectRatio = monitorSize.x / monitorSize.y;
+    const float leftWorkspaceWidth = leftPreviewHeight * monitorAspectRatio;
+
+    for (size_t i = numLeftWorkspaces; i < leftWorkspaceCount; ++i) {
+        float yPos = PADDING + i * (leftPreviewHeight + GAP_WIDTH);
+        CBox emptyBox = {PADDING, yPos, leftWorkspaceWidth, leftPreviewHeight};
+
+        emptyBox.x = emptyBox.x * zoomScale + currentPos.x;
+        emptyBox.y = emptyBox.y * zoomScale + currentPos.y;
+        emptyBox.w = emptyBox.w * zoomScale;
+        emptyBox.h = emptyBox.h * zoomScale;
+
+        emptyBox.scale(monScale);
+        emptyBox.round();
+
+        CRegion damage{0, 0, INT16_MAX, INT16_MAX};
+        g_pHyprOpenGL->renderRect(emptyBox, BG_COLOR, {.damage = &damage});
+    }
+}
+
+void COverview::renderWorkspaceIndicator(const CBox& scaledBox, size_t i,
+                                          float alpha, CRegion& damage) {
+    auto& image = images[i];
+    bool isNewWorkspace = !image.pWorkspace;
+
+    if (isNewWorkspace) {
+        const float plusSize = std::min(scaledBox.w, scaledBox.h) * 0.5f;
+        const float centerX = scaledBox.x + scaledBox.w / 2.0f;
+        const float centerY = scaledBox.y + scaledBox.h / 2.0f;
+
+        CBox hLine = {centerX - plusSize / 2.0f,
+                      centerY - g_placeholderPlusSize / 2.0f, plusSize,
+                      g_placeholderPlusSize};
+
+        CBox vLine = {centerX - g_placeholderPlusSize / 2.0f,
+                      centerY - plusSize / 2.0f, g_placeholderPlusSize,
+                      plusSize};
+
+        g_pHyprOpenGL->renderRect(hLine, g_placeholderPlusColor,
+                                  {.damage = &damage});
+        g_pHyprOpenGL->renderRect(vLine, g_placeholderPlusColor,
+                                  {.damage = &damage});
+    } else if (image.workspaceID > 0 && i != (size_t)activeIndex) {
+        int workspaceNum = image.workspaceID;
+        if (closing && selectedIndex >= 0 && selectedIndex != activeIndex &&
+            i == (size_t)activeIndex) {
+            workspaceNum = images[selectedIndex].workspaceID;
+        }
+
+        std::string numberText = std::to_string(workspaceNum);
+        auto textTexture = g_pHyprOpenGL->renderText(
+            numberText, CHyprColor{1.0, 1.0, 1.0, 1.0}, 16, false);
+
+        if (textTexture) {
+            const float bgPadding = 4.0f;
+            const float circleSize = std::max(textTexture->m_size.x,
+                                              textTexture->m_size.y) +
+                                     bgPadding * 2;
+
+            CBox bgBox;
+            bgBox.x = scaledBox.x;
+            bgBox.y = scaledBox.y;
+            bgBox.w = circleSize;
+            bgBox.h = circleSize;
+
+            g_pHyprOpenGL->renderRect(bgBox, CHyprColor{0.0, 0.0, 0.0, 0.7},
+                                      {.damage = &damage,
+                                       .round = (int)(circleSize / 2)});
+
+            CBox textBox;
+            textBox.x = bgBox.x + (circleSize - textTexture->m_size.x) / 2;
+            textBox.y = bgBox.y + (circleSize - textTexture->m_size.y) / 2;
+            textBox.w = textTexture->m_size.x;
+            textBox.h = textTexture->m_size.y;
+
+            g_pHyprOpenGL->renderTexture(textTexture, textBox,
+                                         {.damage = &damage, .a = alpha});
+        }
+    }
+}
+
+void COverview::renderWorkspace(size_t i, const Vector2D& monitorSize,
+                                 float monScale, float zoomScale,
+                                 const Vector2D& currentPos, int dropZoneAbove,
+                                 int dropZoneBelow,
+                                 int firstPlaceholderIndex) {
+    auto& image = images[i];
+
+    CBox texbox = image.box;
+
+    if (i != (size_t)activeIndex) {
+        const float monitorAspectRatio = monitorSize.x / monitorSize.y;
+        const float leftWorkspaceWidth = this->leftPreviewHeight *
+                                         monitorAspectRatio;
+        float yPos = PADDING + i * (this->leftPreviewHeight + GAP_WIDTH) -
+                     scrollOffset;
+        texbox = {PADDING, yPos, leftWorkspaceWidth, this->leftPreviewHeight};
+    }
+
+    auto* fbToRender = &image.fb;
+
+    if (closing && selectedIndex >= 0 && selectedIndex != activeIndex) {
+        if (i == (size_t)activeIndex) {
+            fbToRender = &images[selectedIndex].fb;
+        } else if (i == (size_t)selectedIndex) {
+            return;
+        }
+    }
+
+    const float fbAspect  = (float)fbToRender->m_size.x / fbToRender->m_size.y;
+    const float boxAspect = texbox.w / texbox.h;
+
+    CBox scaledBox = texbox;
+    if (fbAspect > boxAspect) {
+        const float newHeight = texbox.w / fbAspect;
+        scaledBox.y = texbox.y + (texbox.h - newHeight) / 2.0f;
+        scaledBox.h = newHeight;
+    } else {
+        const float newWidth = texbox.h * fbAspect;
+        scaledBox.x = texbox.x + (texbox.w - newWidth) / 2.0f;
+        scaledBox.w = newWidth;
+    }
+
+    scaledBox.x = scaledBox.x * zoomScale;
+    scaledBox.y = scaledBox.y * zoomScale;
+    scaledBox.w = scaledBox.w * zoomScale;
+    scaledBox.h = scaledBox.h * zoomScale;
+
+    scaledBox.x += currentPos.x;
+    scaledBox.y += currentPos.y;
+
+    scaledBox.scale(monScale);
+    scaledBox.round();
+
+    CRegion damage{0, 0, INT16_MAX, INT16_MAX};
+
+    float alpha = 1.0f;
+    if (i != (size_t)activeIndex) {
+        if (closing) {
+            alpha = 1.0f - size->getPercent();
+        } else {
+            alpha = size->getPercent();
+        }
+    }
+
+    g_pHyprOpenGL->renderTextureInternal(fbToRender->getTexture(), scaledBox,
+                                          {.damage = &damage, .a = alpha});
+
+    if (i != (size_t)activeIndex && image.isActive) {
+        CBox topBorder = {scaledBox.x, scaledBox.y, scaledBox.w,
+                          g_activeBorderSize};
+        g_pHyprOpenGL->renderRect(topBorder, g_activeBorderColor,
+                                  {.damage = &damage});
+
+        CBox bottomBorder = {scaledBox.x,
+                             scaledBox.y + scaledBox.h - g_activeBorderSize,
+                             scaledBox.w, g_activeBorderSize};
+        g_pHyprOpenGL->renderRect(bottomBorder, g_activeBorderColor,
+                                  {.damage = &damage});
+
+        CBox leftBorder = {scaledBox.x, scaledBox.y, g_activeBorderSize,
+                           scaledBox.h};
+        g_pHyprOpenGL->renderRect(leftBorder, g_activeBorderColor,
+                                  {.damage = &damage});
+
+        CBox rightBorder = {scaledBox.x + scaledBox.w - g_activeBorderSize,
+                            scaledBox.y, g_activeBorderSize, scaledBox.h};
+        g_pHyprOpenGL->renderRect(rightBorder, g_activeBorderColor,
+                                  {.damage = &damage});
+    }
+
+    renderDropTargetBorder(scaledBox, (bool)image.pWorkspace, i, activeIndex,
+                           dropZoneAbove, dropZoneBelow, firstPlaceholderIndex,
+                           damage, this);
+
+    renderWorkspaceIndicator(scaledBox, i, alpha, damage);
+}
+
+void COverview::renderDropZoneIndicator(int dropZoneAbove, int dropZoneBelow) {
+    if (!g_dragState.isDragging || !g_dragState.isWorkspaceDrag)
+        return;
+
+    if (dropZoneAbove >= 0 && dropZoneAbove == dropZoneBelow)
+        return;
+
+    bool isAdjacentToSource = false;
+    int sourceIdx = g_dragState.sourceWorkspaceIndex;
+
+    if (sourceIdx >= 0 && g_dragState.sourceOverview == this) {
+        if ((dropZoneAbove == sourceIdx && dropZoneBelow >= 0) ||
+            (dropZoneBelow == sourceIdx && dropZoneAbove >= 0) ||
+            (dropZoneAbove >= 0 && dropZoneBelow == sourceIdx) ||
+            (dropZoneBelow >= 0 && dropZoneAbove == sourceIdx)) {
+            isAdjacentToSource = true;
+        }
+
+        if (sourceIdx == 0 && dropZoneAbove == -2 && dropZoneBelow == 0) {
+            isAdjacentToSource = true;
+        }
+
+        int lastLeftIndex = activeIndex - 1;
+        if (sourceIdx == lastLeftIndex && dropZoneAbove == lastLeftIndex &&
+            dropZoneBelow == -3) {
+            isAdjacentToSource = true;
+        }
+    }
+
+    bool isAfterPlaceholder = false;
+    if (dropZoneAbove >= 0 && dropZoneAbove < (int)images.size()) {
+        if (!images[dropZoneAbove].pWorkspace) {
+            isAfterPlaceholder = true;
+        }
+    }
+
+    if (!isAdjacentToSource && !isAfterPlaceholder) {
+        if (dropZoneAbove == -2 && dropZoneBelow == 0) {
+            renderDropZoneAboveFirst();
+        } else if (dropZoneBelow == -3 && dropZoneAbove >= 0) {
+            renderDropZoneBelowLast(dropZoneAbove);
+        } else if (dropZoneAbove >= 0 && dropZoneBelow >= 0) {
+            renderDropZoneBetween(dropZoneAbove, dropZoneBelow);
+        }
+    }
+}
+
+void COverview::renderDragPreviewAtCursor(float monScale) {
+    bool shouldRenderDragPreview = (g_dragState.isDragging &&
+                                    g_dragState.dragPreviewFB.m_size.x > 0 &&
+                                    (g_dragState.draggedWindow ||
+                                     g_dragState.isWorkspaceDrag));
+    if (!shouldRenderDragPreview)
+        return;
+
+    const Vector2D fullSize = g_dragState.dragPreviewFB.m_size;
+    const Vector2D previewSize = fullSize * DRAG_PREVIEW_SCALE;
+
+    CBox previewBox = {lastMousePosLocal.x - previewSize.x / 2.0f,
+                       lastMousePosLocal.y - previewSize.y / 2.0f,
+                       previewSize.x, previewSize.y};
+
+    previewBox.scale(monScale);
+    previewBox.round();
+
+    CRegion damage{0, 0, INT16_MAX, INT16_MAX};
+    g_pHyprOpenGL->renderTextureInternal(g_dragState.dragPreviewFB.getTexture(),
+                                         previewBox,
+                                         {.damage = &damage, .a = 0.9f});
+}
+
 void COverview::fullRender() {
     g_pHyprOpenGL->clear(BG_COLOR.stripA());
 
     const Vector2D monitorSize = pMonitor->m_size;
     const float    monScale    = pMonitor->m_scale;
 
-    // Render background image if loaded
-    if (g_pBackgroundTexture && g_pBackgroundTexture->m_texID != 0) {
-        const Vector2D texSize = g_pBackgroundTexture->m_size;
-        CBox bgBox = {{0, 0}, monitorSize};
+    renderBackgroundImage(monitorSize, monScale);
 
-        // Scale background to cover the entire monitor while maintaining aspect ratio
-        const float monitorAspect = monitorSize.x / monitorSize.y;
-        const float textureAspect = texSize.x / texSize.y;
-
-        if (textureAspect > monitorAspect) {
-            // Texture is wider, scale by height
-            const float scale = monitorSize.y / texSize.y;
-            const float scaledWidth = texSize.x * scale;
-            bgBox.x = -(scaledWidth - monitorSize.x) / 2.0f;
-            bgBox.w = scaledWidth;
-        } else {
-            // Texture is taller, scale by width
-            const float scale = monitorSize.x / texSize.x;
-            const float scaledHeight = texSize.y * scale;
-            bgBox.y = -(scaledHeight - monitorSize.y) / 2.0f;
-            bgBox.h = scaledHeight;
-        }
-
-        bgBox.scale(monScale);
-        bgBox.round();
-
-        g_pHyprOpenGL->renderTexture(g_pBackgroundTexture, bgBox, {});
-    }
-
-    // Get animation values
     const Vector2D currentSize = size->value();
     const Vector2D currentPos  = pos->value();
-
-    // Calculate zoom scale based on animation
     const float zoomScale = currentSize.x / monitorSize.x;
 
-    // Fill empty workspace slots with background color
-    // This happens when we have fewer than leftWorkspaceCount displayed
-    size_t numLeftWorkspaces = images.size() - 1;  // Exclude active workspace
-    if (numLeftWorkspaces < leftWorkspaceCount) {
-        const float availableHeight   = monitorSize.y - (2 * PADDING);
-        const float totalGaps         = (leftWorkspaceCount - 1) * GAP_WIDTH;
-        const float leftPreviewHeight = (availableHeight - totalGaps) / leftWorkspaceCount;
-        const float monitorAspectRatio = monitorSize.x / monitorSize.y;
-        const float leftWorkspaceWidth = leftPreviewHeight * monitorAspectRatio;
+    renderEmptyWorkspaceSlots(monitorSize, currentSize, currentPos, monScale);
 
-        // Fill slots after the displayed workspaces
-        for (size_t i = numLeftWorkspaces; i < leftWorkspaceCount; ++i) {
-            float yPos = PADDING + i * (leftPreviewHeight + GAP_WIDTH);
-            CBox emptyBox = {PADDING, yPos, leftWorkspaceWidth, leftPreviewHeight};
-
-            // Apply zoom animation transformations
-            emptyBox.x = emptyBox.x * zoomScale + currentPos.x;
-            emptyBox.y = emptyBox.y * zoomScale + currentPos.y;
-            emptyBox.w = emptyBox.w * zoomScale;
-            emptyBox.h = emptyBox.h * zoomScale;
-
-            emptyBox.scale(monScale);
-            emptyBox.round();
-
-            // Render background color for empty slot
-            CRegion damage{0, 0, INT16_MAX, INT16_MAX};
-            g_pHyprOpenGL->renderRect(emptyBox, BG_COLOR, {.damage = &damage});
-        }
-    }
-
-    // Render each workspace
-    // Track first placeholder for determining which ones to hide
     int firstPlaceholderIndex = -1;
     for (size_t i = 0; i < images.size() && i < (size_t)activeIndex; ++i) {
         if (!images[i].pWorkspace) {
@@ -1056,270 +1292,25 @@ void COverview::fullRender() {
         }
     }
 
-    auto [dropZoneAbove, dropZoneBelow] = findDropZoneBetweenWorkspaces(lastMousePosLocal);
+    auto [dropZoneAbove, dropZoneBelow] =
+        findDropZoneBetweenWorkspaces(lastMousePosLocal);
 
     for (size_t i = 0; i < images.size(); ++i) {
         auto& image = images[i];
 
-        // Skip rendering non-interactive placeholder workspaces
-        bool isNonInteractivePlaceholder = (
-            !image.pWorkspace &&
-            i < (size_t)activeIndex &&
-            firstPlaceholderIndex >= 0 &&
-            (int)i > firstPlaceholderIndex
-        );
-        if (isNonInteractivePlaceholder) {
+        bool isNonInteractivePlaceholder = (!image.pWorkspace &&
+                                            i < (size_t)activeIndex &&
+                                            firstPlaceholderIndex >= 0 &&
+                                            (int)i > firstPlaceholderIndex);
+        if (isNonInteractivePlaceholder)
             continue;
-        }
 
-        // During closing animation, if a different workspace was selected,
-        // render the selected workspace in the active workspace position
-        CBox texbox = image.box;
-
-        // For left side workspaces, recalculate position with scroll offset
-        if (i != (size_t)activeIndex) {
-            const float monitorAspectRatio = monitorSize.x / monitorSize.y;
-            const float leftWorkspaceWidth = this->leftPreviewHeight * monitorAspectRatio;
-            float yPos = PADDING + i * (this->leftPreviewHeight + GAP_WIDTH) -
-                         scrollOffset;
-            texbox = {PADDING, yPos, leftWorkspaceWidth, this->leftPreviewHeight};
-        }
-
-        auto* fbToRender = &image.fb;
-
-        if (closing && selectedIndex >= 0 && selectedIndex != activeIndex) {
-            if (i == (size_t)activeIndex) {
-                // Render selected workspace's content in active workspace position
-                fbToRender = &images[selectedIndex].fb;
-            } else if (i == (size_t)selectedIndex) {
-                // Don't render the selected workspace in its original position
-                continue;
-            }
-        }
-
-        // Scale the workspace framebuffer to fit in the box while maintaining aspect ratio
-        const float fbAspect  = (float)fbToRender->m_size.x / fbToRender->m_size.y;
-        const float boxAspect = texbox.w / texbox.h;
-
-        CBox scaledBox = texbox;
-        if (fbAspect > boxAspect) {
-            // Framebuffer is wider, fit to width
-            const float newHeight = texbox.w / fbAspect;
-            scaledBox.y           = texbox.y + (texbox.h - newHeight) / 2.0f;
-            scaledBox.h           = newHeight;
-        } else {
-            // Framebuffer is taller, fit to height
-            const float newWidth = texbox.h * fbAspect;
-            scaledBox.x          = texbox.x + (texbox.w - newWidth) / 2.0f;
-            scaledBox.w          = newWidth;
-        }
-
-        // Apply zoom animation transformations (for both opening and closing)
-        // During opening: animate from zoomed-in to normal view
-        // During closing: animate from normal view to zoomed-in
-        scaledBox.x = scaledBox.x * zoomScale;
-        scaledBox.y = scaledBox.y * zoomScale;
-        scaledBox.w = scaledBox.w * zoomScale;
-        scaledBox.h = scaledBox.h * zoomScale;
-
-        // Apply position offset
-        scaledBox.x += currentPos.x;
-        scaledBox.y += currentPos.y;
-
-        scaledBox.scale(monScale);
-        scaledBox.round();
-
-        CRegion damage{0, 0, INT16_MAX, INT16_MAX};
-
-        // Fade in/out non-active workspaces during animation
-        float alpha = 1.0f;
-        if (i != (size_t)activeIndex) {
-            if (closing) {
-                alpha = 1.0f - size->getPercent();  // Fade out as we zoom in
-            } else {
-                alpha = size->getPercent();  // Fade in as we zoom out
-            }
-        }
-
-        g_pHyprOpenGL->renderTextureInternal(fbToRender->getTexture(),
-                                              scaledBox,
-                                              {.damage = &damage, .a = alpha});
-
-        // Draw border around active workspace on left side
-        if (i != (size_t)activeIndex && image.isActive) {
-            // Top border
-            CBox topBorder = {scaledBox.x, scaledBox.y, scaledBox.w, g_activeBorderSize};
-            g_pHyprOpenGL->renderRect(topBorder, g_activeBorderColor, {.damage = &damage});
-
-            // Bottom border
-            CBox bottomBorder = {scaledBox.x, scaledBox.y + scaledBox.h - g_activeBorderSize,
-                                 scaledBox.w, g_activeBorderSize};
-            g_pHyprOpenGL->renderRect(bottomBorder, g_activeBorderColor, {.damage = &damage});
-
-            // Left border
-            CBox leftBorder = {scaledBox.x, scaledBox.y, g_activeBorderSize, scaledBox.h};
-            g_pHyprOpenGL->renderRect(leftBorder, g_activeBorderColor, {.damage = &damage});
-
-            // Right border
-            CBox rightBorder = {scaledBox.x + scaledBox.w - g_activeBorderSize, scaledBox.y,
-                                g_activeBorderSize, scaledBox.h};
-            g_pHyprOpenGL->renderRect(rightBorder, g_activeBorderColor, {.damage = &damage});
-        }
-
-        renderDropTargetBorder(scaledBox, (bool)image.pWorkspace, i, activeIndex,
-                               dropZoneAbove, dropZoneBelow, firstPlaceholderIndex, damage);
-
-        // Render workspace indicator (number or plus sign for new workspaces)
-        bool isNewWorkspace = !image.pWorkspace;
-
-        // For new workspaces, draw a plus sign in the center
-        if (isNewWorkspace) {
-            const float plusSize = std::min(scaledBox.w, scaledBox.h) * 0.5f;
-
-            const float centerX = scaledBox.x + scaledBox.w / 2.0f;
-            const float centerY = scaledBox.y + scaledBox.h / 2.0f;
-
-            // Horizontal line of the plus
-            CBox hLine = {
-                centerX - plusSize / 2.0f,
-                centerY - g_placeholderPlusSize / 2.0f,
-                plusSize,
-                g_placeholderPlusSize
-            };
-
-            // Vertical line of the plus
-            CBox vLine = {
-                centerX - g_placeholderPlusSize / 2.0f,
-                centerY - plusSize / 2.0f,
-                g_placeholderPlusSize,
-                plusSize
-            };
-
-            g_pHyprOpenGL->renderRect(hLine, g_placeholderPlusColor, {.damage = &damage});
-            g_pHyprOpenGL->renderRect(vLine, g_placeholderPlusColor, {.damage = &damage});
-        } else if (image.workspaceID > 0 && i != (size_t)activeIndex) {
-            // Show workspace number in top-left corner for left panel workspaces
-            int workspaceNum = image.workspaceID;
-            if (closing && selectedIndex >= 0 && selectedIndex != activeIndex &&
-                i == (size_t)activeIndex) {
-                // If rendering selected workspace in active position, show its number
-                workspaceNum = images[selectedIndex].workspaceID;
-            }
-
-            std::string numberText = std::to_string(workspaceNum);
-            auto textTexture = g_pHyprOpenGL->renderText(
-                numberText, CHyprColor{1.0, 1.0, 1.0, 1.0}, 16, false);
-
-            if (textTexture) {
-                // Create a perfect circle background
-                const float bgPadding = 4.0f;
-
-                // Make the background a perfect circle using larger dimension
-                const float circleSize = std::max(textTexture->m_size.x,
-                                                  textTexture->m_size.y) +
-                                         bgPadding * 2;
-
-                CBox bgBox;
-                bgBox.x = scaledBox.x;
-                bgBox.y = scaledBox.y;
-                bgBox.w = circleSize;
-                bgBox.h = circleSize;
-
-                // Render circular background (round = half makes perfect circle)
-                g_pHyprOpenGL->renderRect(bgBox, CHyprColor{0.0, 0.0, 0.0, 0.7},
-                                          {.damage = &damage,
-                                           .round = (int)(circleSize / 2)});
-
-                // Center text within the circular background
-                CBox textBox;
-                textBox.x = bgBox.x + (circleSize - textTexture->m_size.x) / 2;
-                textBox.y = bgBox.y + (circleSize - textTexture->m_size.y) / 2;
-                textBox.w = textTexture->m_size.x;
-                textBox.h = textTexture->m_size.y;
-
-                g_pHyprOpenGL->renderTexture(textTexture, textBox,
-                                             {.damage = &damage, .a = alpha});
-            }
-        }
+        renderWorkspace(i, monitorSize, monScale, zoomScale, currentPos,
+                        dropZoneAbove, dropZoneBelow, firstPlaceholderIndex);
     }
 
-    // Render drop zone indicator when dragging workspace
-    if (g_dragState.isDragging && g_dragState.isWorkspaceDrag) {
-        if (dropZoneAbove >= 0 && dropZoneAbove == dropZoneBelow) {
-            // This is handled in the render loop
-        } else {
-            bool isAdjacentToSource = false;
-            int sourceIdx = g_dragState.sourceWorkspaceIndex;
-
-            if (sourceIdx >= 0 && g_dragState.sourceOverview == this) {
-                if ((dropZoneAbove == sourceIdx && dropZoneBelow >= 0) ||
-                    (dropZoneBelow == sourceIdx && dropZoneAbove >= 0) ||
-                    (dropZoneAbove >= 0 && dropZoneBelow == sourceIdx) ||
-                    (dropZoneBelow >= 0 && dropZoneAbove == sourceIdx)) {
-                    isAdjacentToSource = true;
-                }
-
-                if (sourceIdx == 0 &&
-                    dropZoneAbove == -2 && dropZoneBelow == 0) {
-                    isAdjacentToSource = true;
-                }
-
-                int lastLeftIndex = activeIndex - 1;
-                if (sourceIdx == lastLeftIndex &&
-                    dropZoneAbove == lastLeftIndex && dropZoneBelow == -3) {
-                    isAdjacentToSource = true;
-                }
-            }
-
-            bool isAfterPlaceholder = false;
-            if (dropZoneAbove >= 0 &&
-                dropZoneAbove < (int)images.size()) {
-                if (!images[dropZoneAbove].pWorkspace) {
-                    isAfterPlaceholder = true;
-                }
-            }
-
-            if (!isAdjacentToSource && !isAfterPlaceholder) {
-                if (dropZoneAbove == -2 && dropZoneBelow == 0) {
-                    renderDropZoneAboveFirst();
-                } else if (dropZoneBelow == -3 && dropZoneAbove >= 0) {
-                    renderDropZoneBelowLast(dropZoneAbove);
-                } else if (dropZoneAbove >= 0 && dropZoneBelow >= 0) {
-                    renderDropZoneBetween(dropZoneAbove, dropZoneBelow);
-                }
-            }
-        }
-    }
-
-    // Render drag preview if dragging
-    bool shouldRenderDragPreview = (
-        g_dragState.isDragging &&
-        g_dragState.dragPreviewFB.m_size.x > 0 &&
-        (g_dragState.draggedWindow || g_dragState.isWorkspaceDrag)
-    );
-    if (shouldRenderDragPreview) {
-        const float monScale = pMonitor->m_scale;
-
-        // Scale down the preview size
-        const Vector2D fullSize = g_dragState.dragPreviewFB.m_size;
-        const Vector2D previewSize = fullSize * DRAG_PREVIEW_SCALE;
-
-        // Position preview at cursor location (centered on cursor)
-        CBox previewBox = {
-            lastMousePosLocal.x - previewSize.x / 2.0f,
-            lastMousePosLocal.y - previewSize.y / 2.0f,
-            previewSize.x,
-            previewSize.y
-        };
-
-        previewBox.scale(monScale);
-        previewBox.round();
-
-        CRegion damage{0, 0, INT16_MAX, INT16_MAX};
-        g_pHyprOpenGL->renderTextureInternal(g_dragState.dragPreviewFB.getTexture(),
-                                            previewBox,
-                                            {.damage = &damage, .a = 0.9f});
-    }
+    renderDropZoneIndicator(dropZoneAbove, dropZoneBelow);
+    renderDragPreviewAtCursor(monScale);
 }
 
 int COverview::findWorkspaceIndexAtPosition(const Vector2D& pos) {
@@ -1360,9 +1351,13 @@ int COverview::findWorkspaceIndexAtPosition(const Vector2D& pos) {
 }
 
 bool COverview::isMiddleClickWorkspaceDragAllowed(int clickedWorkspaceIndex) const {
-    // Middle-click workspace dragging is only allowed for left side workspaces
-    // (not the active workspace displayed on the right side)
-    return clickedWorkspaceIndex >= 0 && clickedWorkspaceIndex != activeIndex;
+    if (clickedWorkspaceIndex < 0 || clickedWorkspaceIndex == activeIndex)
+        return false;
+
+    if (clickedWorkspaceIndex >= (int)images.size())
+        return false;
+
+    return images[clickedWorkspaceIndex].pWorkspace != nullptr;
 }
 
 void COverview::setupWorkspaceDragOnMiddleClick(int clickedWorkspaceIndex, const Vector2D& mousePos) {
