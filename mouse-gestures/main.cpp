@@ -8,6 +8,7 @@
 #include <fstream>
 #include <sstream>
 #include <chrono>
+#include <thread>
 #include <wayland-server.h>
 #include <wayland-server-protocol.h>
 #include <linux/input-event-codes.h>
@@ -514,8 +515,10 @@ static void handleGestureDetected() {
     // Check for matching gesture action
     const GestureAction* matchingAction = findMatchingGestureAction(gesture);
     if (matchingAction) {
-        // Execute the command
-        system(matchingAction->command.c_str());
+        // Execute the command in a new thread to avoid blocking
+        std::thread([command = matchingAction->command]() {
+            system(command.c_str());
+        }).detach();
 
         HyprlandAPI::addNotification(
             PHANDLE,
