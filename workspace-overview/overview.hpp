@@ -187,12 +187,12 @@ class COverview {
 
     PHLANIMVAR<Vector2D> size;
     PHLANIMVAR<Vector2D> pos;
+    PHLANIMVAR<float> scrollOffset;
 
     bool     closing = false;
     Vector2D lastMousePosLocal = Vector2D{};
 
     // Scroll offset for workspace list
-    float scrollOffset = 0.0f;
     float maxScrollOffset = 0.0f;
     float leftPreviewHeight = 0.0f;
 

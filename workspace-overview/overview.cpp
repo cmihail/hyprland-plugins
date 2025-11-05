@@ -48,6 +48,11 @@ COverview::COverview(PHLWORKSPACE startedOn_, bool skipAnimation) : startedOn(st
     const auto PMONITOR = g_pCompositor->m_lastMonitor.lock();
     pMonitor            = PMONITOR;
 
+    // Initialize animated scrollOffset early so it can be used throughout construction
+    auto animConfig = g_pConfigManager->getAnimationPropertyConfig("windowsMove");
+    g_pAnimationManager->createAnimation(0.0f, scrollOffset, animConfig,
+                                         AVARDAMAGE_NONE);
+
     // Get current workspace ID
     int currentID = pMonitor->activeWorkspaceID();
 
@@ -214,7 +219,7 @@ COverview::COverview(PHLWORKSPACE startedOn_, bool skipAnimation) : startedOn(st
             // Left side - workspace list (left margin = PADDING, same as top)
             // Apply scroll offset to shift workspaces up/down
             float yPos = PADDING + i * (this->leftPreviewHeight + GAP_WIDTH) -
-                         scrollOffset;
+                         scrollOffset->value();
             image.box = {PADDING, yPos, leftWorkspaceWidth, this->leftPreviewHeight};
         }
 
@@ -231,7 +236,7 @@ COverview::COverview(PHLWORKSPACE startedOn_, bool skipAnimation) : startedOn(st
         startedOn, CDesktopAnimationManager::ANIMATION_TYPE_IN, true, true);
 
     // Setup animations for zoom effect
-    auto animConfig = g_pConfigManager->getAnimationPropertyConfig("windowsMove");
+    animConfig = g_pConfigManager->getAnimationPropertyConfig("windowsMove");
     g_pAnimationManager->createAnimation(pMonitor->m_size, size, animConfig,
                                          AVARDAMAGE_NONE);
     g_pAnimationManager->createAnimation(Vector2D{0, 0}, pos, animConfig,
@@ -239,6 +244,7 @@ COverview::COverview(PHLWORKSPACE startedOn_, bool skipAnimation) : startedOn(st
 
     size->setUpdateCallback(damageMonitor);
     pos->setUpdateCallback(damageMonitor);
+    scrollOffset->setUpdateCallback(damageMonitor);
 
     if (skipAnimation) {
         // No animation - directly set to normal view
@@ -246,6 +252,9 @@ COverview::COverview(PHLWORKSPACE startedOn_, bool skipAnimation) : startedOn(st
         pos->setValue(Vector2D{0, 0});
         *size = monitorSize;
         *pos  = Vector2D{0, 0};
+
+        // Also set scrollOffset goal to match current value (no animation)
+        *scrollOffset = scrollOffset->value();
     } else {
         // Animate from zoomed in to normal view
         // Start with the view zoomed into the active workspace (right side)
@@ -268,6 +277,9 @@ COverview::COverview(PHLWORKSPACE startedOn_, bool skipAnimation) : startedOn(st
         // Set goal (normal view) - this starts the animation
         *size = monitorSize;
         *pos  = Vector2D{0, 0};
+
+        // Set scrollOffset goal to current value (already centered by setInitialScrollPosition)
+        *scrollOffset = scrollOffset->value();
 
         size->setCallbackOnEnd([this](auto) { redrawAll(true); });
     }
@@ -569,16 +581,20 @@ void COverview::setupMouseAxisHook() {
             if (isOverLeftSide) {
                 // Adjust scroll offset based on scroll direction
                 const float SCROLL_SPEED = 30.0f;
-                scrollOffset += e.delta * SCROLL_SPEED;
+                float newScrollOffset = scrollOffset->value() + e.delta * SCROLL_SPEED;
 
                 // Clamp scroll offset to valid range [0, maxScrollOffset]
-                scrollOffset = std::clamp(scrollOffset, 0.0f, maxScrollOffset);
+                newScrollOffset = std::clamp(newScrollOffset, 0.0f, maxScrollOffset);
+
+                // Set both value and goal for instant scroll (no animation)
+                scrollOffset->setValue(newScrollOffset);
+                *scrollOffset = newScrollOffset;
 
                 // Update box positions for all left-side workspaces to reflect new scroll
                 for (size_t i = 0; i < images.size(); ++i) {
                     if (i != (size_t)activeIndex) {
                         float yPos = PADDING + i * (this->leftPreviewHeight + GAP_WIDTH)
-                                     - scrollOffset;
+                                     - newScrollOffset;
                         images[i].box = {PADDING, yPos, leftWorkspaceWidth,
                                          this->leftPreviewHeight};
                     }
@@ -641,11 +657,57 @@ void COverview::setupWorkspaceChangeHook() {
             if (!monitor || workspaceMonitor != monitor)
                 return;
 
+            // Find old and new workspace IDs to detect changes
+            int64_t newWorkspaceID = newWorkspace->m_id;
+            int64_t oldWorkspaceID = startedOn ? startedOn->m_id : -1;
+
+            // If workspace ID didn't change, no need to recreate
+            if (newWorkspaceID == oldWorkspaceID)
+                return;
+
+            // Find the index of the new workspace in the current images list
+            size_t newWorkspaceIndexInCurrent = images.size();  // Invalid index initially
+            for (size_t i = 0; i < images.size(); ++i) {
+                if (images[i].workspaceID == newWorkspaceID) {
+                    newWorkspaceIndexInCurrent = i;
+                    break;
+                }
+            }
+
+            // Calculate the vertical offset for the animation
+            // If the new workspace is in the current list, we can animate to it
+            float animationStartOffset = scrollOffset->value();
+            if (newWorkspaceIndexInCurrent < leftWorkspaceCount) {
+                // Calculate where the new workspace is positioned
+                const Vector2D monitorSize = monitor->m_size;
+                const float availableHeight = monitorSize.y - (2 * PADDING);
+                const float panelCenter = availableHeight / 2.0f;
+                const float workspaceTopWithoutScroll = newWorkspaceIndexInCurrent * (this->leftPreviewHeight + GAP_WIDTH);
+                const float workspaceCenterOffset = this->leftPreviewHeight / 2.0f;
+
+                // Target scroll to center the new workspace
+                float targetScrollForNew = workspaceTopWithoutScroll + workspaceCenterOffset - panelCenter;
+                targetScrollForNew = std::clamp(targetScrollForNew, 0.0f, maxScrollOffset);
+
+                // Store this for the new overview to animate from current position to new
+                animationStartOffset = scrollOffset->value();
+            }
+
             // Recreate the overview with the new workspace
-            // This is simpler and more reliable than trying to update indices
-            // Skip animation for instant recreation
+            // Pass the animation start offset so it can animate from there
             g_pOverviews.erase(monitor);
-            g_pOverviews[monitor] = std::make_unique<COverview>(newWorkspace, true);
+            auto newOverview = std::make_unique<COverview>(newWorkspace, false);
+
+            // If we found the new workspace in the old list, set up animation
+            if (newWorkspaceIndexInCurrent < leftWorkspaceCount) {
+                // Override the initial scroll position to create smooth transition
+                newOverview->scrollOffset->setValue(animationStartOffset);
+
+                // The goal is already set by the constructor to center the new workspace
+                // So the animation will smoothly transition from old position to new
+            }
+
+            g_pOverviews[monitor] = std::move(newOverview);
         } catch (const std::exception& e) {
             Debug::log(ERR, "[Overview] Exception in workspace change handler: {}", e.what());
         }
@@ -727,10 +789,12 @@ void COverview::setInitialScrollPosition(float availableHeight) {
     float workspaceTopWithoutScroll = activeLeftIndex * (this->leftPreviewHeight + GAP_WIDTH);
     float workspaceCenterOffset = this->leftPreviewHeight / 2.0f;
 
-    scrollOffset = workspaceTopWithoutScroll + workspaceCenterOffset - panelCenter;
+    float targetScrollOffset = workspaceTopWithoutScroll + workspaceCenterOffset - panelCenter;
 
     // Clamp to valid range to ensure we don't scroll beyond boundaries
-    scrollOffset = std::clamp(scrollOffset, 0.0f, maxScrollOffset);
+    targetScrollOffset = std::clamp(targetScrollOffset, 0.0f, maxScrollOffset);
+
+    scrollOffset->setValue(targetScrollOffset);
 }
 
 void COverview::renderBackgroundForLeftPanel(const CBox& monbox, float leftPreviewHeight) {
@@ -771,8 +835,10 @@ void COverview::renderBackgroundForLeftPanel(const CBox& monbox, float leftPrevi
 }
 
 void COverview::adjustScrollForEqualPartialVisibility(float availableHeight) {
+    float currentScrollOffset = scrollOffset->value();
+
     // Only adjust if we're not at the very top or very bottom
-    if (scrollOffset <= 0.0f || scrollOffset >= maxScrollOffset) {
+    if (currentScrollOffset <= 0.0f || currentScrollOffset >= maxScrollOffset) {
         return;
     }
 
@@ -798,8 +864,8 @@ void COverview::adjustScrollForEqualPartialVisibility(float availableHeight) {
     size_t firstIndex = 0;
     size_t lastIndex = numWorkspacesToShow - 1;
 
-    float firstYPos = PADDING + firstIndex * (this->leftPreviewHeight + GAP_WIDTH) - scrollOffset;
-    float lastYPos = PADDING + lastIndex * (this->leftPreviewHeight + GAP_WIDTH) - scrollOffset;
+    float firstYPos = PADDING + firstIndex * (this->leftPreviewHeight + GAP_WIDTH) - currentScrollOffset;
+    float lastYPos = PADDING + lastIndex * (this->leftPreviewHeight + GAP_WIDTH) - currentScrollOffset;
 
     // Check if both first and last are partially visible
     // Partially visible means: cut off but still showing some part
@@ -819,10 +885,12 @@ void COverview::adjustScrollForEqualPartialVisibility(float availableHeight) {
 
     // Adjust scroll offset to equalize the partial visibility
     float difference = bottomPartial - topPartial;
-    scrollOffset -= difference / 2.0f;
+    currentScrollOffset -= difference / 2.0f;
 
     // Clamp again after adjustment
-    scrollOffset = std::clamp(scrollOffset, 0.0f, maxScrollOffset);
+    currentScrollOffset = std::clamp(currentScrollOffset, 0.0f, maxScrollOffset);
+
+    scrollOffset->setValue(currentScrollOffset);
 }
 
 void COverview::redrawID(int id, bool forcelowres) {
@@ -1253,7 +1321,7 @@ void COverview::renderWorkspace(size_t i, const Vector2D& monitorSize,
         const float leftWorkspaceWidth = this->leftPreviewHeight *
                                          monitorAspectRatio;
         float yPos = PADDING + i * (this->leftPreviewHeight + GAP_WIDTH) -
-                     scrollOffset;
+                     scrollOffset->value();
         texbox = {PADDING, yPos, leftWorkspaceWidth, this->leftPreviewHeight};
     }
 
@@ -1477,7 +1545,7 @@ int COverview::findWorkspaceIndexAtPosition(const Vector2D& pos) {
             const float monitorAspectRatio = monitorSize.x / monitorSize.y;
             const float leftWorkspaceWidth = this->leftPreviewHeight * monitorAspectRatio;
             float yPos = PADDING + i * (this->leftPreviewHeight + GAP_WIDTH) -
-                         scrollOffset;
+                         scrollOffset->value();
             box = {PADDING, yPos, leftWorkspaceWidth, this->leftPreviewHeight};
         }
 
@@ -1535,7 +1603,7 @@ void COverview::renderDropZoneAboveFirst() {
 
     float yPos0Untransformed =
         PADDING + 0 * (this->leftPreviewHeight + GAP_WIDTH) -
-        scrollOffset;
+        scrollOffset->value();
     float yPos0Transformed = yPos0Untransformed * zoomScale + currentPos.y;
 
     float leftPanelX = PADDING * zoomScale + currentPos.x;
@@ -1569,7 +1637,7 @@ void COverview::renderDropZoneBelowLast(int lastIndex) {
 
     float yPosLastUntransformed =
         PADDING + lastIndex * (this->leftPreviewHeight + GAP_WIDTH) -
-        scrollOffset;
+        scrollOffset->value();
     float yPosLastTransformed =
         yPosLastUntransformed * zoomScale + currentPos.y;
     float yBottomLastTransformed =
@@ -1606,7 +1674,7 @@ void COverview::renderDropZoneBetween(int above, int below) {
 
     float yPosAbove =
         PADDING + above * (this->leftPreviewHeight + GAP_WIDTH) -
-        scrollOffset;
+        scrollOffset->value();
     CBox boxAbove = {
         PADDING, yPosAbove,
         leftWorkspaceWidth, this->leftPreviewHeight
@@ -1619,7 +1687,7 @@ void COverview::renderDropZoneBetween(int above, int below) {
 
     float yPosBelow =
         PADDING + below * (this->leftPreviewHeight + GAP_WIDTH) -
-        scrollOffset;
+        scrollOffset->value();
     CBox boxBelow = {
         PADDING, yPosBelow,
         leftWorkspaceWidth, this->leftPreviewHeight
@@ -1687,7 +1755,7 @@ std::pair<int, int> COverview::findDropZoneBetweenWorkspaces(const Vector2D& pos
     // Find which workspace the cursor is over (or closest to)
     // We check each workspace and determine if cursor is in top or bottom half
     for (int i = 0; i < activeIndex; ++i) {
-        float yPosUntransformed = PADDING + i * (this->leftPreviewHeight + GAP_WIDTH) - scrollOffset;
+        float yPosUntransformed = PADDING + i * (this->leftPreviewHeight + GAP_WIDTH) - scrollOffset->value();
         float yPosTransformed = yPosUntransformed * zoomScale + currentPos.y;
         float workspaceHeightTransformed = this->leftPreviewHeight * zoomScale;
         float yBottomTransformed = yPosTransformed + workspaceHeightTransformed;
@@ -1723,7 +1791,7 @@ std::pair<int, int> COverview::findDropZoneBetweenWorkspaces(const Vector2D& pos
     }
 
     // Cursor is not over any workspace - check if it's above first or below last
-    float yPos0Untransformed = PADDING - scrollOffset;
+    float yPos0Untransformed = PADDING - scrollOffset->value();
     float yPos0Transformed = yPos0Untransformed * zoomScale + currentPos.y;
 
     if (pos.y < yPos0Transformed) {
@@ -1731,7 +1799,7 @@ std::pair<int, int> COverview::findDropZoneBetweenWorkspaces(const Vector2D& pos
     }
 
     int lastIndex = activeIndex - 1;
-    float yPosLastUntransformed = PADDING + lastIndex * (this->leftPreviewHeight + GAP_WIDTH) - scrollOffset;
+    float yPosLastUntransformed = PADDING + lastIndex * (this->leftPreviewHeight + GAP_WIDTH) - scrollOffset->value();
     float yPosLastTransformed = yPosLastUntransformed * zoomScale + currentPos.y;
     float yBottomLastTransformed = yPosLastTransformed + (this->leftPreviewHeight * zoomScale);
 
@@ -1741,11 +1809,11 @@ std::pair<int, int> COverview::findDropZoneBetweenWorkspaces(const Vector2D& pos
 
     // Cursor is in a gap between workspaces - find which gap
     for (int i = 0; i < activeIndex - 1; ++i) {
-        float yPos1Untransformed = PADDING + i * (this->leftPreviewHeight + GAP_WIDTH) - scrollOffset;
+        float yPos1Untransformed = PADDING + i * (this->leftPreviewHeight + GAP_WIDTH) - scrollOffset->value();
         float yPos1Transformed = yPos1Untransformed * zoomScale + currentPos.y;
         float yBottom1Transformed = yPos1Transformed + (this->leftPreviewHeight * zoomScale);
 
-        float yPos2Untransformed = PADDING + (i + 1) * (this->leftPreviewHeight + GAP_WIDTH) - scrollOffset;
+        float yPos2Untransformed = PADDING + (i + 1) * (this->leftPreviewHeight + GAP_WIDTH) - scrollOffset->value();
         float yPos2Transformed = yPos2Untransformed * zoomScale + currentPos.y;
 
         if (pos.y >= yBottom1Transformed && pos.y <= yPos2Transformed) {
@@ -2079,7 +2147,7 @@ PHLWINDOW COverview::findWindowAtPosition(const Vector2D& pos, int workspaceInde
         const float monitorAspectRatio = monitorSize.x / monitorSize.y;
         const float leftWorkspaceWidth = this->leftPreviewHeight * monitorAspectRatio;
         float yPos = PADDING + workspaceIndex * (this->leftPreviewHeight + GAP_WIDTH) -
-                     scrollOffset;
+                     scrollOffset->value();
         box = {PADDING, yPos, leftWorkspaceWidth, this->leftPreviewHeight};
     }
 
@@ -2230,7 +2298,9 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
         }
 
         // Clamp current scroll offset to new bounds
-        scrollOffset = std::clamp(scrollOffset, 0.0f, maxScrollOffset);
+        float clampedScrollOffset = std::clamp(scrollOffset->value(), 0.0f, maxScrollOffset);
+        scrollOffset->setValue(clampedScrollOffset);
+        *scrollOffset = clampedScrollOffset;
 
         // Update box positions for all left-side workspaces to reflect new scroll
         const float monitorAspectRatio = monitorSize.x / monitorSize.y;
@@ -2238,7 +2308,7 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
 
         for (size_t i = 0; i < images.size(); ++i) {
             if (i != (size_t)activeIndex) {
-                float yPos = PADDING + i * (this->leftPreviewHeight + GAP_WIDTH) - scrollOffset;
+                float yPos = PADDING + i * (this->leftPreviewHeight + GAP_WIDTH) - scrollOffset->value();
                 images[i].box = {PADDING, yPos, leftWorkspaceWidth, this->leftPreviewHeight};
             }
         }
@@ -3016,7 +3086,9 @@ void COverview::recalculateMaxScrollOffset() {
     }
 
     // Clamp current scroll offset to new bounds
-    scrollOffset = std::clamp(scrollOffset, 0.0f, maxScrollOffset);
+    float clampedScrollOffset = std::clamp(scrollOffset->value(), 0.0f, maxScrollOffset);
+    scrollOffset->setValue(clampedScrollOffset);
+    *scrollOffset = clampedScrollOffset;
 }
 
 void loadBackgroundImage(const std::string& path) {

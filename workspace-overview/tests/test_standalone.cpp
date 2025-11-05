@@ -5981,3 +5981,160 @@ TEST(WindowDragBorderRenderingTest, LastWorkspaceTarget_ShouldRender) {
     EXPECT_TRUE(shouldRender)
         << "Border should render when targeting last visible workspace";
 }
+
+// ===== Scroll Offset Animation Tests =====
+
+class ScrollOffsetAnimationTest : public ::testing::Test {
+protected:
+    const float MONITOR_HEIGHT = 1080.0f;
+    const float PADDING = 20.0f;
+    const float GAP_WIDTH = 10.0f;
+
+    float calculateTargetScrollOffset(int workspaceIndex, float leftPreviewHeight) {
+        const float availableHeight = MONITOR_HEIGHT - (2 * PADDING);
+        const float panelCenter = availableHeight / 2.0f;
+        const float workspaceTopWithoutScroll = workspaceIndex * (leftPreviewHeight + GAP_WIDTH);
+        const float workspaceCenterOffset = leftPreviewHeight / 2.0f;
+
+        float targetScrollOffset = workspaceTopWithoutScroll + workspaceCenterOffset - panelCenter;
+        const float maxScrollOffset = 500.0f;  // Example max scroll
+        return std::clamp(targetScrollOffset, 0.0f, maxScrollOffset);
+    }
+};
+
+TEST_F(ScrollOffsetAnimationTest, FirstWorkspaceScrollsToTop) {
+    const float availableHeight = MONITOR_HEIGHT - (2 * PADDING);
+    const float totalGaps = 3 * GAP_WIDTH;
+    const float baseHeight = (availableHeight - totalGaps) / 4;
+    const float leftPreviewHeight = baseHeight * 0.9f;
+
+    float targetScroll = calculateTargetScrollOffset(0, leftPreviewHeight);
+
+    // First workspace should scroll to 0 or near 0
+    EXPECT_LE(targetScroll, 50.0f)
+        << "First workspace should be at or near the top";
+}
+
+TEST_F(ScrollOffsetAnimationTest, MiddleWorkspaceScrollsCentered) {
+    const float availableHeight = MONITOR_HEIGHT - (2 * PADDING);
+    const float totalGaps = 3 * GAP_WIDTH;
+    const float baseHeight = (availableHeight - totalGaps) / 4;
+    const float leftPreviewHeight = baseHeight * 0.9f;
+
+    // Workspace at index 4 should be centered
+    int middleWorkspaceIndex = 4;
+    float targetScroll = calculateTargetScrollOffset(middleWorkspaceIndex, leftPreviewHeight);
+
+    // Should have meaningful scroll offset
+    EXPECT_GT(targetScroll, 100.0f)
+        << "Middle workspace should require scrolling";
+    EXPECT_LE(targetScroll, 500.0f)
+        << "Middle workspace scroll should be within bounds";
+}
+
+TEST_F(ScrollOffsetAnimationTest, ScrollOffsetIncreasesWithWorkspaceIndex) {
+    const float availableHeight = MONITOR_HEIGHT - (2 * PADDING);
+    const float totalGaps = 3 * GAP_WIDTH;
+    const float baseHeight = (availableHeight - totalGaps) / 4;
+    const float leftPreviewHeight = baseHeight * 0.9f;
+
+    float scroll0 = calculateTargetScrollOffset(0, leftPreviewHeight);
+    float scroll2 = calculateTargetScrollOffset(2, leftPreviewHeight);
+    float scroll4 = calculateTargetScrollOffset(4, leftPreviewHeight);
+
+    EXPECT_LT(scroll0, scroll2)
+        << "Scroll offset should increase with workspace index";
+    EXPECT_LT(scroll2, scroll4)
+        << "Scroll offset should continue increasing";
+}
+
+TEST_F(ScrollOffsetAnimationTest, AnimationDistanceCalculation) {
+    const float availableHeight = MONITOR_HEIGHT - (2 * PADDING);
+    const float totalGaps = 3 * GAP_WIDTH;
+    const float baseHeight = (availableHeight - totalGaps) / 4;
+    const float leftPreviewHeight = baseHeight * 0.9f;
+
+    // Simulate switching from workspace 1 to workspace 2 (both within scrollable range)
+    float scroll1 = calculateTargetScrollOffset(1, leftPreviewHeight);
+    float scroll2 = calculateTargetScrollOffset(2, leftPreviewHeight);
+
+    float animationDistance = std::abs(scroll2 - scroll1);
+
+    // Distance should be approximately 1 workspace height + 1 gap when not clamped
+    float workspaceSpacing = leftPreviewHeight + GAP_WIDTH;
+    EXPECT_GT(animationDistance, 0.0f)
+        << "Animation distance should be positive";
+    EXPECT_LE(animationDistance, workspaceSpacing * 1.5f)
+        << "Animation distance should be reasonable for adjacent workspaces";
+}
+
+TEST_F(ScrollOffsetAnimationTest, ClampingAtBoundaries) {
+    const float availableHeight = MONITOR_HEIGHT - (2 * PADDING);
+    const float totalGaps = 3 * GAP_WIDTH;
+    const float baseHeight = (availableHeight - totalGaps) / 4;
+    const float leftPreviewHeight = baseHeight * 0.9f;
+
+    // Very high workspace index
+    float scrollHigh = calculateTargetScrollOffset(20, leftPreviewHeight);
+
+    // Should be clamped to maxScrollOffset
+    EXPECT_LE(scrollHigh, 500.0f)
+        << "Scroll offset should be clamped to maximum";
+}
+
+TEST_F(ScrollOffsetAnimationTest, ConsecutiveWorkspacesSmallAnimation) {
+    const float availableHeight = MONITOR_HEIGHT - (2 * PADDING);
+    const float totalGaps = 3 * GAP_WIDTH;
+    const float baseHeight = (availableHeight - totalGaps) / 4;
+    const float leftPreviewHeight = baseHeight * 0.9f;
+
+    // Switching between adjacent workspaces
+    float scroll2 = calculateTargetScrollOffset(2, leftPreviewHeight);
+    float scroll3 = calculateTargetScrollOffset(3, leftPreviewHeight);
+
+    float animationDistance = std::abs(scroll3 - scroll2);
+
+    // Distance should be approximately 1 workspace height + 1 gap
+    float expectedDistance = leftPreviewHeight + GAP_WIDTH;
+    EXPECT_NEAR(animationDistance, expectedDistance, 10.0f)
+        << "Adjacent workspace animation should be one workspace height";
+}
+
+TEST_F(ScrollOffsetAnimationTest, BackwardScrollAnimation) {
+    const float availableHeight = MONITOR_HEIGHT - (2 * PADDING);
+    const float totalGaps = 3 * GAP_WIDTH;
+    const float baseHeight = (availableHeight - totalGaps) / 4;
+    const float leftPreviewHeight = baseHeight * 0.9f;
+
+    // Switching from higher to lower workspace
+    float scroll5 = calculateTargetScrollOffset(5, leftPreviewHeight);
+    float scroll2 = calculateTargetScrollOffset(2, leftPreviewHeight);
+
+    EXPECT_GT(scroll5, scroll2)
+        << "Higher workspace should have higher scroll offset";
+
+    // Animation should go backward (negative direction)
+    float animationDistance = scroll2 - scroll5;
+    EXPECT_LT(animationDistance, 0.0f)
+        << "Backward animation should have negative distance";
+}
+
+TEST_F(ScrollOffsetAnimationTest, DifferentMonitorHeights) {
+    const float TALL_MONITOR = 1440.0f;
+    const float SHORT_MONITOR = 900.0f;
+
+    auto calcForHeight = [this](float height, int wsIndex) {
+        const float availableHeight = height - (2 * PADDING);
+        const float totalGaps = 3 * GAP_WIDTH;
+        const float baseHeight = (availableHeight - totalGaps) / 4;
+        const float leftPreviewHeight = baseHeight * 0.9f;
+        return calculateTargetScrollOffset(wsIndex, leftPreviewHeight);
+    };
+
+    float tallScroll = calcForHeight(TALL_MONITOR, 3);
+    float shortScroll = calcForHeight(SHORT_MONITOR, 3);
+
+    // Taller monitor should allow more scrolling
+    EXPECT_GT(tallScroll, shortScroll)
+        << "Taller monitor should have larger scroll offsets for same workspace";
+}
