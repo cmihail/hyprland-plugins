@@ -64,24 +64,159 @@ SP<HOOK_CALLBACK_FN> g_mouseButtonHook;
 SP<HOOK_CALLBACK_FN> g_mouseMoveHook;
 SP<HOOK_CALLBACK_FN> g_renderHook;
 
-// Debug logging helper
-static void debugLog(const std::string& message) {
-    try {
-        std::ofstream file("/tmp/hyprland-debug", std::ios::app);
-        if (file.is_open()) {
-            auto now = std::chrono::system_clock::now();
-            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                now.time_since_epoch()
-            ).count();
-            file << "[" << ms << "] " << message << "\n";
-            file.close();
-        }
-    } catch (...) {
-        // Ignore debug log errors
+// Helper function to add gesture to Hyprland config file
+static bool addGestureToConfig(const std::string& strokeData) {
+    const char* home = std::getenv("HOME");
+    if (!home) {
+        return false;
     }
+
+    std::string configBasePath = std::string(home) + "/.config/hypr";
+    std::vector<std::string> configPaths = {
+        configBasePath + "/config/plugins.conf",
+        configBasePath + "/hyprland.conf"
+    };
+
+    // Step 1: Try to find existing mouse_gestures section
+    for (const auto& configPath : configPaths) {
+        std::ifstream inFile(configPath);
+        if (!inFile.is_open()) continue;
+
+        std::vector<std::string> lines;
+        std::string line;
+        bool foundMouseGestures = false;
+        int mouseGesturesSectionEnd = -1;
+        int currentLine = 0;
+        int braceDepth = 0;
+        int pluginBraceDepth = 0;
+        bool inPlugin = false;
+
+        // Read the file and find mouse_gestures section
+        while (std::getline(inFile, line)) {
+            lines.push_back(line);
+
+            std::string trimmed = line;
+            trimmed.erase(0, trimmed.find_first_not_of(" \t"));
+            trimmed.erase(trimmed.find_last_not_of(" \t") + 1);
+
+            if (trimmed.find("plugin") == 0 && trimmed.find("{") != std::string::npos) {
+                inPlugin = true;
+                pluginBraceDepth = 1;
+            } else if (inPlugin) {
+                for (char c : trimmed) {
+                    if (c == '{') pluginBraceDepth++;
+                    else if (c == '}') pluginBraceDepth--;
+                }
+                if (pluginBraceDepth == 0) inPlugin = false;
+            }
+
+            if (trimmed.find("mouse_gestures") == 0 && trimmed.find("{") != std::string::npos) {
+                foundMouseGestures = true;
+                braceDepth = 1;
+            } else if (foundMouseGestures && braceDepth > 0) {
+                for (char c : trimmed) {
+                    if (c == '{') braceDepth++;
+                    else if (c == '}') braceDepth--;
+                }
+                if (braceDepth == 0) {
+                    mouseGesturesSectionEnd = currentLine;
+                }
+            }
+            currentLine++;
+        }
+        inFile.close();
+
+        if (foundMouseGestures && mouseGesturesSectionEnd > 0) {
+            // Add gesture_action before the closing brace
+            std::string gestureAction = "    gesture_action = hyprctl notify -1 2000 \"rgb(ff0000)\" \"modify me in config file " + configPath + "\"|" + strokeData;
+            lines.insert(lines.begin() + mouseGesturesSectionEnd, gestureAction);
+
+            // Write back to file
+            std::ofstream outFile(configPath);
+            if (!outFile.is_open()) return false;
+
+            for (const auto& l : lines) {
+                outFile << l << "\n";
+            }
+            outFile.close();
+            return true;
+        }
+    }
+
+    // Step 2: If no mouse_gestures section found, try to find plugin section
+    for (const auto& configPath : configPaths) {
+        std::ifstream inFile(configPath);
+        if (!inFile.is_open()) continue;
+
+        std::vector<std::string> lines;
+        std::string line;
+        int pluginSectionEnd = -1;
+        int currentLine = 0;
+        int braceDepth = 0;
+        bool inPluginSection = false;
+
+        while (std::getline(inFile, line)) {
+            lines.push_back(line);
+
+            std::string trimmed = line;
+            trimmed.erase(0, trimmed.find_first_not_of(" \t"));
+            trimmed.erase(trimmed.find_last_not_of(" \t") + 1);
+
+            if (trimmed.find("plugin") == 0 && trimmed.find("{") != std::string::npos) {
+                inPluginSection = true;
+                braceDepth = 1;
+            } else if (inPluginSection && braceDepth > 0) {
+                for (char c : trimmed) {
+                    if (c == '{') braceDepth++;
+                    else if (c == '}') braceDepth--;
+                }
+                if (braceDepth == 0) {
+                    pluginSectionEnd = currentLine;
+                }
+            }
+            currentLine++;
+        }
+        inFile.close();
+
+        if (pluginSectionEnd > 0) {
+            // Add mouse_gestures section before the closing brace of plugin section
+            std::vector<std::string> newSection = {
+                "",
+                "  mouse_gestures {",
+                "    gesture_action = hyprctl notify -1 2000 \"rgb(ff0000)\" \"modify me in config file " + configPath + "\"|" + strokeData,
+                "  }"
+            };
+
+            for (int i = newSection.size() - 1; i >= 0; i--) {
+                lines.insert(lines.begin() + pluginSectionEnd, newSection[i]);
+            }
+
+            // Write back to file
+            std::ofstream outFile(configPath);
+            if (!outFile.is_open()) return false;
+
+            for (const auto& l : lines) {
+                outFile << l << "\n";
+            }
+            outFile.close();
+            return true;
+        }
+    }
+
+    // Step 3: If no plugin section found, add to hyprland.conf
+    std::string hyprlandConf = configBasePath + "/hyprland.conf";
+    std::ofstream outFile(hyprlandConf, std::ios::app);
+    if (!outFile.is_open()) return false;
+
+    outFile << "\nplugin {\n";
+    outFile << "  mouse_gestures {\n";
+    outFile << "    gesture_action = hyprctl notify -1 2000 \"rgb(ff0000)\" \"modify me in config file " << hyprlandConf << "\"|" << strokeData << "\n";
+    outFile << "  }\n";
+    outFile << "}\n";
+    outFile.close();
+
+    return true;
 }
-
-
 
 
 
@@ -91,11 +226,8 @@ static void debugLog(const std::string& message) {
 
 // Convert path to stroke and find best matching gesture action
 static const GestureAction* findMatchingGestureAction(const std::vector<Vector2D>& path) {
-    debugLog("=== findMatchingGestureAction START ===");
-    debugLog("Path size: " + std::to_string(path.size()));
 
     if (path.size() < 2) {
-        debugLog("Path too small, returning nullptr");
         return nullptr;
     }
 
@@ -108,49 +240,26 @@ static const GestureAction* findMatchingGestureAction(const std::vector<Vector2D
             )->getDataStaticPtr();
 
         if (!PMATCHTHRESHOLD || !*PMATCHTHRESHOLD) {
-            debugLog("Match threshold config not available");
             return nullptr;
         }
 
         const double matchThreshold = static_cast<double>(**PMATCHTHRESHOLD);
-        debugLog("Match threshold: " + std::to_string(matchThreshold));
 
         // Create stroke from path
-        debugLog("Creating stroke from path...");
         Stroke inputStroke;
         for (size_t i = 0; i < path.size(); i++) {
-            if (i < 5 || i >= path.size() - 5) {
-                debugLog("  Point " + std::to_string(i) + ": (" +
-                    std::to_string(path[i].x) + ", " +
-                    std::to_string(path[i].y) + ")");
-            } else if (i == 5) {
-                debugLog("  ... (" + std::to_string(path.size() - 10) +
-                    " more points) ...");
-            }
-
             if (!inputStroke.addPoint(path[i].x, path[i].y)) {
-                debugLog("Failed to add point to stroke");
                 return nullptr;
             }
         }
 
         if (!inputStroke.finish()) {
-            debugLog("Failed to finish stroke");
             return nullptr;
         }
 
-        debugLog("Input stroke created successfully with " +
-            std::to_string(inputStroke.size()) + " points");
-        debugLog("Input stroke data: " + inputStroke.serialize().substr(0, 200) + "...");
-
         // Find best matching gesture
-        debugLog("Comparing against " + std::to_string(g_gestureActions.size()) +
-            " configured gestures");
-
         if (g_gestureActions.empty()) {
-            debugLog("WARNING: No gestures configured!");
-            debugLog("  Check /tmp/hyprland-debug for PLUGIN_INIT logs");
-            debugLog("  Config keyword: plugin:mouse_gestures:gesture_action");
+            return nullptr;
         }
 
         const GestureAction* bestMatch = nullptr;
@@ -162,83 +271,35 @@ static const GestureAction* findMatchingGestureAction(const std::vector<Vector2D
             std::string actionName = action.name.empty() ?
                 "Action_" + std::to_string(i) : action.name;
 
-            debugLog("  Checking gesture: " + actionName);
 
             if (!action.pattern.isFinished()) {
-                debugLog("    Pattern not finished, skipping");
                 continue;
             }
 
-            debugLog("    Pattern has " + std::to_string(action.pattern.size()) + " points");
-            debugLog("    Pattern data: " + action.pattern.serialize().substr(0, 200) + "...");
 
             double cost = inputStroke.compare(action.pattern);
-            debugLog("    Comparison cost: " + std::to_string(cost));
-            debugLog("    Current best cost: " + std::to_string(bestCost));
 
             if (cost < bestCost) {
                 bestCost = cost;
                 bestMatch = &action;
-                debugLog("    NEW BEST MATCH! Cost: " + std::to_string(cost));
             }
         }
 
         if (bestMatch) {
             std::string matchName = bestMatch->name.empty() ? "unnamed" : bestMatch->name;
-            debugLog("FINAL MATCH: " + matchName + " with cost " +
-                std::to_string(bestCost));
         } else {
-            debugLog("NO MATCH FOUND (all costs > threshold)");
         }
 
-        debugLog("=== findMatchingGestureAction END ===");
         return bestMatch;
     } catch (const std::exception& e) {
-        debugLog("Exception in findMatchingGestureAction: " + std::string(e.what()));
         return nullptr;
-    }
-}
-
-// Write gesture result to file
-static void writeGestureToFile(const Stroke& stroke, const GestureAction* matchedAction) {
-    try {
-        std::ifstream checkFile("/tmp/hyprland-mouse");
-        bool fileExists = checkFile.good();
-        checkFile.close();
-
-        std::ofstream file("/tmp/hyprland-mouse", fileExists ? std::ios::app : std::ios::out);
-        if (!file.is_open()) {
-            return;
-        }
-
-        if (fileExists) {
-            file << "\n";
-        }
-
-        file << "Gesture detected:\n";
-        file << "  Path points: " << g_gestureState.path.size() << "\n";
-        file << "  Stroke data: " << stroke.serialize() << "\n";
-
-        if (matchedAction) {
-            file << "  Matched: " << (matchedAction->name.empty() ?
-                matchedAction->command : matchedAction->name) << "\n";
-        } else {
-            file << "  No match found\n";
-        }
-
-        file.close();
-    } catch (const std::exception&) {
-        // Silently fail on file write errors
     }
 }
 
 // Handle detected gesture - analyze path and display result
 static void handleGestureDetected() {
-    debugLog("\n>>> GESTURE DETECTED <<<");
-    debugLog("Path size: " + std::to_string(g_gestureState.path.size()));
 
     if (g_gestureState.path.size() <= 1) {
-        debugLog("Path too small, ignoring");
         return;
     }
 
@@ -247,42 +308,49 @@ static void handleGestureDetected() {
         Stroke inputStroke;
         for (const auto& point : g_gestureState.path) {
             if (!inputStroke.addPoint(point.x, point.y)) {
-                debugLog("Failed to add point to stroke");
                 return;
             }
         }
 
         if (!inputStroke.finish()) {
-            debugLog("Failed to finish stroke");
             return;
         }
 
         // If in record mode, save the stroke data
         if (g_recordMode) {
-            debugLog("RECORD MODE: Saving gesture");
 
             try {
-                std::string strokeData = inputStroke.serialize();
+                // First check if this gesture matches any existing gesture
+                const GestureAction* matchingAction = findMatchingGestureAction(g_gestureState.path);
 
-                // Write to file
-                std::ofstream file("/tmp/hyprland-mouse-gesture-recorded");
-                if (file.is_open()) {
-                    file << strokeData;
-                    file.close();
-
+                if (matchingAction) {
+                    // Gesture already exists, notify user
+                    std::string message = "[mouse-gestures] Duplicated gesture with command: " + matchingAction->command;
                     HyprlandAPI::addNotification(
                         PHANDLE,
-                        "[mouse-gestures] Gesture recorded",
-                        {0, 0.5, 1, 1},
-                        3000
+                        message,
+                        {1, 0.65, 0, 1},  // Orange color for warning
+                        5000
                     );
                 } else {
-                    HyprlandAPI::addNotification(
-                        PHANDLE,
-                        "[mouse-gestures] Failed to save gesture",
-                        {1, 0, 0, 1},
-                        3000
-                    );
+                    // No match, add to config file
+                    std::string strokeData = inputStroke.serialize();
+
+                    if (addGestureToConfig(strokeData)) {
+                        HyprlandAPI::addNotification(
+                            PHANDLE,
+                            "[mouse-gestures] Gesture added to config",
+                            {0, 0.5, 1, 1},
+                            3000
+                        );
+                    } else {
+                        HyprlandAPI::addNotification(
+                            PHANDLE,
+                            "[mouse-gestures] Failed to add gesture to config",
+                            {1, 0, 0, 1},
+                            3000
+                        );
+                    }
                 }
             } catch (const std::exception&) {
                 HyprlandAPI::addNotification(
@@ -298,16 +366,11 @@ static void handleGestureDetected() {
         }
 
         // Check for matching gesture action
-        debugLog("Calling findMatchingGestureAction...");
         const GestureAction* matchingAction = findMatchingGestureAction(g_gestureState.path);
-
-        // Write to debug file
-        writeGestureToFile(inputStroke, matchingAction);
 
         if (matchingAction) {
             std::string actionName = matchingAction->name.empty() ?
                 matchingAction->command : matchingAction->name;
-            debugLog("EXECUTING COMMAND: " + matchingAction->command);
 
             try {
                 // Execute the command in a new thread to avoid blocking
@@ -319,10 +382,8 @@ static void handleGestureDetected() {
                     }
                 }).detach();
             } catch (const std::exception&) {
-                debugLog("Failed to create thread for command execution");
             }
         } else {
-            debugLog("NO MATCH - showing notification");
             HyprlandAPI::addNotification(
                 PHANDLE,
                 "[mouse-gestures] Gesture not matched",
@@ -331,7 +392,6 @@ static void handleGestureDetected() {
             );
         }
     } catch (const std::exception& e) {
-        debugLog("Exception in handleGestureDetected: " + std::string(e.what()));
         HyprlandAPI::addNotification(
             PHANDLE,
             "[mouse-gestures] Error processing gesture",
@@ -404,12 +464,9 @@ static bool checkDragThresholdExceeded(const Vector2D& mousePos) {
 // The pipe character | separates command from stroke data
 // Stroke data contains x,y;x,y;... (commas and semicolons are preserved)
 static Hyprlang::CParseResult onGestureAction(const char* COMMAND, const char* VALUE) {
-    debugLog(">>> onGestureAction CALLED <<<");
-    debugLog("COMMAND: " + std::string(COMMAND ? COMMAND : "(null)"));
 
     try {
         if (!VALUE) {
-            debugLog("ERROR: VALUE is null");
             HyprlandAPI::addNotification(
                 PHANDLE,
                 "[mouse-gestures] gesture_action value is null",
@@ -420,13 +477,10 @@ static Hyprlang::CParseResult onGestureAction(const char* COMMAND, const char* V
         }
 
         std::string value(VALUE);
-        debugLog("VALUE: " + value.substr(0, 150) +
-            (value.length() > 150 ? "..." : ""));
 
         // Find the LAST pipe delimiter (to support pipes in command)
         size_t pipePos = value.rfind('|');
         if (pipePos == std::string::npos) {
-            debugLog("ERROR: No pipe delimiter '|' found in value");
             HyprlandAPI::addNotification(
                 PHANDLE,
                 "[mouse-gestures] Format: command|stroke_data",
@@ -436,7 +490,6 @@ static Hyprlang::CParseResult onGestureAction(const char* COMMAND, const char* V
             return Hyprlang::CParseResult{};
         }
 
-        debugLog("Pipe found at position: " + std::to_string(pipePos));
 
         // Extract command and stroke data (swapped order!)
         std::string command = value.substr(0, pipePos);
@@ -459,12 +512,9 @@ static Hyprlang::CParseResult onGestureAction(const char* COMMAND, const char* V
             command = "";  // All whitespace, make it empty
         }
 
-        debugLog("Parsed stroke_data length: " + std::to_string(strokeData.length()));
-        debugLog("Parsed command: " + command);
 
         // Validate
         if (strokeData.empty()) {
-            debugLog("ERROR: stroke_data is empty");
             HyprlandAPI::addNotification(
                 PHANDLE,
                 "[mouse-gestures] stroke_data cannot be empty",
@@ -475,7 +525,6 @@ static Hyprlang::CParseResult onGestureAction(const char* COMMAND, const char* V
         }
 
         if (command.empty()) {
-            debugLog("ERROR: command is empty");
             HyprlandAPI::addNotification(
                 PHANDLE,
                 "[mouse-gestures] command cannot be empty",
@@ -503,14 +552,8 @@ static Hyprlang::CParseResult onGestureAction(const char* COMMAND, const char* V
 
         g_gestureActions.push_back(action);
 
-        debugLog(">>> Config: Added gesture action <<<");
-        debugLog("  Command: " + command);
-        debugLog("  Stroke points: " + std::to_string(action.pattern.size()));
-        debugLog("  Stroke data (first 100 chars): " + strokeData.substr(0, 100) +
-            (strokeData.length() > 100 ? "..." : ""));
 
     } catch (const std::exception& e) {
-        debugLog("Exception parsing gesture_action: " + std::string(e.what()));
         HyprlandAPI::addNotification(
             PHANDLE,
             "[mouse-gestures] Error parsing gesture_action",
@@ -522,46 +565,8 @@ static Hyprlang::CParseResult onGestureAction(const char* COMMAND, const char* V
     return Hyprlang::CParseResult{};
 }
 
-// Write configured gesture actions to file
-static void writeConfiguredGesturesToFile() {
-    try {
-        std::ifstream checkFile("/tmp/hyprland-mouse");
-        bool fileExists = checkFile.good();
-        checkFile.close();
-
-        std::ofstream file("/tmp/hyprland-mouse", fileExists ? std::ios::app : std::ios::out);
-        if (!file.is_open()) {
-            return;
-        }
-
-        if (fileExists) {
-            file << "\n";
-        }
-
-        file << "Configured gesture actions:\n";
-        if (g_gestureActions.empty()) {
-            file << "  (none)\n";
-        } else {
-            for (size_t i = 0; i < g_gestureActions.size(); i++) {
-                file << "  " << (i + 1) << ". ";
-                if (!g_gestureActions[i].name.empty()) {
-                    file << g_gestureActions[i].name << " -> ";
-                }
-                file << g_gestureActions[i].command << "\n";
-                file << "     Points: " << g_gestureActions[i].pattern.size() << "\n";
-            }
-        }
-
-        file.close();
-    } catch (const std::exception&) {
-        // Silently fail on file write errors
-    }
-}
-
 // Handler to clear gesture actions on config reload
 static void onPreConfigReload() {
-    debugLog(">>> Config reload - clearing " +
-        std::to_string(g_gestureActions.size()) + " gesture actions");
     g_gestureActions.clear();
 }
 
@@ -691,8 +696,6 @@ APICALL EXPORT std::string PLUGIN_API_VERSION() {
 APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     PHANDLE = handle;
 
-    debugLog("========================================");
-    debugLog(">>> PLUGIN_INIT START <<<");
 
     const std::string HASH = __hyprland_api_get_hash();
 
@@ -701,7 +704,6 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     }
 
     // Register configuration values
-    debugLog("Registering config values...");
     HyprlandAPI::addConfigValue(
         PHANDLE,
         "plugin:mouse_gestures:drag_threshold",
@@ -719,14 +721,12 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     );
 
     // Register config keyword for gesture_action
-    debugLog("Registering keyword: plugin:mouse_gestures:gesture_action");
     HyprlandAPI::addConfigKeyword(
         PHANDLE,
         "plugin:mouse_gestures:gesture_action",
         onGestureAction,
         Hyprlang::SHandlerOptions{}
     );
-    debugLog("Keyword registered successfully");
 
     // Register preConfigReload handler
     static auto preConfigReloadHook = HyprlandAPI::registerCallbackDynamic(
@@ -735,21 +735,15 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         [&](void* self, SCallbackInfo& info, std::any data) { onPreConfigReload(); }
     );
 
-    // Register configReloaded handler to write gestures after reload
+    // Register configReloaded handler
     static auto configReloadedHook = HyprlandAPI::registerCallbackDynamic(
         PHANDLE,
         "configReloaded",
-        [&](void* self, SCallbackInfo& info, std::any data) { writeConfiguredGesturesToFile(); }
+        [&](void* self, SCallbackInfo& info, std::any data) {}
     );
 
     // Reload config to apply registered values
-    debugLog("Calling HyprlandAPI::reloadConfig()...");
     HyprlandAPI::reloadConfig();
-    debugLog("Config reloaded. Configured gestures count: " +
-        std::to_string(g_gestureActions.size()));
-
-    // Write configured gestures to file
-    writeConfiguredGesturesToFile();
 
     HyprlandAPI::addDispatcherV2(PHANDLE, "mouse-gestures", mouseGesturesDispatch);
 
@@ -757,8 +751,6 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     setupMouseButtonHook();
     setupMouseMoveHook();
 
-    debugLog(">>> PLUGIN_INIT COMPLETE <<<");
-    debugLog("========================================");
 
     return {"mouse-gestures", "Mouse gestures for Hyprland", "cmihail", "1.0"};
 }

@@ -45,19 +45,20 @@ To create gesture patterns:
    You'll see a notification that recording mode is enabled.
 
 2. **Draw your gesture** using the action button (right mouse button by default).
+   - If the gesture matches an existing one, you'll see an orange notification showing which command it duplicates (no new entry will be added)
+   - If the gesture is unique, it will be automatically added to your Hyprland configuration file
 
-3. **Check the recorded data**:
-   ```bash
-   cat /tmp/hyprland-mouse-gesture-recorded
-   ```
-
-4. **Add to your config**:
+3. **Edit the recorded gesture** (if a new gesture was added):
+   The plugin will add a placeholder gesture_action to your config file (in `~/.config/hypr/config/plugins.conf` if it exists, or `~/.config/hypr/hyprland.conf` otherwise):
    ```conf
-   plugin {
-       mouse_gestures {
-           gesture_action = hyprctl dispatch workspace +1|<paste_stroke_data_here>
-       }
-   }
+   gesture_action = hyprctl notify -1 2000 "rgb(ff0000)" "modify me in config file <path>"|<stroke_data>
+   ```
+   The notification will indicate which config file was modified.
+
+4. **Customize the command**:
+   Edit the config file and replace the placeholder command with your desired action:
+   ```conf
+   gesture_action = hyprctl dispatch workspace +1|<stroke_data>
    ```
 
 5. **Reload config**:
@@ -77,7 +78,7 @@ plugin {
         match_threshold = 0.10
 
         # Record some gestures first using: hyprctl dispatch mouse-gestures record
-        # Then paste the stroke data from /tmp/hyprland-mouse-gesture-recorded
+        # The stroke data will be automatically added to your config file
 
         # Example: Swipe right to go to next workspace
         gesture_action = hyprctl dispatch workspace +1|0.123456,0.500000;0.234567,0.500000;0.345678,0.500000;
@@ -122,101 +123,26 @@ The coordinates are the raw screen positions when you draw the gesture. The algo
 - **Consistent gestures**: Try to draw gestures consistently for best recognition
 - **Match threshold**: Lower values (0.05-0.10) = stricter, higher values (0.15-0.25) = more lenient
 - **Drag threshold**: Increase if gestures trigger too easily, decrease for more sensitivity
-- **Testing**: Draw gestures to see match results in `/tmp/hyprland-mouse` (includes point count and stroke data)
 
 ## Debugging
 
-The plugin writes detailed debug logs to `/tmp/hyprland-debug` to help troubleshoot matching issues.
+The plugin shows notifications for matched and unmatched gestures to help troubleshoot matching issues.
 
-### What's Logged
+### Troubleshooting
 
-The debug log includes:
-- **Config loading**: When gesture actions are added/cleared from config
-- **Gesture detection**: When gestures are detected and their path size
-- **Stroke creation**: Input stroke data and point coordinates
-- **Pattern comparison**:
-  - Each configured pattern being checked
-  - Comparison costs for each pattern
-  - Match threshold value
-  - Which pattern (if any) matched
-- **Command execution**: When commands are executed
-
-### How to Debug Matching Issues
-
-1. **Clear the log** before testing:
-   ```bash
-   rm /tmp/hyprland-debug
-   ```
-
-2. **Reload config** to see what gestures are loaded:
-   ```bash
-   hyprctl reload
-   ```
-
-3. **Check what was loaded**:
-   ```bash
-   tail -20 /tmp/hyprland-debug
-   ```
-   Look for lines like:
-   ```
-   >>> Config: Added gesture action <<<
-     Name: YourGestureName
-     Command: your command
-     Stroke points: 50
-     Stroke data: x,y;x,y;...
-   ```
-
-4. **Draw a gesture** and check the matching process:
-   ```bash
-   tail -100 /tmp/hyprland-debug
-   ```
-
-5. **Look for**:
-   - `>>> GESTURE DETECTED <<<` - Shows path size
-   - `Match threshold:` - Current threshold value (default: 0.15)
-   - `Comparing against N configured gestures` - How many patterns loaded
-   - `Comparison cost:` - Cost for each pattern comparison
-   - `FINAL MATCH:` or `NO MATCH FOUND` - Result
-
-### Common Issues
-
-**Issue: "Comparing against 0 configured gestures"**
-- Your gesture actions aren't loading from config
+**Issue: Gestures not being recognized**
 - Check config syntax (must use `{ }` block format)
-- Look for error notifications when reloading
-
-**Issue: All comparison costs > threshold**
-- Gestures are too different from recorded patterns
-- Try increasing `match_threshold` (e.g., to 0.25)
+- Look for error notifications when reloading config with `hyprctl reload`
+- Try increasing `match_threshold` (e.g., to 0.25) for more lenient matching
 - Re-record the gesture for better accuracy
 
-**Issue: Stroke has very few points**
-- Drawing gesture too fast
-- Try drawing slower or increase `drag_threshold`
+**Issue: Gestures trigger too easily**
+- Increase `drag_threshold` (e.g., to 75 or 100)
+- Decrease `match_threshold` for stricter matching
 
-### Example Debug Output
-
-```
-[1699123456789] >>> Config: Added gesture action <<<
-[1699123456789]   Name: SwipeRight
-[1699123456789]   Command: hyprctl dispatch workspace +1
-[1699123456789]   Stroke points: 45
-[1699123456789]   Stroke data: 100.5,200.3;150.7,200.8;...
-
-[1699123456999] >>> GESTURE DETECTED <<<
-[1699123456999] Path size: 52
-[1699123456999] === findMatchingGestureAction START ===
-[1699123456999] Match threshold: 0.150000
-[1699123456999] Input stroke created successfully with 52 points
-[1699123456999] Comparing against 1 configured gestures
-[1699123456999]   Checking gesture: SwipeRight
-[1699123456999]     Pattern has 45 points
-[1699123456999]     Comparison cost: 0.087234
-[1699123456999]     Current best cost: 0.150000
-[1699123456999]     NEW BEST MATCH! Cost: 0.087234
-[1699123456999] FINAL MATCH: SwipeRight with cost 0.087234
-[1699123456999] EXECUTING COMMAND: hyprctl dispatch workspace +1
-```
+**Issue: Gestures require very precise drawing**
+- Drawing gesture too fast may result in few points
+- Try drawing slower or decrease `drag_threshold`
 
 ## Differences from Old Version
 
