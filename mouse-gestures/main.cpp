@@ -66,6 +66,64 @@ SP<HOOK_CALLBACK_FN> g_mouseButtonHook;
 SP<HOOK_CALLBACK_FN> g_mouseMoveHook;
 SP<HOOK_CALLBACK_FN> g_renderHook;
 
+// Helper function to execute a command with error handling
+static void executeCommand(const std::string& command) {
+    if (command.empty()) {
+        return;
+    }
+
+    try {
+        std::thread([command]() {
+            try {
+                int result = system(command.c_str());
+                if (result != 0) {
+                    std::string errorMsg = "[mouse-gestures] Command failed "
+                        "with exit code " + std::to_string(result) +
+                        ": " + command;
+                    HyprlandAPI::addNotification(
+                        PHANDLE,
+                        errorMsg,
+                        {1, 0, 0, 1},
+                        5000
+                    );
+                }
+            } catch (const std::exception& e) {
+                std::string errorMsg = "[mouse-gestures] Command "
+                    "execution error: " + std::string(e.what());
+                HyprlandAPI::addNotification(
+                    PHANDLE,
+                    errorMsg,
+                    {1, 0, 0, 1},
+                    5000
+                );
+            } catch (...) {
+                HyprlandAPI::addNotification(
+                    PHANDLE,
+                    "[mouse-gestures] Unknown error executing command",
+                    {1, 0, 0, 1},
+                    5000
+                );
+            }
+        }).detach();
+    } catch (const std::exception& e) {
+        std::string errorMsg = "[mouse-gestures] Failed to start "
+            "command thread: " + std::string(e.what());
+        HyprlandAPI::addNotification(
+            PHANDLE,
+            errorMsg,
+            {1, 0, 0, 1},
+            5000
+        );
+    } catch (...) {
+        HyprlandAPI::addNotification(
+            PHANDLE,
+            "[mouse-gestures] Unknown error starting command thread",
+            {1, 0, 0, 1},
+            5000
+        );
+    }
+}
+
 // Helper function to add gesture to Hyprland config file
 static bool addGestureToConfig(const std::string& strokeData) {
     const char* home = std::getenv("HOME");
@@ -133,7 +191,24 @@ static bool addGestureToConfig(const std::string& strokeData) {
             Stroke previewStroke = Stroke::deserialize(strokeData);
             auto asciiArt = AsciiGestureRenderer::render(previewStroke);
 
-            std::string gestureAction = "    gesture_action = hyprctl notify -1 2000 \"rgb(ff0000)\" \"modify me in config file " + configPath + "\"|" + strokeData;
+            // Get default command for config from config
+            static auto* const PDEFAULTCMDFORCONFIG = (Hyprlang::STRING const*)
+                HyprlandAPI::getConfigValue(
+                    PHANDLE,
+                    "plugin:mouse_gestures:default_command_for_config"
+                )->getDataStaticPtr();
+
+            std::string defaultCmd;
+            if (PDEFAULTCMDFORCONFIG && *PDEFAULTCMDFORCONFIG) {
+                // Config value is defined (even if empty string)
+                defaultCmd = std::string(*PDEFAULTCMDFORCONFIG);
+            } else {
+                // Config value is not defined (null), use fallback
+                defaultCmd = "hyprctl notify -1 2000 \"rgb(ff0000)\" "
+                    "\"modify me in config file " + configPath + "\"";
+            }
+
+            std::string gestureAction = "    gesture_action = " + defaultCmd + "|" + strokeData;
 
             // Insert ASCII art first, then gesture_action
             int insertPos = mouseGesturesSectionEnd;
@@ -195,6 +270,23 @@ static bool addGestureToConfig(const std::string& strokeData) {
             Stroke previewStroke = Stroke::deserialize(strokeData);
             auto asciiArt = AsciiGestureRenderer::render(previewStroke);
 
+            // Get default command for config from config
+            static auto* const PDEFAULTCMDFORCONFIG = (Hyprlang::STRING const*)
+                HyprlandAPI::getConfigValue(
+                    PHANDLE,
+                    "plugin:mouse_gestures:default_command_for_config"
+                )->getDataStaticPtr();
+
+            std::string defaultCmd;
+            if (PDEFAULTCMDFORCONFIG && *PDEFAULTCMDFORCONFIG) {
+                // Config value is defined (even if empty string)
+                defaultCmd = std::string(*PDEFAULTCMDFORCONFIG);
+            } else {
+                // Config value is not defined (null), use fallback
+                defaultCmd = "hyprctl notify -1 2000 \"rgb(ff0000)\" "
+                    "\"modify me in config file " + configPath + "\"";
+            }
+
             // Add mouse_gestures section before the closing brace of plugin section
             std::vector<std::string> newSection = {
                 "",
@@ -207,7 +299,7 @@ static bool addGestureToConfig(const std::string& strokeData) {
             }
 
             // Add gesture action
-            newSection.push_back("    gesture_action = hyprctl notify -1 2000 \"rgb(ff0000)\" \"modify me in config file " + configPath + "\"|" + strokeData);
+            newSection.push_back("    gesture_action = " + defaultCmd + "|" + strokeData);
             newSection.push_back("  }");
 
             for (int i = newSection.size() - 1; i >= 0; i--) {
@@ -235,6 +327,23 @@ static bool addGestureToConfig(const std::string& strokeData) {
     Stroke previewStroke = Stroke::deserialize(strokeData);
     auto asciiArt = AsciiGestureRenderer::render(previewStroke);
 
+    // Get default command for config from config
+    static auto* const PDEFAULTCMDFORCONFIG = (Hyprlang::STRING const*)
+        HyprlandAPI::getConfigValue(
+            PHANDLE,
+            "plugin:mouse_gestures:default_command_for_config"
+        )->getDataStaticPtr();
+
+    std::string defaultCmd;
+    if (PDEFAULTCMDFORCONFIG && *PDEFAULTCMDFORCONFIG) {
+        // Config value is defined (even if empty string)
+        defaultCmd = std::string(*PDEFAULTCMDFORCONFIG);
+    } else {
+        // Config value is not defined (null), use fallback
+        defaultCmd = "hyprctl notify -1 2000 \"rgb(ff0000)\" "
+            "\"modify me in config file " + hyprlandConf + "\"";
+    }
+
     outFile << "\nplugin {\n";
     outFile << "  mouse_gestures {\n";
 
@@ -243,7 +352,7 @@ static bool addGestureToConfig(const std::string& strokeData) {
         outFile << "    " << artLine << "\n";
     }
 
-    outFile << "    gesture_action = hyprctl notify -1 2000 \"rgb(ff0000)\" \"modify me in config file " << hyprlandConf << "\"|" << strokeData << "\n";
+    outFile << "    gesture_action = " << defaultCmd << "|" << strokeData << "\n";
     outFile << "  }\n";
     outFile << "}\n";
     outFile.close();
@@ -354,11 +463,13 @@ static void handleGestureDetected() {
 
             try {
                 // First check if this gesture matches any existing gesture
-                const GestureAction* matchingAction = findMatchingGestureAction(g_gestureState.path);
+                const GestureAction* matchingAction =
+                    findMatchingGestureAction(g_gestureState.path);
 
                 if (matchingAction) {
                     // Gesture already exists, notify user
-                    std::string message = "[mouse-gestures] Duplicated gesture with command: " + matchingAction->command;
+                    std::string message = "[mouse-gestures] Duplicated "
+                        "gesture with command: " + matchingAction->command;
                     HyprlandAPI::addNotification(
                         PHANDLE,
                         message,
@@ -402,20 +513,7 @@ static void handleGestureDetected() {
         const GestureAction* matchingAction = findMatchingGestureAction(g_gestureState.path);
 
         if (matchingAction) {
-            std::string actionName = matchingAction->name.empty() ?
-                matchingAction->command : matchingAction->name;
-
-            try {
-                // Execute the command in a new thread to avoid blocking
-                std::thread([command = matchingAction->command]() {
-                    try {
-                        system(command.c_str());
-                    } catch (...) {
-                        // Ignore command execution errors
-                    }
-                }).detach();
-            } catch (const std::exception&) {
-            }
+            executeCommand(matchingAction->command);
         } else {
             HyprlandAPI::addNotification(
                 PHANDLE,
@@ -546,21 +644,11 @@ static Hyprlang::CParseResult onGestureAction(const char* COMMAND, const char* V
         }
 
 
-        // Validate
+        // Validate stroke data (command can be empty)
         if (strokeData.empty()) {
             HyprlandAPI::addNotification(
                 PHANDLE,
                 "[mouse-gestures] stroke_data cannot be empty",
-                {1, 0, 0, 1},
-                5000
-            );
-            return Hyprlang::CParseResult{};
-        }
-
-        if (command.empty()) {
-            HyprlandAPI::addNotification(
-                PHANDLE,
-                "[mouse-gestures] command cannot be empty",
                 {1, 0, 0, 1},
                 5000
             );
@@ -752,6 +840,11 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         "plugin:mouse_gestures:match_threshold",
         Hyprlang::FLOAT{0.15}
     );
+    HyprlandAPI::addConfigValue(
+        PHANDLE,
+        "plugin:mouse_gestures:default_command_for_config",
+        Hyprlang::STRING{""}
+    );
 
     // Register config keyword for gesture_action
     HyprlandAPI::addConfigKeyword(
@@ -777,6 +870,32 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
     // Reload config to apply registered values
     HyprlandAPI::reloadConfig();
+
+    // Show notification with default_command_for_config value
+    static auto* const PDEFAULTCMDFORCONFIG = (Hyprlang::STRING const*)
+        HyprlandAPI::getConfigValue(
+            PHANDLE,
+            "plugin:mouse_gestures:default_command_for_config"
+        )->getDataStaticPtr();
+
+    std::string configValue = "";
+    if (PDEFAULTCMDFORCONFIG && *PDEFAULTCMDFORCONFIG) {
+        configValue = std::string(*PDEFAULTCMDFORCONFIG);
+    }
+
+    std::string notificationMsg = "[mouse-gestures] default_command_for_config = ";
+    if (configValue.empty()) {
+        notificationMsg += "(empty)";
+    } else {
+        notificationMsg += "\"" + configValue + "\"";
+    }
+
+    HyprlandAPI::addNotification(
+        PHANDLE,
+        notificationMsg,
+        {0, 0.5, 1, 1},
+        5000
+    );
 
     HyprlandAPI::addDispatcherV2(PHANDLE, "mouse-gestures", mouseGesturesDispatch);
 
