@@ -4,6 +4,7 @@
 #include <string>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 #include <fstream>
 #include <sstream>
@@ -25,6 +26,7 @@
 #undef private
 
 #include "stroke.hpp"
+#include "ascii_gesture.hpp"
 
 inline HANDLE PHANDLE = nullptr;
 
@@ -63,182 +65,6 @@ bool g_recordMode = false;
 SP<HOOK_CALLBACK_FN> g_mouseButtonHook;
 SP<HOOK_CALLBACK_FN> g_mouseMoveHook;
 SP<HOOK_CALLBACK_FN> g_renderHook;
-
-// Generate ASCII art representation of a gesture
-static std::vector<std::string> generateGestureAsciiArt(
-    const std::string& strokeData
-) {
-    std::vector<std::string> result;
-
-    try {
-        // Deserialize stroke to get normalized points
-        Stroke stroke = Stroke::deserialize(strokeData);
-        if (!stroke.isFinished() || stroke.size() < 2) {
-            return result;
-        }
-
-        const auto& points = stroke.getPoints();
-
-        // Find bounding box (points are already normalized [0, 1])
-        double minX = 1.0, maxX = 0.0, minY = 1.0, maxY = 0.0;
-        for (const auto& p : points) {
-            minX = std::min(minX, p.x);
-            maxX = std::max(maxX, p.x);
-            minY = std::min(minY, p.y);
-            maxY = std::max(maxY, p.y);
-        }
-
-        // Grid dimensions - maintain aspect ratio
-        const int maxHeight = 4;
-        const int maxWidth = 70;
-
-        double rangeX = maxX - minX;
-        double rangeY = maxY - minY;
-
-        // Avoid division by zero
-        if (rangeX < 0.001) rangeX = 0.001;
-        if (rangeY < 0.001) rangeY = 0.001;
-
-        // Calculate aspect ratio (width/height in normalized coords)
-        double aspect = rangeX / rangeY;
-
-        int height, width;
-
-        // Character aspect ratio compensation (terminal chars are ~2.5x taller)
-        const double charAspect = 2.5;
-
-        if (aspect * charAspect > 1.0) {
-            // Wider gesture - use max width, calculate height
-            width = maxWidth;
-            height = std::max(1, static_cast<int>(width / (aspect * charAspect)));
-            height = std::min(height, maxHeight);
-        } else {
-            // Taller gesture - use max height, calculate width
-            height = maxHeight;
-            width = std::max(1, static_cast<int>(height * aspect * charAspect));
-            width = std::min(width, maxWidth);
-        }
-
-        // Create grid
-        std::vector<std::vector<char>> grid(
-            height, std::vector<char>(width, ' ')
-        );
-
-        // Draw continuous path
-        for (size_t i = 0; i < points.size() - 1; i++) {
-            // Map normalized coords to grid
-            int x1 = static_cast<int>(
-                (points[i].x - minX) / (maxX - minX + 0.01) * (width - 1)
-            );
-            int y1 = static_cast<int>(
-                (points[i].y - minY) / (maxY - minY + 0.01) * (height - 1)
-            );
-            int x2 = static_cast<int>(
-                (points[i + 1].x - minX) / (maxX - minX + 0.01) * (width - 1)
-            );
-            int y2 = static_cast<int>(
-                (points[i + 1].y - minY) / (maxY - minY + 0.01) * (height - 1)
-            );
-
-            // Clamp to grid bounds
-            x1 = std::max(0, std::min(x1, width - 1));
-            y1 = std::max(0, std::min(y1, height - 1));
-            x2 = std::max(0, std::min(x2, width - 1));
-            y2 = std::max(0, std::min(y2, height - 1));
-
-            // Draw line using Bresenham-like algorithm
-            int dx = std::abs(x2 - x1);
-            int dy = std::abs(y2 - y1);
-            int sx = x1 < x2 ? 1 : -1;
-            int sy = y1 < y2 ? 1 : -1;
-            int err = dx - dy;
-
-            int x = x1, y = y1;
-            while (true) {
-                // Determine character based on direction to next point
-                char c = '*';
-                bool isStart = (i == 0 && x == x1 && y == y1);
-                bool isEnd = (i == points.size() - 2 && x == x2 && y == y2);
-
-                if (isStart) {
-                    c = 'S';  // Start
-                } else if (isEnd) {
-                    c = 'E';  // End
-                } else if (grid[y][x] != ' ' && grid[y][x] != '*') {
-                    c = grid[y][x];  // Keep existing
-                } else {
-                    // Calculate direction to next point
-                    int nextX = x, nextY = y;
-                    if (x != x2 || y != y2) {
-                        int e2 = 2 * err;
-                        if (e2 > -dy) nextX += sx;
-                        if (e2 < dx) nextY += sy;
-                    }
-
-                    int dirX = nextX - x;
-                    int dirY = nextY - y;
-
-                    // Choose character based on movement direction
-                    if (dirY == 0 && dirX != 0) {
-                        c = '-';  // Horizontal
-                    } else if (dirX == 0 && dirY != 0) {
-                        c = '|';  // Vertical
-                    } else if (dirX * dirY > 0) {
-                        c = '\\';  // Diagonal down-right or up-left
-                    } else if (dirX * dirY < 0) {
-                        c = '/';  // Diagonal down-left or up-right
-                    } else {
-                        // Fallback based on overall direction
-                        if (dx > dy * 2) {
-                            c = '-';
-                        } else if (dy > dx * 2) {
-                            c = '|';
-                        } else if ((sx > 0 && sy > 0) || (sx < 0 && sy < 0)) {
-                            c = '\\';
-                        } else {
-                            c = '/';
-                        }
-                    }
-                }
-
-                grid[y][x] = c;
-
-                if (x == x2 && y == y2) break;
-
-                int e2 = 2 * err;
-                if (e2 > -dy) {
-                    err -= dy;
-                    x += sx;
-                    if (x < 0 || x >= width) break;
-                }
-                if (e2 < dx) {
-                    err += dx;
-                    y += sy;
-                    if (y < 0 || y >= height) break;
-                }
-            }
-        }
-
-        // Convert grid to strings with comment prefix
-        for (int y = 0; y < height; y++) {
-            std::string line = "    # ";
-            for (int x = 0; x < width; x++) {
-                line += grid[y][x];
-            }
-            // Trim trailing spaces
-            size_t end = line.find_last_not_of(' ');
-            if (end != std::string::npos) {
-                line = line.substr(0, end + 1);
-            }
-            result.push_back(line);
-        }
-
-    } catch (const std::exception&) {
-        result.clear();
-    }
-
-    return result;
-}
 
 // Helper function to add gesture to Hyprland config file
 static bool addGestureToConfig(const std::string& strokeData) {
@@ -303,18 +129,16 @@ static bool addGestureToConfig(const std::string& strokeData) {
         inFile.close();
 
         if (foundMouseGestures && mouseGesturesSectionEnd > 0) {
-            // Generate ASCII art
-            std::vector<std::string> asciiArt = generateGestureAsciiArt(
-                strokeData
-            );
+            // Generate ASCII art for the gesture
+            Stroke previewStroke = Stroke::deserialize(strokeData);
+            auto asciiArt = AsciiGestureRenderer::render(previewStroke);
 
-            // Add ASCII art and gesture_action before the closing brace
             std::string gestureAction = "    gesture_action = hyprctl notify -1 2000 \"rgb(ff0000)\" \"modify me in config file " + configPath + "\"|" + strokeData;
 
-            // Insert in correct order: ASCII art first, then gesture_action
+            // Insert ASCII art first, then gesture_action
             int insertPos = mouseGesturesSectionEnd;
             for (const auto& artLine : asciiArt) {
-                lines.insert(lines.begin() + insertPos, artLine);
+                lines.insert(lines.begin() + insertPos, "    " + artLine);
                 insertPos++;
             }
             lines.insert(lines.begin() + insertPos, gestureAction);
@@ -367,10 +191,9 @@ static bool addGestureToConfig(const std::string& strokeData) {
         inFile.close();
 
         if (pluginSectionEnd > 0) {
-            // Generate ASCII art
-            std::vector<std::string> asciiArt = generateGestureAsciiArt(
-                strokeData
-            );
+            // Generate ASCII art for the gesture
+            Stroke previewStroke = Stroke::deserialize(strokeData);
+            auto asciiArt = AsciiGestureRenderer::render(previewStroke);
 
             // Add mouse_gestures section before the closing brace of plugin section
             std::vector<std::string> newSection = {
@@ -378,9 +201,9 @@ static bool addGestureToConfig(const std::string& strokeData) {
                 "  mouse_gestures {"
             };
 
-            // Add ASCII art
-            for (const auto& line : asciiArt) {
-                newSection.push_back(line);
+            // Add ASCII art with proper indentation
+            for (const auto& artLine : asciiArt) {
+                newSection.push_back("    " + artLine);
             }
 
             // Add gesture action
@@ -408,15 +231,16 @@ static bool addGestureToConfig(const std::string& strokeData) {
     std::ofstream outFile(hyprlandConf, std::ios::app);
     if (!outFile.is_open()) return false;
 
-    // Generate ASCII art
-    std::vector<std::string> asciiArt = generateGestureAsciiArt(strokeData);
+    // Generate ASCII art for the gesture
+    Stroke previewStroke = Stroke::deserialize(strokeData);
+    auto asciiArt = AsciiGestureRenderer::render(previewStroke);
 
     outFile << "\nplugin {\n";
     outFile << "  mouse_gestures {\n";
 
     // Write ASCII art
-    for (const auto& line : asciiArt) {
-        outFile << line << "\n";
+    for (const auto& artLine : asciiArt) {
+        outFile << "    " << artLine << "\n";
     }
 
     outFile << "    gesture_action = hyprctl notify -1 2000 \"rgb(ff0000)\" \"modify me in config file " << hyprlandConf << "\"|" << strokeData << "\n";
