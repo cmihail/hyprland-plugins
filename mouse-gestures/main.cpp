@@ -854,6 +854,11 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         "plugin:mouse_gestures:default_command_for_config",
         Hyprlang::STRING{""}
     );
+    HyprlandAPI::addConfigValue(
+        PHANDLE,
+        "plugin:mouse_gestures:dim_opacity",
+        Hyprlang::FLOAT{0.2}
+    );
 
     // Register config keyword for gesture_action
     HyprlandAPI::addConfigKeyword(

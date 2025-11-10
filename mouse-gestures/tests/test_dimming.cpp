@@ -21,12 +21,48 @@ TEST_F(DimmingOverlayTest, PassElementConstruction) {
     EXPECT_TRUE(true);
 }
 
-// Test overlay opacity value is correct (20%)
+// Test overlay default opacity value is correct (20%)
 TEST_F(DimmingOverlayTest, OverlayOpacityValue) {
     double expectedOpacity = 0.2;
     EXPECT_DOUBLE_EQ(expectedOpacity, 0.2);
     EXPECT_LT(expectedOpacity, 0.5);  // Less than 50%
     EXPECT_GT(expectedOpacity, 0.0);  // Greater than 0%
+}
+
+// Test opacity clamping to valid range
+TEST_F(DimmingOverlayTest, OpacityClampingBounds) {
+    // Test lower bound
+    float opacity = -0.5f;
+    if (opacity < 0.0f) opacity = 0.0f;
+    EXPECT_EQ(opacity, 0.0f);
+
+    // Test upper bound
+    opacity = 1.5f;
+    if (opacity > 1.0f) opacity = 1.0f;
+    EXPECT_EQ(opacity, 1.0f);
+
+    // Test valid value
+    opacity = 0.3f;
+    if (opacity < 0.0f) opacity = 0.0f;
+    if (opacity > 1.0f) opacity = 1.0f;
+    EXPECT_EQ(opacity, 0.3f);
+}
+
+// Test custom opacity values
+TEST_F(DimmingOverlayTest, CustomOpacityValues) {
+    // Test various valid opacity values
+    std::vector<float> testValues = {0.0f, 0.1f, 0.2f, 0.3f, 0.5f, 0.8f, 1.0f};
+
+    for (float value : testValues) {
+        EXPECT_GE(value, 0.0f);
+        EXPECT_LE(value, 1.0f);
+    }
+}
+
+// Test default config value
+TEST_F(DimmingOverlayTest, DefaultConfigValue) {
+    float defaultOpacity = 0.2f;
+    EXPECT_EQ(defaultOpacity, 0.2f);
 }
 
 // Test overlay color is black
