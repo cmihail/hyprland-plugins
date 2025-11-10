@@ -27,6 +27,7 @@
 
 #include "stroke.hpp"
 #include "ascii_gesture.hpp"
+#include "RecordModePassElement.hpp"
 
 inline HANDLE PHANDLE = nullptr;
 
@@ -60,11 +61,40 @@ struct MouseGestureState {
 MouseGestureState g_gestureState;
 std::vector<GestureAction> g_gestureActions;
 bool g_recordMode = false;
+bool g_lastRecordMode = false;
 
 // Hook handles
 SP<HOOK_CALLBACK_FN> g_mouseButtonHook;
 SP<HOOK_CALLBACK_FN> g_mouseMoveHook;
 SP<HOOK_CALLBACK_FN> g_renderHook;
+
+// Helper function to damage all monitors and schedule frames
+static void damageAllMonitors() {
+    try {
+        if (!g_pCompositor || !g_pHyprRenderer) {
+            return;
+        }
+
+        for (auto& monitor : g_pCompositor->m_monitors) {
+            if (!monitor) {
+                continue;
+            }
+
+            try {
+                g_pHyprRenderer->damageMonitor(monitor);
+                g_pCompositor->scheduleFrameForMonitor(monitor);
+            } catch (const std::exception& e) {
+                // Silently catch per-monitor errors
+            } catch (...) {
+                // Catch any other errors
+            }
+        }
+    } catch (const std::exception& e) {
+        // Silently catch to prevent crashes
+    } catch (...) {
+        // Catch any other errors
+    }
+}
 
 // Helper function to execute a command with error handling
 static void executeCommand(const std::string& command) {
@@ -75,52 +105,17 @@ static void executeCommand(const std::string& command) {
     try {
         std::thread([command]() {
             try {
-                int result = system(command.c_str());
-                if (result != 0) {
-                    std::string errorMsg = "[mouse-gestures] Command failed "
-                        "with exit code " + std::to_string(result) +
-                        ": " + command;
-                    HyprlandAPI::addNotification(
-                        PHANDLE,
-                        errorMsg,
-                        {1, 0, 0, 1},
-                        5000
-                    );
-                }
+                system(command.c_str());
             } catch (const std::exception& e) {
-                std::string errorMsg = "[mouse-gestures] Command "
-                    "execution error: " + std::string(e.what());
-                HyprlandAPI::addNotification(
-                    PHANDLE,
-                    errorMsg,
-                    {1, 0, 0, 1},
-                    5000
-                );
+                // Silently catch errors
             } catch (...) {
-                HyprlandAPI::addNotification(
-                    PHANDLE,
-                    "[mouse-gestures] Unknown error executing command",
-                    {1, 0, 0, 1},
-                    5000
-                );
+                // Silently catch errors
             }
         }).detach();
     } catch (const std::exception& e) {
-        std::string errorMsg = "[mouse-gestures] Failed to start "
-            "command thread: " + std::string(e.what());
-        HyprlandAPI::addNotification(
-            PHANDLE,
-            errorMsg,
-            {1, 0, 0, 1},
-            5000
-        );
+        // Silently catch errors
     } catch (...) {
-        HyprlandAPI::addNotification(
-            PHANDLE,
-            "[mouse-gestures] Unknown error starting command thread",
-            {1, 0, 0, 1},
-            5000
-        );
+        // Silently catch errors
     }
 }
 
@@ -487,25 +482,15 @@ static void handleGestureDetected() {
                             {0, 0.5, 1, 1},
                             3000
                         );
-                    } else {
-                        HyprlandAPI::addNotification(
-                            PHANDLE,
-                            "[mouse-gestures] Failed to add gesture to config",
-                            {1, 0, 0, 1},
-                            3000
-                        );
                     }
                 }
             } catch (const std::exception&) {
-                HyprlandAPI::addNotification(
-                    PHANDLE,
-                    "[mouse-gestures] Error recording gesture",
-                    {1, 0, 0, 1},
-                    3000
-                );
+                // Silently catch errors
             }
 
             g_recordMode = false;
+            // Damage all monitors to remove overlay
+            damageAllMonitors();
             return;
         }
 
@@ -514,21 +499,9 @@ static void handleGestureDetected() {
 
         if (matchingAction) {
             executeCommand(matchingAction->command);
-        } else {
-            HyprlandAPI::addNotification(
-                PHANDLE,
-                "[mouse-gestures] Gesture not matched",
-                {0, 1, 0, 1},
-                3000
-            );
         }
     } catch (const std::exception& e) {
-        HyprlandAPI::addNotification(
-            PHANDLE,
-            "[mouse-gestures] Error processing gesture",
-            {1, 0, 0, 1},
-            3000
-        );
+        // Silently catch errors
     }
 }
 
@@ -598,12 +571,6 @@ static Hyprlang::CParseResult onGestureAction(const char* COMMAND, const char* V
 
     try {
         if (!VALUE) {
-            HyprlandAPI::addNotification(
-                PHANDLE,
-                "[mouse-gestures] gesture_action value is null",
-                {1, 0, 0, 1},
-                5000
-            );
             return Hyprlang::CParseResult{};
         }
 
@@ -612,12 +579,6 @@ static Hyprlang::CParseResult onGestureAction(const char* COMMAND, const char* V
         // Find the LAST pipe delimiter (to support pipes in command)
         size_t pipePos = value.rfind('|');
         if (pipePos == std::string::npos) {
-            HyprlandAPI::addNotification(
-                PHANDLE,
-                "[mouse-gestures] Format: command|stroke_data",
-                {1, 0, 0, 1},
-                5000
-            );
             return Hyprlang::CParseResult{};
         }
 
@@ -646,12 +607,6 @@ static Hyprlang::CParseResult onGestureAction(const char* COMMAND, const char* V
 
         // Validate stroke data (command can be empty)
         if (strokeData.empty()) {
-            HyprlandAPI::addNotification(
-                PHANDLE,
-                "[mouse-gestures] stroke_data cannot be empty",
-                {1, 0, 0, 1},
-                5000
-            );
             return Hyprlang::CParseResult{};
         }
 
@@ -662,12 +617,6 @@ static Hyprlang::CParseResult onGestureAction(const char* COMMAND, const char* V
         action.pattern = Stroke::deserialize(strokeData);
 
         if (!action.pattern.isFinished() || action.pattern.size() < 2) {
-            HyprlandAPI::addNotification(
-                PHANDLE,
-                "[mouse-gestures] Invalid stroke data in gesture_action",
-                {1, 0, 0, 1},
-                5000
-            );
             return Hyprlang::CParseResult{};
         }
 
@@ -675,12 +624,7 @@ static Hyprlang::CParseResult onGestureAction(const char* COMMAND, const char* V
 
 
     } catch (const std::exception& e) {
-        HyprlandAPI::addNotification(
-            PHANDLE,
-            "[mouse-gestures] Error parsing gesture_action",
-            {1, 0, 0, 1},
-            5000
-        );
+        // Silently catch errors
     }
 
     return Hyprlang::CParseResult{};
@@ -691,24 +635,75 @@ static void onPreConfigReload() {
     g_gestureActions.clear();
 }
 
+static void setupRenderHook() {
+    try {
+        auto onRender = [](void* self, SCallbackInfo& info, std::any param) {
+            try {
+                // Detect when record mode changes and trigger damage
+                if (g_recordMode != g_lastRecordMode) {
+                    g_lastRecordMode = g_recordMode;
+                    damageAllMonitors();
+                }
+
+                // Only add overlay when in record mode
+                if (!g_recordMode) {
+                    return;
+                }
+
+                // Safety checks
+                if (!g_pHyprOpenGL || !g_pHyprRenderer) {
+                    return;
+                }
+
+                // Get the current monitor being rendered
+                auto monitor = g_pHyprOpenGL->m_renderData.pMonitor.lock();
+                if (!monitor) {
+                    return;
+                }
+
+                // Add the overlay to the render pass for this specific monitor
+                // This hook is called once per monitor per frame, so each
+                // monitor will get its own overlay instance
+                g_pHyprRenderer->m_renderPass.add(
+                    makeUnique<CRecordModePassElement>(monitor)
+                );
+
+                // Schedule next frame to keep overlay visible continuously
+                try {
+                    if (g_pCompositor) {
+                        g_pCompositor->scheduleFrameForMonitor(monitor);
+                    }
+                } catch (...) {
+                    // Silently catch scheduling errors
+                }
+
+            } catch (const std::exception& e) {
+                // Silently catch to prevent compositor crash
+            } catch (...) {
+                // Catch any other unexpected errors
+            }
+        };
+
+        g_renderHook = g_pHookSystem->hookDynamic("render", onRender);
+
+    } catch (const std::exception& e) {
+        // Failed to set up render hook - not critical, just skip the feature
+    } catch (...) {
+        // Catch any unexpected errors during hook setup
+    }
+}
+
 static SDispatchResult mouseGesturesDispatch(std::string arg) {
-    if (arg == "record") {
-        g_recordMode = !g_recordMode;
-        if (g_recordMode) {
-            HyprlandAPI::addNotification(
-                PHANDLE,
-                "[mouse-gestures] Recording mode enabled - draw gesture with action button",
-                {0, 0.5, 1, 1},
-                5000
-            );
-        } else {
-            HyprlandAPI::addNotification(
-                PHANDLE,
-                "[mouse-gestures] Recording mode disabled",
-                {0, 0.5, 1, 1},
-                3000
-            );
+    try {
+        if (arg == "record") {
+            g_recordMode = !g_recordMode;
+            // Immediately damage all monitors to show/hide overlay
+            damageAllMonitors();
         }
+    } catch (const std::exception& e) {
+        // Catch errors to prevent crashes
+    } catch (...) {
+        // Catch any other unexpected errors
     }
     return {};
 }
@@ -731,7 +726,21 @@ static void setupMouseButtonHook() {
 
             const uint32_t actionButton = static_cast<uint32_t>(**PACTIONBUTTON);
 
-            // Only handle configured action button
+            // If in record mode and a non-action button is pressed, cancel recording
+            if (g_recordMode && e.button != actionButton &&
+                e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
+                g_recordMode = false;
+                g_gestureState.reset();
+
+                // Damage all monitors to remove overlay immediately
+                damageAllMonitors();
+
+                // Consume the event to prevent it from going through
+                info.cancelled = true;
+                return;
+            }
+
+            // Only handle configured action button for gesture detection
             if (e.button != actionButton)
                 return;
 
@@ -871,37 +880,12 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     // Reload config to apply registered values
     HyprlandAPI::reloadConfig();
 
-    // Show notification with default_command_for_config value
-    static auto* const PDEFAULTCMDFORCONFIG = (Hyprlang::STRING const*)
-        HyprlandAPI::getConfigValue(
-            PHANDLE,
-            "plugin:mouse_gestures:default_command_for_config"
-        )->getDataStaticPtr();
-
-    std::string configValue = "";
-    if (PDEFAULTCMDFORCONFIG && *PDEFAULTCMDFORCONFIG) {
-        configValue = std::string(*PDEFAULTCMDFORCONFIG);
-    }
-
-    std::string notificationMsg = "[mouse-gestures] default_command_for_config = ";
-    if (configValue.empty()) {
-        notificationMsg += "(empty)";
-    } else {
-        notificationMsg += "\"" + configValue + "\"";
-    }
-
-    HyprlandAPI::addNotification(
-        PHANDLE,
-        notificationMsg,
-        {0, 0.5, 1, 1},
-        5000
-    );
-
     HyprlandAPI::addDispatcherV2(PHANDLE, "mouse-gestures", mouseGesturesDispatch);
 
     // Setup mouse event hooks
     setupMouseButtonHook();
     setupMouseMoveHook();
+    setupRenderHook();
 
 
     return {"mouse-gestures", "Mouse gestures for Hyprland", "cmihail", "1.0"};
