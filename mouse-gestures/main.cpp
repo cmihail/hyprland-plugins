@@ -782,6 +782,8 @@ static void setupMouseButtonHook() {
                 if (g_gestureState.dragDetected) {
                     handleGestureDetected();
                 } else {
+                    // No drag detected - clear trail immediately
+                    g_gestureState.timestampedPath.clear();
                     replayButtonEvents(e.timeMs);
                 }
 
@@ -793,7 +795,8 @@ static void setupMouseButtonHook() {
             }
         } catch (const std::exception&) {
             // Catch all exceptions to prevent crashing Hyprland
-            // Reset state on error
+            // Reset state on error and clear trail
+            g_gestureState.timestampedPath.clear();
             g_gestureState.reset();
         }
     };
@@ -947,21 +950,21 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
 APICALL EXPORT void PLUGIN_EXIT() {
     try {
-        // Exit record mode first to prevent overlay rendering
-        g_recordMode = false;
-
-        // Clear gesture state
-        g_gestureState.reset();
-        g_gestureState.timestampedPath.clear();
-
-        // Clear gesture actions
-        g_gestureActions.clear();
-
-        // Unhook all event handlers by resetting the shared pointers
-        // This automatically unregisters the callbacks
+        // Unhook all event handlers FIRST to prevent callbacks from running
+        // during cleanup. This automatically unregisters the callbacks.
         g_mouseButtonHook.reset();
         g_mouseMoveHook.reset();
         g_renderHook.reset();
+
+        // Exit record mode after unhooking to prevent overlay rendering
+        g_recordMode = false;
+
+        // Clear gesture state after hooks are removed
+        g_gestureState.timestampedPath.clear();
+        g_gestureState.reset();
+
+        // Clear gesture actions
+        g_gestureActions.clear();
     } catch (...) {
         // Silently catch any errors during cleanup
     }

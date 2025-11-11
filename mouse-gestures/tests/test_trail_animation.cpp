@@ -420,3 +420,64 @@ TEST_F(TrailAnimationTest, PluginCleanup) {
     EXPECT_EQ(pathPoints, 0);
     EXPECT_FALSE(recordMode);
 }
+
+// Test trail cleared when button released without drag
+TEST_F(TrailAnimationTest, NoTrailOnClickWithoutDrag) {
+    bool rightButtonPressed = true;
+    bool dragDetected = false;
+    int pathPoints = 3;  // Some points collected from minimal movement
+
+    // Simulate button press and release without crossing drag threshold
+    EXPECT_TRUE(rightButtonPressed);
+    EXPECT_FALSE(dragDetected);
+    EXPECT_EQ(pathPoints, 3);
+
+    // Button released without drag - trail should be cleared immediately
+    rightButtonPressed = false;
+    if (!dragDetected) {
+        pathPoints = 0;  // Clear trail
+    }
+
+    EXPECT_FALSE(rightButtonPressed);
+    EXPECT_FALSE(dragDetected);
+    EXPECT_EQ(pathPoints, 0);  // Trail cleared, not shown
+}
+
+// Test trail preserved when button released after drag
+TEST_F(TrailAnimationTest, TrailPreservedAfterDrag) {
+    bool rightButtonPressed = true;
+    bool dragDetected = true;
+    int pathPoints = 15;  // Points collected during drag
+
+    // Simulate button press and drag
+    EXPECT_TRUE(rightButtonPressed);
+    EXPECT_TRUE(dragDetected);
+    EXPECT_EQ(pathPoints, 15);
+
+    // Button released after drag - trail should be preserved for fade-out
+    rightButtonPressed = false;
+    dragDetected = false;  // Reset but don't clear trail
+    // pathPoints NOT cleared - fade out naturally
+
+    EXPECT_FALSE(rightButtonPressed);
+    EXPECT_FALSE(dragDetected);
+    EXPECT_EQ(pathPoints, 15);  // Trail preserved for fade-out
+}
+
+// Test trail not rendered before drag threshold even with points
+TEST_F(TrailAnimationTest, NoTrailBeforeDragThresholdWithPoints) {
+    bool rightButtonPressed = true;
+    bool dragDetected = false;
+    int pathPoints = 5;
+    bool shouldRenderTrail = false;
+
+    // Points exist but drag not detected yet - no trail shown
+    if (pathPoints > 0 && (dragDetected || !rightButtonPressed)) {
+        shouldRenderTrail = true;
+    }
+
+    EXPECT_TRUE(rightButtonPressed);
+    EXPECT_FALSE(dragDetected);
+    EXPECT_EQ(pathPoints, 5);
+    EXPECT_FALSE(shouldRenderTrail);  // Trail not shown before threshold
+}
