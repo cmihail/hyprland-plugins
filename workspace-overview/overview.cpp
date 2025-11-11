@@ -486,19 +486,27 @@ void COverview::setupMouseButtonHook() {
         if (g_killWindowActionButton.has_value() &&
             e.button == g_killWindowActionButton.value()) {
             if (e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
-                // Button pressed - find window under cursor
+                // Button pressed - store window under cursor and initial position
                 const Vector2D currentMousePos = mousePos - pMonitor->m_position;
                 int clickedWsIndex = findWorkspaceIndexAtPosition(currentMousePos);
-                PHLWINDOW windowToKill = findWindowAtPosition(currentMousePos, clickedWsIndex);
+                pendingWindowToKill = findWindowAtPosition(currentMousePos, clickedWsIndex);
+                pendingKillWorkspaceIndex = clickedWsIndex;
+                pendingKillMouseDownPos = currentMousePos;
+            } else {
+                // Button released - only kill window if it wasn't a drag
+                // Check if mouse moved beyond drag threshold
+                const Vector2D currentMousePos = mousePos - pMonitor->m_position;
+                const float distanceX = std::abs(currentMousePos.x - pendingKillMouseDownPos.x);
+                const float distanceY = std::abs(currentMousePos.y - pendingKillMouseDownPos.y);
+                const bool wasDrag = (distanceX > g_dragThreshold || distanceY > g_dragThreshold);
 
-                if (windowToKill) {
-                    // Kill the window
-                    g_pCompositor->closeWindow(windowToKill);
+                if (pendingWindowToKill && !wasDrag) {
+                    g_pCompositor->closeWindow(pendingWindowToKill);
 
                     // Determine which workspace indices to refresh
                     std::vector<int> workspacesToRefresh;
 
-                    if (clickedWsIndex == activeIndex) {
+                    if (pendingKillWorkspaceIndex == activeIndex) {
                         // Killed window on right panel (active workspace)
                         // Need to find and refresh the corresponding workspace on the left panel
                         int64_t activeWorkspaceID = images[activeIndex].workspaceID;
@@ -510,16 +518,18 @@ void COverview::setupMouseButtonHook() {
                         }
                     } else {
                         // Killed window on left panel - refresh that workspace
-                        workspacesToRefresh.push_back(clickedWsIndex);
+                        workspacesToRefresh.push_back(pendingKillWorkspaceIndex);
                     }
 
                     if (!workspacesToRefresh.empty()) {
                         setupSourceWorkspaceRefreshTimer(this, workspacesToRefresh, 1000);
                     }
-
-                    // Cancel the event to prevent other handlers from processing it
-                    info.cancelled = true;
                 }
+
+                // Clear pending window to kill
+                pendingWindowToKill = nullptr;
+                pendingKillWorkspaceIndex = -1;
+                pendingKillMouseDownPos = Vector2D{};
             }
             return;
         }

@@ -195,6 +195,11 @@ class COverview {
     bool     closing = false;
     Vector2D lastMousePosLocal = Vector2D{};
 
+    // Pending window kill tracking (for drag detection)
+    PHLWINDOW pendingWindowToKill = nullptr;
+    int pendingKillWorkspaceIndex = -1;
+    Vector2D pendingKillMouseDownPos = Vector2D{};
+
     // Scroll offset for workspace list
     float maxScrollOffset = 0.0f;
     float leftPreviewHeight = 0.0f;
