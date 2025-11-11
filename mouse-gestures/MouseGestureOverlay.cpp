@@ -80,8 +80,11 @@ void CMouseGestureOverlay::draw(const CRegion& damage) {
             g_pHyprOpenGL->renderRect(overlayBox, dimColor, {.damage = &fullDamage});
         }
 
-        // Render trail circles if there are any points to render
-        if (!g_gestureState.timestampedPath.empty()) {
+        // Render trail circles when drag is active OR during fade-out after drag
+        // We check dragDetected to avoid showing trail before threshold is crossed
+        // But once drag was detected, trail continues rendering until all points fade
+        if (!g_gestureState.timestampedPath.empty() &&
+            (g_gestureState.dragDetected || !g_gestureState.rightButtonPressed)) {
             // Get trail configuration
             static auto* const PCIRCLERADIUS = (Hyprlang::FLOAT* const*)
                 HyprlandAPI::getConfigValue(

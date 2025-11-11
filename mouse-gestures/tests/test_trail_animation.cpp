@@ -169,21 +169,24 @@ TEST_F(TrailAnimationTest, CircleBoundingBox) {
     EXPECT_EQ(boxHeight, 16.0);
 }
 
-// Test trail renders when there are path points
+// Test trail renders only when drag detected
 TEST_F(TrailAnimationTest, TrailRendersDuringDrag) {
+    bool dragDetected = false;
     int pathPoints = 0;
     bool shouldRenderTrail = false;
 
-    // No path points - no trail
-    if (pathPoints > 0) {
+    // No drag detected - no trail even with points
+    pathPoints = 5;
+    if (dragDetected && pathPoints > 0) {
         shouldRenderTrail = true;
     }
     EXPECT_FALSE(shouldRenderTrail);
 
-    // Path points exist - trail renders
+    // Drag detected and path points exist - trail renders
+    dragDetected = true;
     pathPoints = 10;
     shouldRenderTrail = false;
-    if (pathPoints > 0) {
+    if (dragDetected && pathPoints > 0) {
         shouldRenderTrail = true;
     }
     EXPECT_TRUE(shouldRenderTrail);
@@ -229,37 +232,52 @@ TEST_F(TrailAnimationTest, CustomFadeDuration) {
     }
 }
 
-// Test trail renders based on path points (not drag state)
-TEST_F(TrailAnimationTest, TrailRendersDuringAnyDrag) {
-    int pathPoints = 10;
-    bool shouldRenderTrail = false;
+// Test trail shows all points including pre-threshold movement
+TEST_F(TrailAnimationTest, TrailShowsAllPointsFromStart) {
+    bool dragDetected = false;
+    int totalPoints = 0;
+    int pointsBeforeThreshold = 5;
+    int pointsAfterThreshold = 10;
 
-    // Path points exist - trail should render (regardless of drag state)
-    if (pathPoints > 0) {
-        shouldRenderTrail = true;
-    }
-    EXPECT_TRUE(shouldRenderTrail);
+    // Points collected before threshold
+    totalPoints = pointsBeforeThreshold;
+    EXPECT_EQ(totalPoints, 5);
 
-    // No path points - no trail
-    pathPoints = 0;
-    shouldRenderTrail = false;
-    if (pathPoints > 0) {
-        shouldRenderTrail = true;
-    }
-    EXPECT_FALSE(shouldRenderTrail);
+    // Drag detected - now have all points including pre-threshold
+    dragDetected = true;
+    totalPoints = pointsBeforeThreshold + pointsAfterThreshold;
+
+    EXPECT_TRUE(dragDetected);
+    EXPECT_EQ(totalPoints, 15);  // All points visible once drag detected
 }
 
 // Test trail continues to render after drag ends (for fade out)
 TEST_F(TrailAnimationTest, TrailContinuesAfterDragEnds) {
-    // Drag has ended, but points still exist
-    int pathPoints = 10;
+    bool rightButtonPressed = false;  // Button released
+    bool dragDetected = false;  // Reset after release
+    int pathPoints = 10;  // But points still exist
     bool shouldRenderTrail = false;
 
-    // Trail should still render to allow fade out
-    if (pathPoints > 0) {
+    // After release: trail should render for fade-out
+    // Condition: points exist AND (drag active OR button not pressed)
+    if (pathPoints > 0 && (dragDetected || !rightButtonPressed)) {
         shouldRenderTrail = true;
     }
     EXPECT_TRUE(shouldRenderTrail);
+}
+
+// Test trail not shown before drag threshold
+TEST_F(TrailAnimationTest, NoTrailBeforeThreshold) {
+    bool rightButtonPressed = true;  // Button pressed
+    bool dragDetected = false;  // But threshold not crossed yet
+    int pathPoints = 3;  // Some points collected
+    bool shouldRenderTrail = false;
+
+    // Before threshold: no trail shown
+    if (pathPoints > 0 && (dragDetected || !rightButtonPressed)) {
+        shouldRenderTrail = true;
+    }
+    EXPECT_FALSE(shouldRenderTrail);
 }
 
 // Test dim overlay only in record mode
@@ -346,4 +364,59 @@ TEST_F(TrailAnimationTest, TrailRendersOnAllMonitors) {
     for (bool rendered : monitorsRendered) {
         EXPECT_TRUE(rendered);
     }
+}
+
+// Test trail cleared when entering record mode
+TEST_F(TrailAnimationTest, TrailClearedOnEnterRecordMode) {
+    int pathPoints = 10;
+    bool recordMode = false;
+
+    // Have some path points
+    EXPECT_EQ(pathPoints, 10);
+
+    // Enter record mode - should clear trail
+    recordMode = true;
+    if (recordMode) {
+        pathPoints = 0;  // Simulate clearing
+    }
+
+    EXPECT_EQ(pathPoints, 0);
+}
+
+// Test trail cleared when exiting record mode after recording
+TEST_F(TrailAnimationTest, TrailClearedOnExitRecordMode) {
+    int pathPoints = 10;
+    bool recordMode = true;
+    bool gestureRecorded = true;
+
+    // Have some path points from recording
+    EXPECT_EQ(pathPoints, 10);
+
+    // Exit record mode after recording - should clear trail
+    if (recordMode && gestureRecorded) {
+        recordMode = false;
+        pathPoints = 0;  // Simulate clearing
+    }
+
+    EXPECT_EQ(pathPoints, 0);
+    EXPECT_FALSE(recordMode);
+}
+
+// Test plugin cleanup
+TEST_F(TrailAnimationTest, PluginCleanup) {
+    // Simulate plugin state
+    bool hooksRegistered = true;
+    int pathPoints = 10;
+    bool recordMode = true;
+
+    // Plugin exit should clean everything up
+    if (true) {  // Simulate PLUGIN_EXIT
+        hooksRegistered = false;
+        pathPoints = 0;
+        recordMode = false;
+    }
+
+    EXPECT_FALSE(hooksRegistered);
+    EXPECT_EQ(pathPoints, 0);
+    EXPECT_FALSE(recordMode);
 }

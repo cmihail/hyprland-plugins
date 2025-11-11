@@ -497,6 +497,8 @@ static void handleGestureDetected() {
             }
 
             g_recordMode = false;
+            // Clear trail from the recorded gesture
+            g_gestureState.timestampedPath.clear();
             // Damage all monitors to remove overlay
             damageAllMonitors();
             return;
@@ -700,6 +702,12 @@ static SDispatchResult mouseGesturesDispatch(std::string arg) {
     try {
         if (arg == "record") {
             g_recordMode = !g_recordMode;
+
+            // Clear trail when entering record mode to avoid visual conflict
+            if (g_recordMode) {
+                g_gestureState.timestampedPath.clear();
+            }
+
             // Immediately damage all monitors to show/hide overlay
             damageAllMonitors();
         }
@@ -734,6 +742,7 @@ static void setupMouseButtonHook() {
                 e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
                 g_recordMode = false;
                 g_gestureState.reset();
+                g_gestureState.timestampedPath.clear();
 
                 // Damage all monitors to remove overlay immediately
                 damageAllMonitors();
@@ -805,6 +814,10 @@ static void setupMouseMoveHook() {
             const Vector2D mousePos = g_pInputManager->getMouseCoordsInternal();
             auto now = std::chrono::steady_clock::now();
 
+            // Always record timestamped path points while button is pressed
+            // This ensures we capture the full gesture from the start
+            g_gestureState.timestampedPath.push_back({mousePos, now});
+
             // Check if drag threshold exceeded (if not yet detected)
             if (!g_gestureState.dragDetected) {
                 if (checkDragThresholdExceeded(mousePos)) {
@@ -812,10 +825,9 @@ static void setupMouseMoveHook() {
                 }
             }
 
-            // Record path point if drag is active (but don't consume move events)
+            // Record path point for gesture matching if drag is active
             if (g_gestureState.dragDetected) {
                 g_gestureState.path.push_back(mousePos);
-                g_gestureState.timestampedPath.push_back({mousePos, now});
 
                 // Damage all monitors to trigger redraw with new trail
                 // Cleanup of old points is handled in the render pass
@@ -934,5 +946,23 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
+    try {
+        // Exit record mode first to prevent overlay rendering
+        g_recordMode = false;
 
+        // Clear gesture state
+        g_gestureState.reset();
+        g_gestureState.timestampedPath.clear();
+
+        // Clear gesture actions
+        g_gestureActions.clear();
+
+        // Unhook all event handlers by resetting the shared pointers
+        // This automatically unregisters the callbacks
+        g_mouseButtonHook.reset();
+        g_mouseMoveHook.reset();
+        g_renderHook.reset();
+    } catch (...) {
+        // Silently catch any errors during cleanup
+    }
 }
