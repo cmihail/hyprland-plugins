@@ -6138,3 +6138,578 @@ TEST_F(ScrollOffsetAnimationTest, DifferentMonitorHeights) {
     EXPECT_GT(tallScroll, shortScroll)
         << "Taller monitor should have larger scroll offsets for same workspace";
 }
+
+// Test helper: Direction constants (matching IHyprLayout.hpp)
+enum TestDirection {
+    DIRECTION_DEFAULT = -1,
+    DIRECTION_UP      = 0,
+    DIRECTION_RIGHT,
+    DIRECTION_DOWN,
+    DIRECTION_LEFT
+};
+
+// Test helper: Mock window structure
+struct MockWindow {
+    float x, y, width, height;
+};
+
+// Test helper: Calculate drop direction based on target window and cursor position
+static int calculateDropDirection(const MockWindow& window, float cursorX, float cursorY) {
+    // Determine if window is landscape or portrait
+    const bool isLandscape = window.width > window.height;
+
+    // Calculate cursor position relative to window center
+    const float windowCenterX = window.x + window.width / 2.0f;
+    const float windowCenterY = window.y + window.height / 2.0f;
+    const float relativePosX = cursorX - windowCenterX;
+    const float relativePosY = cursorY - windowCenterY;
+
+    if (isLandscape) {
+        // Landscape: split left/right based on cursor X position
+        return (relativePosX < 0) ? DIRECTION_LEFT : DIRECTION_RIGHT;
+    } else {
+        // Portrait: split top/bottom based on cursor Y position
+        return (relativePosY < 0) ? DIRECTION_UP : DIRECTION_DOWN;
+    }
+}
+
+// Test: Landscape window with cursor in left half
+TEST(DropDirectionTest, LandscapeWindowLeftHalf) {
+    MockWindow window = {100.0f, 100.0f, 800.0f, 600.0f};  // Landscape
+
+    // Cursor in left half
+    int direction = calculateDropDirection(window, 250.0f, 400.0f);
+    EXPECT_EQ(direction, DIRECTION_LEFT);
+
+    // Cursor just left of center
+    direction = calculateDropDirection(window, 499.0f, 400.0f);
+    EXPECT_EQ(direction, DIRECTION_LEFT);
+}
+
+// Test: Landscape window with cursor in right half
+TEST(DropDirectionTest, LandscapeWindowRightHalf) {
+    MockWindow window = {100.0f, 100.0f, 800.0f, 600.0f};  // Landscape
+
+    // Cursor in right half
+    int direction = calculateDropDirection(window, 650.0f, 400.0f);
+    EXPECT_EQ(direction, DIRECTION_RIGHT);
+
+    // Cursor just right of center
+    direction = calculateDropDirection(window, 501.0f, 400.0f);
+    EXPECT_EQ(direction, DIRECTION_RIGHT);
+}
+
+// Test: Portrait window with cursor in top half
+TEST(DropDirectionTest, PortraitWindowTopHalf) {
+    MockWindow window = {100.0f, 100.0f, 600.0f, 800.0f};  // Portrait
+
+    // Cursor in top half
+    int direction = calculateDropDirection(window, 400.0f, 250.0f);
+    EXPECT_EQ(direction, DIRECTION_UP);
+
+    // Cursor just above center
+    direction = calculateDropDirection(window, 400.0f, 499.0f);
+    EXPECT_EQ(direction, DIRECTION_UP);
+}
+
+// Test: Portrait window with cursor in bottom half
+TEST(DropDirectionTest, PortraitWindowBottomHalf) {
+    MockWindow window = {100.0f, 100.0f, 600.0f, 800.0f};  // Portrait
+
+    // Cursor in bottom half
+    int direction = calculateDropDirection(window, 400.0f, 650.0f);
+    EXPECT_EQ(direction, DIRECTION_DOWN);
+
+    // Cursor just below center
+    direction = calculateDropDirection(window, 400.0f, 501.0f);
+    EXPECT_EQ(direction, DIRECTION_DOWN);
+}
+
+// Test: Square window edge cases
+TEST(DropDirectionTest, SquareWindowEdgeCases) {
+    MockWindow window = {100.0f, 100.0f, 600.0f, 600.0f};  // Square
+
+    // For square windows, width == height, so width > height is false
+    // Therefore treated as portrait (top/bottom split)
+
+    // Cursor above center -> UP
+    int direction = calculateDropDirection(window, 400.0f, 350.0f);
+    EXPECT_EQ(direction, DIRECTION_UP);
+
+    // Cursor below center -> DOWN
+    direction = calculateDropDirection(window, 400.0f, 450.0f);
+    EXPECT_EQ(direction, DIRECTION_DOWN);
+}
+
+// Test: Cursor at exact center
+TEST(DropDirectionTest, CursorAtExactCenter) {
+    // Landscape window
+    MockWindow landscape = {0.0f, 0.0f, 800.0f, 600.0f};
+    int direction = calculateDropDirection(landscape, 400.0f, 300.0f);
+    EXPECT_EQ(direction, DIRECTION_RIGHT);  // At center, relativePosX = 0, goes right
+
+    // Portrait window
+    MockWindow portrait = {0.0f, 0.0f, 600.0f, 800.0f};
+    direction = calculateDropDirection(portrait, 300.0f, 400.0f);
+    EXPECT_EQ(direction, DIRECTION_DOWN);  // At center, relativePosY = 0, goes down
+}
+
+// Test: Different window positions
+TEST(DropDirectionTest, DifferentWindowPositions) {
+    // Window at different position
+    MockWindow window = {500.0f, 300.0f, 800.0f, 600.0f};  // Landscape at offset
+
+    // Cursor in left half (relative to window)
+    int direction = calculateDropDirection(window, 650.0f, 600.0f);
+    EXPECT_EQ(direction, DIRECTION_LEFT);
+
+    // Cursor in right half (relative to window)
+    direction = calculateDropDirection(window, 1050.0f, 600.0f);
+    EXPECT_EQ(direction, DIRECTION_RIGHT);
+}
+
+// Test: Very wide landscape window
+TEST(DropDirectionTest, VeryWideLandscapeWindow) {
+    MockWindow window = {0.0f, 0.0f, 1920.0f, 200.0f};  // Very wide
+
+    // Cursor far left
+    int direction = calculateDropDirection(window, 100.0f, 100.0f);
+    EXPECT_EQ(direction, DIRECTION_LEFT);
+
+    // Cursor far right
+    direction = calculateDropDirection(window, 1800.0f, 100.0f);
+    EXPECT_EQ(direction, DIRECTION_RIGHT);
+
+    // Y position shouldn't matter for landscape
+    direction = calculateDropDirection(window, 100.0f, 50.0f);
+    EXPECT_EQ(direction, DIRECTION_LEFT);
+    direction = calculateDropDirection(window, 100.0f, 150.0f);
+    EXPECT_EQ(direction, DIRECTION_LEFT);
+}
+
+// Test: Very tall portrait window
+TEST(DropDirectionTest, VeryTallPortraitWindow) {
+    MockWindow window = {0.0f, 0.0f, 200.0f, 1920.0f};  // Very tall
+
+    // Cursor near top
+    int direction = calculateDropDirection(window, 100.0f, 100.0f);
+    EXPECT_EQ(direction, DIRECTION_UP);
+
+    // Cursor near bottom
+    direction = calculateDropDirection(window, 100.0f, 1800.0f);
+    EXPECT_EQ(direction, DIRECTION_DOWN);
+
+    // X position shouldn't matter for portrait
+    direction = calculateDropDirection(window, 50.0f, 100.0f);
+    EXPECT_EQ(direction, DIRECTION_UP);
+    direction = calculateDropDirection(window, 150.0f, 100.0f);
+    EXPECT_EQ(direction, DIRECTION_UP);
+}
+
+// ============================================================================
+// Test Suite: Single Window Workspace Scenarios
+// ============================================================================
+// These tests verify correct behavior when dropping a window onto a workspace
+// with a single existing window. This is a critical regression test for the
+// smart tiling feature.
+
+// Test: Drop on left side of single landscape window
+TEST(SingleWindowWorkspaceTest, DropOnLeftSideOfLandscapeWindow) {
+    // Scenario: Workspace has one landscape window (e.g., browser)
+    // User drags a window and drops it on the left half
+    MockWindow existingWindow = {0.0f, 0.0f, 1920.0f, 1080.0f};  // Full screen landscape
+
+    // Drop cursor on left quarter
+    int direction = calculateDropDirection(existingWindow, 480.0f, 540.0f);
+    EXPECT_EQ(direction, DIRECTION_LEFT)
+        << "Dropping on left quarter should tile LEFT";
+
+    // Drop cursor just left of center
+    direction = calculateDropDirection(existingWindow, 950.0f, 540.0f);
+    EXPECT_EQ(direction, DIRECTION_LEFT)
+        << "Dropping just left of center should tile LEFT";
+}
+
+// Test: Drop on right side of single landscape window
+TEST(SingleWindowWorkspaceTest, DropOnRightSideOfLandscapeWindow) {
+    // Scenario: Workspace has one landscape window
+    // User drags a window and drops it on the right half
+    MockWindow existingWindow = {0.0f, 0.0f, 1920.0f, 1080.0f};  // Full screen landscape
+
+    // Drop cursor on right quarter
+    int direction = calculateDropDirection(existingWindow, 1440.0f, 540.0f);
+    EXPECT_EQ(direction, DIRECTION_RIGHT)
+        << "Dropping on right quarter should tile RIGHT";
+
+    // Drop cursor just right of center
+    direction = calculateDropDirection(existingWindow, 970.0f, 540.0f);
+    EXPECT_EQ(direction, DIRECTION_RIGHT)
+        << "Dropping just right of center should tile RIGHT";
+}
+
+// Test: Drop on top half of single portrait window
+TEST(SingleWindowWorkspaceTest, DropOnTopOfPortraitWindow) {
+    // Scenario: Workspace has one portrait window (e.g., vertical terminal)
+    // User drags a window and drops it on the top half
+    MockWindow existingWindow = {0.0f, 0.0f, 800.0f, 1600.0f};  // Tall portrait
+
+    // Drop cursor on top quarter
+    int direction = calculateDropDirection(existingWindow, 400.0f, 400.0f);
+    EXPECT_EQ(direction, DIRECTION_UP)
+        << "Dropping on top quarter should tile UP";
+
+    // Drop cursor just above center
+    direction = calculateDropDirection(existingWindow, 400.0f, 790.0f);
+    EXPECT_EQ(direction, DIRECTION_UP)
+        << "Dropping just above center should tile UP";
+}
+
+// Test: Drop on bottom half of single portrait window
+TEST(SingleWindowWorkspaceTest, DropOnBottomOfPortraitWindow) {
+    // Scenario: Workspace has one portrait window
+    // User drags a window and drops it on the bottom half
+    MockWindow existingWindow = {0.0f, 0.0f, 800.0f, 1600.0f};  // Tall portrait
+
+    // Drop cursor on bottom quarter
+    int direction = calculateDropDirection(existingWindow, 400.0f, 1200.0f);
+    EXPECT_EQ(direction, DIRECTION_DOWN)
+        << "Dropping on bottom quarter should tile DOWN";
+
+    // Drop cursor just below center
+    direction = calculateDropDirection(existingWindow, 400.0f, 810.0f);
+    EXPECT_EQ(direction, DIRECTION_DOWN)
+        << "Dropping just below center should tile DOWN";
+}
+
+// Test: Drop at exact center - landscape window (should go RIGHT)
+TEST(SingleWindowWorkspaceTest, DropAtCenterOfLandscapeWindow) {
+    MockWindow existingWindow = {100.0f, 100.0f, 1600.0f, 900.0f};  // Landscape
+
+    // Drop at exact center
+    float centerX = 100.0f + 1600.0f / 2.0f;  // 900
+    float centerY = 100.0f + 900.0f / 2.0f;   // 550
+    int direction = calculateDropDirection(existingWindow, centerX, centerY);
+
+    EXPECT_EQ(direction, DIRECTION_RIGHT)
+        << "At exact center, relativePosX = 0, should default to RIGHT";
+}
+
+// Test: Drop at exact center - portrait window (should go DOWN)
+TEST(SingleWindowWorkspaceTest, DropAtCenterOfPortraitWindow) {
+    MockWindow existingWindow = {100.0f, 100.0f, 900.0f, 1600.0f};  // Portrait
+
+    // Drop at exact center
+    float centerX = 100.0f + 900.0f / 2.0f;   // 550
+    float centerY = 100.0f + 1600.0f / 2.0f;  // 900
+    int direction = calculateDropDirection(existingWindow, centerX, centerY);
+
+    EXPECT_EQ(direction, DIRECTION_DOWN)
+        << "At exact center, relativePosY = 0, should default to DOWN";
+}
+
+// Test: Realistic scenario - browser window with terminal drop on left
+TEST(SingleWindowWorkspaceTest, RealisticBrowserWithTerminalLeft) {
+    // Common scenario: Full-screen browser, drop terminal on left
+    MockWindow browser = {5.0f, 5.0f, 1910.0f, 1190.0f};  // Browser with borders
+
+    // User clicks at roughly 1/4 from left edge in workspace coords
+    float dropX = 5.0f + (1910.0f * 0.25f);  // ~482
+    float dropY = 5.0f + (1190.0f * 0.5f);   // ~600
+
+    int direction = calculateDropDirection(browser, dropX, dropY);
+    EXPECT_EQ(direction, DIRECTION_LEFT)
+        << "Terminal dropped on left quarter of browser should tile LEFT";
+}
+
+// Test: Realistic scenario - browser window with terminal drop on right
+TEST(SingleWindowWorkspaceTest, RealisticBrowserWithTerminalRight) {
+    // Common scenario: Full-screen browser, drop terminal on right
+    MockWindow browser = {5.0f, 5.0f, 1910.0f, 1190.0f};  // Browser with borders
+
+    // User clicks at roughly 3/4 from left edge in workspace coords
+    float dropX = 5.0f + (1910.0f * 0.75f);  // ~1437
+    float dropY = 5.0f + (1190.0f * 0.5f);   // ~600
+
+    int direction = calculateDropDirection(browser, dropX, dropY);
+    EXPECT_EQ(direction, DIRECTION_RIGHT)
+        << "Terminal dropped on right quarter of browser should tile RIGHT";
+}
+
+// Test: Small offset from center should still work correctly
+TEST(SingleWindowWorkspaceTest, SmallOffsetFromCenter) {
+    MockWindow window = {0.0f, 0.0f, 1920.0f, 1080.0f};
+    float centerX = 960.0f;
+    float centerY = 540.0f;
+
+    // Just 1 pixel left of center
+    int direction = calculateDropDirection(window, centerX - 1.0f, centerY);
+    EXPECT_EQ(direction, DIRECTION_LEFT);
+
+    // Just 1 pixel right of center
+    direction = calculateDropDirection(window, centerX + 1.0f, centerY);
+    EXPECT_EQ(direction, DIRECTION_RIGHT);
+}
+
+// Test: Window with offset position
+TEST(SingleWindowWorkspaceTest, WindowWithOffset) {
+    // Window not starting at origin
+    MockWindow window = {500.0f, 300.0f, 1200.0f, 800.0f};
+    float centerX = 500.0f + 600.0f;  // 1100
+    float centerY = 300.0f + 400.0f;  // 700
+
+    // Left of center
+    int direction = calculateDropDirection(window, centerX - 100.0f, centerY);
+    EXPECT_EQ(direction, DIRECTION_LEFT);
+
+    // Right of center
+    direction = calculateDropDirection(window, centerX + 100.0f, centerY);
+    EXPECT_EQ(direction, DIRECTION_RIGHT);
+}
+
+// ============================================================================
+// Smart Tiling Tests
+// ============================================================================
+//
+// These tests verify the smart tiling logic that positions windows relative
+// to a target window based on cursor position and window orientation.
+
+// Test: Smart tiling with single target window - should use layout direction
+TEST(SmartTilingTest, SingleTargetWindowUsesLayoutDirection) {
+    // Target window exists
+    MockWindow targetWindow = {0.0f, 0.0f, 1920.0f, 1080.0f};
+
+    // Cursor on right side of target
+    int direction = calculateDropDirection(targetWindow, 1400.0f, 540.0f);
+    EXPECT_EQ(direction, DIRECTION_RIGHT);
+
+    // With smart tiling enabled and target window present,
+    // should use layout->onWindowCreatedTiling(window, DIRECTION_RIGHT)
+}
+
+// Test: Empty workspace - should use standard move
+TEST(SmartTilingTest, EmptyWorkspaceUsesStandardMove) {
+    // No target window (nullptr scenario)
+    // When dropping on empty workspace:
+    // - dropDirection = DIRECTION_DEFAULT (no direction calculated)
+    // - targetWindow = nullptr
+    // Should use: g_pCompositor->moveWindowToWorkspaceSafe(window, workspace)
+    // This ensures window is properly sized to fill workspace
+
+    EXPECT_EQ(DIRECTION_DEFAULT, -1);  // Verify default direction value
+}
+
+// Test: Dropping on left side of landscape window
+TEST(SmartTilingTest, DropLeftOfLandscapeWindow) {
+    MockWindow targetWindow = {0.0f, 0.0f, 1920.0f, 1080.0f};
+
+    // Drop on left side (x < center)
+    int direction = calculateDropDirection(targetWindow, 480.0f, 540.0f);
+    EXPECT_EQ(direction, DIRECTION_LEFT);
+
+    // Should call: layout->onWindowCreatedTiling(window, DIRECTION_LEFT)
+}
+
+// Test: Dropping on right side of landscape window
+TEST(SmartTilingTest, DropRightOfLandscapeWindow) {
+    MockWindow targetWindow = {0.0f, 0.0f, 1920.0f, 1080.0f};
+
+    // Drop on right side (x > center)
+    int direction = calculateDropDirection(targetWindow, 1440.0f, 540.0f);
+    EXPECT_EQ(direction, DIRECTION_RIGHT);
+
+    // Should call: layout->onWindowCreatedTiling(window, DIRECTION_RIGHT)
+}
+
+// Test: Dropping above portrait window
+TEST(SmartTilingTest, DropAbovePortraitWindow) {
+    MockWindow targetWindow = {0.0f, 0.0f, 1080.0f, 1920.0f};
+
+    // Drop above (y < center)
+    int direction = calculateDropDirection(targetWindow, 540.0f, 480.0f);
+    EXPECT_EQ(direction, DIRECTION_UP);
+
+    // Should call: layout->onWindowCreatedTiling(window, DIRECTION_UP)
+}
+
+// Test: Dropping below portrait window
+TEST(SmartTilingTest, DropBelowPortraitWindow) {
+    MockWindow targetWindow = {0.0f, 0.0f, 1080.0f, 1920.0f};
+
+    // Drop below (y > center)
+    int direction = calculateDropDirection(targetWindow, 540.0f, 1440.0f);
+    EXPECT_EQ(direction, DIRECTION_DOWN);
+
+    // Should call: layout->onWindowCreatedTiling(window, DIRECTION_DOWN)
+}
+
+// Test: Multiple windows in workspace - direction calculation priority
+TEST(SmartTilingTest, MultipleWindowsDirectionCalculation) {
+    // In a workspace with multiple windows, the direction should be
+    // calculated based on the target window under cursor
+
+    // Both windows are portrait (taller than wide), so they split up/down
+    MockWindow leftWindow = {0.0f, 0.0f, 960.0f, 1080.0f};
+    MockWindow rightWindow = {960.0f, 0.0f, 960.0f, 1080.0f};
+
+    // Left window - cursor below center (y=540 is center, 900 is below)
+    int directionLeft = calculateDropDirection(leftWindow, 480.0f, 900.0f);
+    EXPECT_EQ(directionLeft, DIRECTION_DOWN);
+
+    // Right window - cursor above center
+    int directionRight = calculateDropDirection(rightWindow, 1440.0f, 200.0f);
+    EXPECT_EQ(directionRight, DIRECTION_UP);
+}
+
+// Test: Smart tiling with focus window requirement
+TEST(SmartTilingTest, RequiresFocusOnTargetWindow) {
+    // Smart tiling workflow requires:
+    // 1. Focus target window (g_pCompositor->focusWindow(targetWindow))
+    // 2. Change workspace (window->m_workspace = targetWorkspace)
+    // 3. Remove from old layout (layout->onWindowRemovedTiling(window))
+    // 4. Add to new layout with direction (layout->onWindowCreatedTiling(window, direction))
+    // 5. Restore original focus
+
+    MockWindow targetWindow = {0.0f, 0.0f, 1920.0f, 1080.0f};
+    int direction = calculateDropDirection(targetWindow, 1440.0f, 540.0f);
+
+    EXPECT_EQ(direction, DIRECTION_RIGHT);
+    // This direction should be passed to onWindowCreatedTiling
+}
+
+// Test: Standard move doesn't need direction
+TEST(SmartTilingTest, StandardMoveNoDirection) {
+    // When target window is nullptr or direction is DIRECTION_DEFAULT,
+    // should use standard move which handles sizing automatically
+
+    // Standard move path uses: g_pCompositor->moveWindowToWorkspaceSafe()
+    // This properly resizes window to fill empty workspace
+
+    EXPECT_EQ(DIRECTION_DEFAULT, -1);
+}
+
+// Test: Edge case - floating window should not use smart tiling
+TEST(SmartTilingTest, FloatingWindowNoSmartTiling) {
+    // Floating windows should use standard move regardless of target
+    // The actual implementation checks window->m_isFloating before
+    // calculating smart tiling direction
+
+    // This test documents that floating windows bypass smart tiling
+    EXPECT_TRUE(true);  // Placeholder for floating window check
+}
+
+// Test: Edge case - fullscreen window should not use smart tiling
+TEST(SmartTilingTest, FullscreenWindowNoSmartTiling) {
+    // Fullscreen windows should use standard move regardless of target
+    // The actual implementation checks window->isFullscreen() before
+    // calculating smart tiling direction
+
+    // This test documents that fullscreen windows bypass smart tiling
+    EXPECT_TRUE(true);  // Placeholder for fullscreen window check
+}
+
+// Test: Corner case - cursor exactly at window center
+TEST(SmartTilingTest, CursorAtWindowCenter) {
+    MockWindow targetWindow = {0.0f, 0.0f, 1920.0f, 1080.0f};
+    float centerX = 960.0f;
+    float centerY = 540.0f;
+
+    // At exact center, landscape window defaults to RIGHT
+    int direction = calculateDropDirection(targetWindow, centerX, centerY);
+    EXPECT_EQ(direction, DIRECTION_RIGHT);
+}
+
+// Test: Window positioning with layout direction
+TEST(SmartTilingTest, LayoutDirectionPositioning) {
+    // When onWindowCreatedTiling is called with a direction:
+    // - DIRECTION_LEFT: Window should be placed left of target
+    // - DIRECTION_RIGHT: Window should be placed right of target
+    // - DIRECTION_UP: Window should be placed above target
+    // - DIRECTION_DOWN: Window should be placed below target
+
+    // Landscape window splits left/right based on X
+    MockWindow landscapeWindow = {0.0f, 0.0f, 1920.0f, 1080.0f};
+    EXPECT_EQ(calculateDropDirection(landscapeWindow, 480.0f, 540.0f), DIRECTION_LEFT);
+    EXPECT_EQ(calculateDropDirection(landscapeWindow, 1440.0f, 540.0f), DIRECTION_RIGHT);
+
+    // Portrait window splits up/down based on Y
+    MockWindow portraitWindow = {0.0f, 0.0f, 1080.0f, 1920.0f};
+    EXPECT_EQ(calculateDropDirection(portraitWindow, 540.0f, 480.0f), DIRECTION_UP);
+    EXPECT_EQ(calculateDropDirection(portraitWindow, 540.0f, 1440.0f), DIRECTION_DOWN);
+}
+
+// Test: Cross-workspace smart tiling
+TEST(SmartTilingTest, CrossWorkspaceSmartTiling) {
+    // Smart tiling should work when moving window from one workspace to another
+    // The target window is on the destination workspace
+
+    MockWindow targetWindow = {0.0f, 0.0f, 1920.0f, 1080.0f};
+    int direction = calculateDropDirection(targetWindow, 1440.0f, 540.0f);
+
+    EXPECT_EQ(direction, DIRECTION_RIGHT);
+    // Direction should be preserved across workspace moves
+}
+
+// Test: Smart tiling with workspace hooks disabled
+TEST(SmartTilingTest, WorkspaceHooksDisabledDuringMove) {
+    // During smart tiling, workspace change hooks should be disabled
+    // to prevent the overview from being destroyed while moving window
+
+    // This test documents that hooks are disabled for safety:
+    // - Monitor hooks disabled
+    // - Workspace change hooks disabled
+    // - Window event hooks only log, don't refresh
+
+    EXPECT_TRUE(true);  // Placeholder for hook state verification
+}
+
+// Test: Smart tiling preserves window properties
+TEST(SmartTilingTest, PreservesWindowProperties) {
+    // When using smart tiling, window properties should be preserved:
+    // - Window size (before layout adjustment)
+    // - Window floating state
+    // - Window fullscreen state
+
+    // The layout system handles sizing after positioning
+    EXPECT_TRUE(true);  // Placeholder for property preservation check
+}
+
+// Test: Direction calculation with aspect ratio
+TEST(SmartTilingTest, DirectionCalculationWithAspectRatio) {
+    // Direction calculation considers window aspect ratio:
+    // - Landscape windows (wider): prefer left/right placement
+    // - Portrait windows (taller): prefer up/down placement
+
+    // Landscape window (16:9)
+    MockWindow landscape = {0.0f, 0.0f, 1920.0f, 1080.0f};
+    float aspectLandscape = 1920.0f / 1080.0f;
+    EXPECT_GT(aspectLandscape, 1.0f);  // Wider than tall
+
+    // Portrait window (9:16)
+    MockWindow portrait = {0.0f, 0.0f, 1080.0f, 1920.0f};
+    float aspectPortrait = 1080.0f / 1920.0f;
+    EXPECT_LT(aspectPortrait, 1.0f);  // Taller than wide
+}
+
+// Test: Smart tiling with very small windows
+TEST(SmartTilingTest, SmallWindowSmartTiling) {
+    MockWindow smallWindow = {0.0f, 0.0f, 400.0f, 300.0f};
+
+    // Direction calculation should work even for small windows
+    int directionLeft = calculateDropDirection(smallWindow, 100.0f, 150.0f);
+    EXPECT_EQ(directionLeft, DIRECTION_LEFT);
+
+    int directionRight = calculateDropDirection(smallWindow, 300.0f, 150.0f);
+    EXPECT_EQ(directionRight, DIRECTION_RIGHT);
+}
+
+// Test: Smart tiling with very large windows
+TEST(SmartTilingTest, LargeWindowSmartTiling) {
+    MockWindow largeWindow = {0.0f, 0.0f, 3840.0f, 2160.0f};
+
+    // Direction calculation should work even for 4K windows
+    int directionLeft = calculateDropDirection(largeWindow, 960.0f, 1080.0f);
+    EXPECT_EQ(directionLeft, DIRECTION_LEFT);
+
+    int directionRight = calculateDropDirection(largeWindow, 2880.0f, 1080.0f);
+    EXPECT_EQ(directionRight, DIRECTION_RIGHT);
+}

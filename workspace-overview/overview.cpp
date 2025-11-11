@@ -1,6 +1,7 @@
 #include "overview.hpp"
 #include <algorithm>
 #include <any>
+#include <ctime>
 #include <fstream>
 #include <wayland-server.h>
 #define private public
@@ -13,6 +14,8 @@
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/managers/KeybindManager.hpp>
 #include <hyprland/src/managers/LayoutManager.hpp>
+#include <hyprland/src/layout/IHyprLayout.hpp>
+#include <hyprland/src/layout/DwindleLayout.hpp>
 #include <hyprland/src/devices/IPointer.hpp>
 #include <hyprland/src/helpers/time/Time.hpp>
 #undef private
@@ -438,7 +441,7 @@ void COverview::setupMouseButtonHook() {
                                 // Move window to target workspace
                                 auto draggedWin = g_dragState.draggedWindow;
                                 targetOverview->moveWindowToWorkspace(
-                                    draggedWin, targetIndex
+                                    draggedWin, targetIndex, mousePos
                                 );
 
                                 // For cross-monitor moves, redraw source
@@ -645,78 +648,64 @@ void COverview::setupWorkspaceChangeHook() {
         if (closing)
             return;
 
-        try {
-            auto newWorkspace = std::any_cast<PHLWORKSPACE>(param);
+        if (g_dragState.isDragging)
+            return;
 
-            // Only update if the workspace change is on this monitor
-            auto workspaceMonitor = newWorkspace ? newWorkspace->m_monitor.lock() : nullptr;
-            if (!newWorkspace || !workspaceMonitor)
-                return;
+        auto newWorkspace = std::any_cast<PHLWORKSPACE>(param);
 
-            auto monitor = pMonitor.lock();
-            if (!monitor || workspaceMonitor != monitor)
-                return;
+        auto workspaceMonitor = newWorkspace ? newWorkspace->m_monitor.lock() : nullptr;
+        if (!newWorkspace || !workspaceMonitor)
+            return;
 
-            // Find old and new workspace IDs to detect changes
-            int64_t newWorkspaceID = newWorkspace->m_id;
-            int64_t oldWorkspaceID = startedOn ? startedOn->m_id : -1;
+        auto monitor = pMonitor.lock();
+        if (!monitor || workspaceMonitor != monitor)
+            return;
 
-            // If workspace ID didn't change, no need to recreate
-            if (newWorkspaceID == oldWorkspaceID)
-                return;
+        int64_t newWorkspaceID = newWorkspace->m_id;
+        int64_t oldWorkspaceID = startedOn ? startedOn->m_id : -1;
 
-            // Find the index of the new workspace in the current images list
-            size_t newWorkspaceIndexInCurrent = images.size();  // Invalid index initially
-            for (size_t i = 0; i < images.size(); ++i) {
-                if (images[i].workspaceID == newWorkspaceID) {
-                    newWorkspaceIndexInCurrent = i;
-                    break;
-                }
+        if (newWorkspaceID == oldWorkspaceID)
+            return;
+
+        size_t newWorkspaceIndexInCurrent = images.size();
+        for (size_t i = 0; i < images.size(); ++i) {
+            if (images[i].workspaceID == newWorkspaceID) {
+                newWorkspaceIndexInCurrent = i;
+                break;
             }
-
-            // Calculate the vertical offset for the animation
-            // If the new workspace is in the current list, we can animate to it
-            float animationStartOffset = scrollOffset->value();
-            if (newWorkspaceIndexInCurrent < leftWorkspaceCount) {
-                // Calculate where the new workspace is positioned
-                const Vector2D monitorSize = monitor->m_size;
-                const float availableHeight = monitorSize.y - (2 * PADDING);
-                const float panelCenter = availableHeight / 2.0f;
-                const float workspaceTopWithoutScroll = newWorkspaceIndexInCurrent * (this->leftPreviewHeight + GAP_WIDTH);
-                const float workspaceCenterOffset = this->leftPreviewHeight / 2.0f;
-
-                // Target scroll to center the new workspace
-                float targetScrollForNew = workspaceTopWithoutScroll + workspaceCenterOffset - panelCenter;
-                targetScrollForNew = std::clamp(targetScrollForNew, 0.0f, maxScrollOffset);
-
-                // Store this for the new overview to animate from current position to new
-                animationStartOffset = scrollOffset->value();
-            }
-
-            // Recreate the overview with the new workspace
-            // Pass the animation start offset so it can animate from there
-            g_pOverviews.erase(monitor);
-            auto newOverview = std::make_unique<COverview>(newWorkspace, false);
-
-            // If we found the new workspace in the old list, set up animation
-            if (newWorkspaceIndexInCurrent < leftWorkspaceCount) {
-                // Override the initial scroll position to create smooth transition
-                newOverview->scrollOffset->setValue(animationStartOffset);
-
-                // The goal is already set by the constructor to center the new workspace
-                // So the animation will smoothly transition from old position to new
-            }
-
-            g_pOverviews[monitor] = std::move(newOverview);
-        } catch (const std::exception& e) {
-            Debug::log(ERR, "[Overview] Exception in workspace change handler: {}", e.what());
         }
+
+        float animationStartOffset = scrollOffset->value();
+        if (newWorkspaceIndexInCurrent < leftWorkspaceCount) {
+            const Vector2D monitorSize = monitor->m_size;
+            const float availableHeight = monitorSize.y - (2 * PADDING);
+            const float panelCenter = availableHeight / 2.0f;
+            const float workspaceTopWithoutScroll = newWorkspaceIndexInCurrent * (this->leftPreviewHeight + GAP_WIDTH);
+            const float workspaceCenterOffset = this->leftPreviewHeight / 2.0f;
+
+            float targetScrollForNew = workspaceTopWithoutScroll + workspaceCenterOffset - panelCenter;
+            targetScrollForNew = std::clamp(targetScrollForNew, 0.0f, maxScrollOffset);
+
+            animationStartOffset = scrollOffset->value();
+        }
+
+        g_pOverviews.erase(monitor);
+        auto newOverview = std::make_unique<COverview>(newWorkspace, false);
+
+        if (newWorkspaceIndexInCurrent < leftWorkspaceCount) {
+            newOverview->scrollOffset->setValue(animationStartOffset);
+        }
+
+        g_pOverviews[monitor] = std::move(newOverview);
     };
 
     workspaceChangeHook = g_pHookSystem->hookDynamic("workspace", onWorkspaceChange);
 }
 
 void COverview::setupWindowEventHooks() {
+    // Window event hooks are enabled with preview refresh
+    // Events during drag/drop are filtered out to prevent conflicts
+
     auto scheduleWorkspaceRefresh = [this](PHLWINDOW window) {
         if (!window || closing)
             return;
@@ -743,6 +732,13 @@ void COverview::setupWindowEventHooks() {
     auto onOpenWindow = [this, scheduleWorkspaceRefresh](
         void* self, SCallbackInfo& info, std::any param
     ) {
+        if (closing)
+            return;
+
+        // Ignore window events during drag/drop operations
+        if (g_dragState.isDragging)
+            return;
+
         auto window = std::any_cast<PHLWINDOW>(param);
         scheduleWorkspaceRefresh(window);
     };
@@ -750,6 +746,13 @@ void COverview::setupWindowEventHooks() {
     auto onCloseWindow = [this, scheduleWorkspaceRefresh](
         void* self, SCallbackInfo& info, std::any param
     ) {
+        if (closing)
+            return;
+
+        // Ignore window events during drag/drop operations
+        if (g_dragState.isDragging)
+            return;
+
         auto window = std::any_cast<PHLWINDOW>(param);
         scheduleWorkspaceRefresh(window);
     };
@@ -757,6 +760,13 @@ void COverview::setupWindowEventHooks() {
     auto onMoveWindow = [this, scheduleWorkspaceRefresh](
         void* self, SCallbackInfo& info, std::any param
     ) {
+        if (closing)
+            return;
+
+        // Ignore window events during drag/drop operations
+        if (g_dragState.isDragging)
+            return;
+
         auto data = std::any_cast<std::vector<std::any>>(param);
         if (data.size() >= 2) {
             auto window = std::any_cast<PHLWINDOW>(data[0]);
@@ -2127,6 +2137,64 @@ int64_t COverview::findFirstAvailableWorkspaceID() {
     return nextID;
 }
 
+Vector2D COverview::convertPreviewToWorkspaceCoords(const Vector2D& pos, int workspaceIndex) {
+    if (workspaceIndex < 0 || workspaceIndex >= (int)images.size())
+        return {0, 0};
+
+    const auto& image = images[workspaceIndex];
+
+    // Get animation values to transform box the same way as in rendering
+    const Vector2D monitorSize = pMonitor->m_size;
+    const Vector2D currentSize = size->value();
+    const Vector2D currentPos  = this->pos->value();
+    const float    zoomScale   = currentSize.x / monitorSize.x;
+
+    // Get the box, recalculating for left-side workspaces with scroll offset
+    CBox box = image.box;
+    if (workspaceIndex != activeIndex) {
+        const float monitorAspectRatio = monitorSize.x / monitorSize.y;
+        const float leftWorkspaceWidth = this->leftPreviewHeight * monitorAspectRatio;
+        float yPos = PADDING + workspaceIndex * (this->leftPreviewHeight + GAP_WIDTH) -
+                     scrollOffset->value();
+        box = {PADDING, yPos, leftWorkspaceWidth, this->leftPreviewHeight};
+    }
+
+    // Apply same transformation as in fullRender()
+    CBox transformedBox = box;
+    transformedBox.x = transformedBox.x * zoomScale + currentPos.x;
+    transformedBox.y = transformedBox.y * zoomScale + currentPos.y;
+    transformedBox.w = transformedBox.w * zoomScale;
+    transformedBox.h = transformedBox.h * zoomScale;
+
+    // Apply aspect ratio scaling (same as in fullRender())
+    const float fbAspect  = monitorSize.x / monitorSize.y;
+    const float boxAspect = transformedBox.w / transformedBox.h;
+
+    CBox scaledBox = transformedBox;
+    if (fbAspect > boxAspect) {
+        // Framebuffer is wider, fit to width
+        const float newHeight = transformedBox.w / fbAspect;
+        scaledBox.y           = transformedBox.y + (transformedBox.h - newHeight) / 2.0f;
+        scaledBox.h           = newHeight;
+    } else {
+        // Framebuffer is taller, fit to height
+        const float newWidth = transformedBox.h * fbAspect;
+        scaledBox.x          = transformedBox.x + (transformedBox.w - newWidth) / 2.0f;
+        scaledBox.w          = newWidth;
+    }
+
+    // Convert click position to workspace-relative coordinates
+    // Account for the scaling of the preview
+    float relX = (pos.x - scaledBox.x) / scaledBox.w;
+    float relY = (pos.y - scaledBox.y) / scaledBox.h;
+
+    // Convert to global coordinates (windows are positioned globally)
+    Vector2D wsPos = {pMonitor->m_position.x + relX * monitorSize.x,
+                      pMonitor->m_position.y + relY * monitorSize.y};
+
+    return wsPos;
+}
+
 PHLWINDOW COverview::findWindowAtPosition(const Vector2D& pos, int workspaceIndex) {
     if (workspaceIndex < 0 || workspaceIndex >= (int)images.size())
         return nullptr;
@@ -2224,7 +2292,42 @@ PHLWINDOW COverview::findWindowAtPosition(const Vector2D& pos, int workspaceInde
     return topmostWindow;
 }
 
-void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex) {
+// Helper function to convert direction enum to string for layout API
+const char* getDirectionString(int direction) {
+    switch (direction) {
+        case DIRECTION_UP: return "u";
+        case DIRECTION_DOWN: return "d";
+        case DIRECTION_LEFT: return "l";
+        case DIRECTION_RIGHT: return "r";
+        default: return nullptr;
+    }
+}
+
+int COverview::calculateDropDirection(PHLWINDOW targetWindow, const Vector2D& cursorPos) {
+    if (!targetWindow)
+        return DIRECTION_DEFAULT;
+
+    // Get window's real position and size
+    const Vector2D wPos = targetWindow->m_realPosition->value();
+    const Vector2D wSize = targetWindow->m_realSize->value();
+
+    const bool isLandscape = wSize.x > wSize.y;
+
+    const Vector2D windowCenter = {wPos.x + wSize.x / 2.0, wPos.y + wSize.y / 2.0};
+    const Vector2D relativePos = {cursorPos.x - windowCenter.x, cursorPos.y - windowCenter.y};
+
+    int direction;
+    if (isLandscape) {
+        direction = (relativePos.x < 0) ? DIRECTION_LEFT : DIRECTION_RIGHT;
+    } else {
+        direction = (relativePos.y < 0) ? DIRECTION_UP : DIRECTION_DOWN;
+    }
+
+    return direction;
+}
+
+void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex,
+                                      const Vector2D& cursorPos) {
     if (!window || targetWorkspaceIndex < 0 || targetWorkspaceIndex >= (int)images.size())
         return;
 
@@ -2331,9 +2434,42 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
         }
     }
 
-    // Use Hyprland's safe window move function
-    // This handles all the layout management, fullscreen, floating state, etc.
-    g_pCompositor->moveWindowToWorkspaceSafe(window, targetImage.pWorkspace);
+    PHLWINDOW targetWindow = findWindowAtPosition(cursorPos, targetWorkspaceIndex);
+    int dropDirection = DIRECTION_DEFAULT;
+
+    Vector2D workspaceCursorPos = convertPreviewToWorkspaceCoords(cursorPos, targetWorkspaceIndex);
+
+    if (targetWindow && !targetWindow->m_isFloating && !targetWindow->isFullscreen()) {
+        dropDirection = calculateDropDirection(targetWindow, workspaceCursorPos);
+    }
+
+    if (!window || !targetImage.pWorkspace)
+        return;
+
+    PHLWINDOW originalFocus = g_pCompositor->m_lastWindow.lock();
+    bool didFocus = false;
+
+    if (dropDirection != DIRECTION_DEFAULT && targetWindow) {
+        g_pCompositor->focusWindow(targetWindow);
+        didFocus = true;
+    }
+
+    if (dropDirection != DIRECTION_DEFAULT && targetWindow) {
+        auto layout = g_pLayoutManager->getCurrentLayout();
+        if (layout) {
+            window->m_workspace = targetImage.pWorkspace;
+            layout->onWindowRemovedTiling(window);
+            layout->onWindowCreatedTiling(window, static_cast<eDirection>(dropDirection));
+        } else {
+            g_pCompositor->moveWindowToWorkspaceSafe(window, targetImage.pWorkspace);
+        }
+    } else {
+        g_pCompositor->moveWindowToWorkspaceSafe(window, targetImage.pWorkspace);
+    }
+
+    if (didFocus && originalFocus) {
+        g_pCompositor->focusWindow(originalFocus);
+    }
 
     // Schedule repeating redraws for affected non-active workspaces
     // We need to refresh both source and target if they're not the active workspace

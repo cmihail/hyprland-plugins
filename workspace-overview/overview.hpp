@@ -105,7 +105,10 @@ class COverview {
     bool        isMiddleClickWorkspaceDragAllowed(int clickedWorkspaceIndex) const;
     void        setupWorkspaceDragOnMiddleClick(int clickedWorkspaceIndex, const Vector2D& mousePos);
     PHLWINDOW   findWindowAtPosition(const Vector2D& pos, int workspaceIndex);
-    void        moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex);
+    Vector2D    convertPreviewToWorkspaceCoords(const Vector2D& pos, int workspaceIndex);
+    int         calculateDropDirection(PHLWINDOW targetWindow, const Vector2D& cursorPos);
+    void        moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex,
+                                      const Vector2D& cursorPos);
     void        renderDragPreview();
     std::pair<int, int> findDropZoneBetweenWorkspaces(const Vector2D& pos);
     void        renderDropZoneAboveFirst();
