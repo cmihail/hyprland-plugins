@@ -1,6 +1,6 @@
 TEST_TARGET = mouse-gestures-tests
 
-TEST_SOURCES = test_main.cpp test_standalone.cpp test_threading.cpp test_stroke.cpp test_config_parsing.cpp test_recording.cpp test_default_command.cpp test_dimming.cpp
+TEST_SOURCES = test_main.cpp test_standalone.cpp test_threading.cpp test_stroke.cpp test_config_parsing.cpp test_recording.cpp test_default_command.cpp test_dimming.cpp test_trail_animation.cpp
 PLUGIN_SOURCES =
 
 COMPILE_FLAGS = -std=c++23 -Wall -Wextra -Wno-unused-parameter -Wno-unused-value -Wno-missing-field-initializers -Wno-narrowing -Wno-pointer-arith

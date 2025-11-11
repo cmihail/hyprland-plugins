@@ -38,12 +38,19 @@ struct GestureAction {
     std::string name;  // Optional name for display
 };
 
+// Timestamped path point for trail rendering
+struct PathPoint {
+    Vector2D position;
+    std::chrono::steady_clock::time_point timestamp;
+};
+
 // Mouse gesture state
 struct MouseGestureState {
     bool rightButtonPressed = false;
     Vector2D mouseDownPos = {0, 0};
     bool dragDetected = false;
-    std::vector<Vector2D> path;
+    std::vector<Vector2D> path;  // For gesture matching
+    std::vector<PathPoint> timestampedPath;  // For trail rendering
     std::chrono::steady_clock::time_point pressTime;
     uint32_t pressButton = 0;
     uint32_t pressTimeMs = 0;
@@ -53,6 +60,7 @@ struct MouseGestureState {
         mouseDownPos = {0, 0};
         dragDetected = false;
         path.clear();
+        timestampedPath.clear();
         pressButton = 0;
         pressTimeMs = 0;
     }
@@ -751,12 +759,15 @@ static void setupMouseButtonHook() {
                 }
 
                 const Vector2D mousePos = g_pInputManager->getMouseCoordsInternal();
+                auto now = std::chrono::steady_clock::now();
                 g_gestureState.rightButtonPressed = true;
                 g_gestureState.mouseDownPos = mousePos;
                 g_gestureState.dragDetected = false;
                 g_gestureState.path.clear();
                 g_gestureState.path.push_back(mousePos);
-                g_gestureState.pressTime = std::chrono::steady_clock::now();
+                g_gestureState.timestampedPath.clear();
+                g_gestureState.timestampedPath.push_back({mousePos, now});
+                g_gestureState.pressTime = now;
                 g_gestureState.pressButton = actionButton;
                 g_gestureState.pressTimeMs = e.timeMs;
 
@@ -797,6 +808,7 @@ static void setupMouseMoveHook() {
             }
 
             const Vector2D mousePos = g_pInputManager->getMouseCoordsInternal();
+            auto now = std::chrono::steady_clock::now();
 
             // Check if drag threshold exceeded (if not yet detected)
             if (!g_gestureState.dragDetected) {
@@ -808,6 +820,37 @@ static void setupMouseMoveHook() {
             // Record path point if drag is active (but don't consume move events)
             if (g_gestureState.dragDetected) {
                 g_gestureState.path.push_back(mousePos);
+                g_gestureState.timestampedPath.push_back({mousePos, now});
+
+                // Get trail fade duration from config
+                static auto* const PFADEDURATION = (Hyprlang::INT* const*)
+                    HyprlandAPI::getConfigValue(
+                        PHANDLE,
+                        "plugin:mouse_gestures:trail_fade_duration_ms"
+                    )->getDataStaticPtr();
+
+                int fadeDurationMs = 500;  // Default
+                if (PFADEDURATION && *PFADEDURATION) {
+                    fadeDurationMs = static_cast<int>(**PFADEDURATION);
+                }
+
+                // Clean up old path points that are beyond fade duration
+                auto fadeThreshold = now - std::chrono::milliseconds(fadeDurationMs);
+                auto it = g_gestureState.timestampedPath.begin();
+                while (it != g_gestureState.timestampedPath.end() &&
+                       it->timestamp < fadeThreshold) {
+                    it++;
+                }
+                if (it != g_gestureState.timestampedPath.begin()) {
+                    g_gestureState.timestampedPath.erase(
+                        g_gestureState.timestampedPath.begin(), it
+                    );
+                }
+
+                // Damage all monitors to trigger redraw with new trail
+                if (g_recordMode) {
+                    damageAllMonitors();
+                }
             }
         } catch (const std::exception&) {
             // Catch all exceptions to prevent crashing Hyprland
@@ -858,6 +901,31 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         PHANDLE,
         "plugin:mouse_gestures:dim_opacity",
         Hyprlang::FLOAT{0.2}
+    );
+    HyprlandAPI::addConfigValue(
+        PHANDLE,
+        "plugin:mouse_gestures:trail_circle_radius",
+        Hyprlang::FLOAT{8.0}
+    );
+    HyprlandAPI::addConfigValue(
+        PHANDLE,
+        "plugin:mouse_gestures:trail_fade_duration_ms",
+        Hyprlang::INT{500}
+    );
+    HyprlandAPI::addConfigValue(
+        PHANDLE,
+        "plugin:mouse_gestures:trail_color_r",
+        Hyprlang::FLOAT{0.4}
+    );
+    HyprlandAPI::addConfigValue(
+        PHANDLE,
+        "plugin:mouse_gestures:trail_color_g",
+        Hyprlang::FLOAT{0.8}
+    );
+    HyprlandAPI::addConfigValue(
+        PHANDLE,
+        "plugin:mouse_gestures:trail_color_b",
+        Hyprlang::FLOAT{1.0}
     );
 
     // Register config keyword for gesture_action

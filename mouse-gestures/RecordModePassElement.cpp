@@ -1,8 +1,29 @@
 #include "RecordModePassElement.hpp"
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/plugins/PluginAPI.hpp>
+#include <chrono>
+#include <cmath>
 
 extern HANDLE PHANDLE;
+
+// Forward declarations from main.cpp
+struct PathPoint {
+    Vector2D position;
+    std::chrono::steady_clock::time_point timestamp;
+};
+
+struct MouseGestureState {
+    bool rightButtonPressed;
+    Vector2D mouseDownPos;
+    bool dragDetected;
+    std::vector<Vector2D> path;
+    std::vector<PathPoint> timestampedPath;
+    std::chrono::steady_clock::time_point pressTime;
+    uint32_t pressButton;
+    uint32_t pressTimeMs;
+};
+
+extern MouseGestureState g_gestureState;
 
 CRecordModePassElement::CRecordModePassElement(PHLMONITOR monitor) : pMonitor(monitor) {
     // Store the monitor this overlay is for
@@ -53,6 +74,90 @@ void CRecordModePassElement::draw(const CRegion& damage) {
         CRegion fullDamage{0, 0, INT16_MAX, INT16_MAX};
 
         g_pHyprOpenGL->renderRect(overlayBox, dimColor, {.damage = &fullDamage});
+
+        // Render trail circles if gesture is active
+        if (g_gestureState.dragDetected && !g_gestureState.timestampedPath.empty()) {
+            // Get trail configuration
+            static auto* const PCIRCLERADIUS = (Hyprlang::FLOAT* const*)
+                HyprlandAPI::getConfigValue(
+                    PHANDLE,
+                    "plugin:mouse_gestures:trail_circle_radius"
+                )->getDataStaticPtr();
+
+            static auto* const PFADEDURATION = (Hyprlang::INT* const*)
+                HyprlandAPI::getConfigValue(
+                    PHANDLE,
+                    "plugin:mouse_gestures:trail_fade_duration_ms"
+                )->getDataStaticPtr();
+
+            static auto* const PCOLORR = (Hyprlang::FLOAT* const*)
+                HyprlandAPI::getConfigValue(
+                    PHANDLE,
+                    "plugin:mouse_gestures:trail_color_r"
+                )->getDataStaticPtr();
+
+            static auto* const PCOLORG = (Hyprlang::FLOAT* const*)
+                HyprlandAPI::getConfigValue(
+                    PHANDLE,
+                    "plugin:mouse_gestures:trail_color_g"
+                )->getDataStaticPtr();
+
+            static auto* const PCOLORB = (Hyprlang::FLOAT* const*)
+                HyprlandAPI::getConfigValue(
+                    PHANDLE,
+                    "plugin:mouse_gestures:trail_color_b"
+                )->getDataStaticPtr();
+
+            float circleRadius = 8.0f;
+            int fadeDurationMs = 500;
+            float colorR = 0.4f;  // Nice cyan/blue color
+            float colorG = 0.8f;
+            float colorB = 1.0f;
+
+            if (PCIRCLERADIUS && *PCIRCLERADIUS) {
+                circleRadius = static_cast<float>(**PCIRCLERADIUS);
+            }
+            if (PFADEDURATION && *PFADEDURATION) {
+                fadeDurationMs = static_cast<int>(**PFADEDURATION);
+            }
+            if (PCOLORR && *PCOLORR) colorR = static_cast<float>(**PCOLORR);
+            if (PCOLORG && *PCOLORG) colorG = static_cast<float>(**PCOLORG);
+            if (PCOLORB && *PCOLORB) colorB = static_cast<float>(**PCOLORB);
+
+            auto now = std::chrono::steady_clock::now();
+
+            // Render circles for each point in the path
+            for (const auto& pathPoint : g_gestureState.timestampedPath) {
+                // Calculate age of this point in milliseconds
+                auto ageMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now - pathPoint.timestamp
+                ).count();
+
+                // Calculate opacity based on age (linear fade)
+                float opacity = 1.0f - (static_cast<float>(ageMs) /
+                                        static_cast<float>(fadeDurationMs));
+                if (opacity < 0.0f) opacity = 0.0f;
+                if (opacity > 1.0f) opacity = 1.0f;
+
+                // Transform global coordinates to monitor-local coordinates
+                Vector2D localPos = pathPoint.position - monitor->m_position;
+
+                // Create circle box
+                CBox circleBox{
+                    {localPos.x - circleRadius,
+                     localPos.y - circleRadius},
+                    {circleRadius * 2, circleRadius * 2}
+                };
+
+                // Render the circle with fading opacity
+                CHyprColor circleColor{colorR, colorG, colorB, opacity};
+                g_pHyprOpenGL->renderRect(
+                    circleBox,
+                    circleColor,
+                    {.round = static_cast<int>(circleRadius)}
+                );
+            }
+        }
 
     } catch (const std::exception& e) {
         // Silently catch and ignore errors to prevent compositor crash
