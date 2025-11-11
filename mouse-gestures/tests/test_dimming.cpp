@@ -198,8 +198,8 @@ TEST_F(DimmingOverlayTest, BoundingBoxCoversMonitor) {
 
 // Test PassElement pass name
 TEST_F(DimmingOverlayTest, PassElementName) {
-    std::string expectedName = "CRecordModePassElement";
-    EXPECT_EQ(expectedName, "CRecordModePassElement");
+    std::string expectedName = "CMouseGestureOverlay";
+    EXPECT_EQ(expectedName, "CMouseGestureOverlay");
 }
 
 // Test blur requirements

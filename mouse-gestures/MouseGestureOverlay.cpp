@@ -1,6 +1,7 @@
-#include "RecordModePassElement.hpp"
+#include "MouseGestureOverlay.hpp"
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/plugins/PluginAPI.hpp>
+#include <hyprland/src/Compositor.hpp>
 #include <chrono>
 #include <cmath>
 
@@ -24,12 +25,13 @@ struct MouseGestureState {
 };
 
 extern MouseGestureState g_gestureState;
+extern bool g_recordMode;
 
-CRecordModePassElement::CRecordModePassElement(PHLMONITOR monitor) : pMonitor(monitor) {
+CMouseGestureOverlay::CMouseGestureOverlay(PHLMONITOR monitor) : pMonitor(monitor) {
     // Store the monitor this overlay is for
 }
 
-void CRecordModePassElement::draw(const CRegion& damage) {
+void CMouseGestureOverlay::draw(const CRegion& damage) {
     try {
         // Safety check: ensure OpenGL context is valid
         if (!g_pHyprOpenGL) {
@@ -48,35 +50,38 @@ void CRecordModePassElement::draw(const CRegion& damage) {
             return;
         }
 
-        // Create a semi-transparent black overlay covering the entire monitor
-        CBox overlayBox = CBox{{0, 0}, monitor->m_size};
+        // Render dimming overlay only in record mode
+        if (g_recordMode) {
+            // Create a semi-transparent black overlay covering the entire monitor
+            CBox overlayBox = CBox{{0, 0}, monitor->m_size};
 
-        // Get configured dim opacity
-        static auto* const PDIMOPACITY = (Hyprlang::FLOAT* const*)
-            HyprlandAPI::getConfigValue(
-                PHANDLE,
-                "plugin:mouse_gestures:dim_opacity"
-            )->getDataStaticPtr();
+            // Get configured dim opacity
+            static auto* const PDIMOPACITY = (Hyprlang::FLOAT* const*)
+                HyprlandAPI::getConfigValue(
+                    PHANDLE,
+                    "plugin:mouse_gestures:dim_opacity"
+                )->getDataStaticPtr();
 
-        float dimOpacity = 0.2f;  // Default fallback
-        if (PDIMOPACITY && *PDIMOPACITY) {
-            dimOpacity = static_cast<float>(**PDIMOPACITY);
-            // Clamp opacity between 0.0 and 1.0
-            if (dimOpacity < 0.0f) dimOpacity = 0.0f;
-            if (dimOpacity > 1.0f) dimOpacity = 1.0f;
+            float dimOpacity = 0.2f;  // Default fallback
+            if (PDIMOPACITY && *PDIMOPACITY) {
+                dimOpacity = static_cast<float>(**PDIMOPACITY);
+                // Clamp opacity between 0.0 and 1.0
+                if (dimOpacity < 0.0f) dimOpacity = 0.0f;
+                if (dimOpacity > 1.0f) dimOpacity = 1.0f;
+            }
+
+            // Render the dimming overlay
+            // Using a dark color to dim the screen while keeping windows visible
+            CHyprColor dimColor{0.0, 0.0, 0.0, dimOpacity};
+
+            // Create a damage region covering the entire screen
+            CRegion fullDamage{0, 0, INT16_MAX, INT16_MAX};
+
+            g_pHyprOpenGL->renderRect(overlayBox, dimColor, {.damage = &fullDamage});
         }
 
-        // Render the dimming overlay
-        // Using a dark color to dim the screen while keeping windows visible
-        CHyprColor dimColor{0.0, 0.0, 0.0, dimOpacity};
-
-        // Create a damage region covering the entire screen
-        CRegion fullDamage{0, 0, INT16_MAX, INT16_MAX};
-
-        g_pHyprOpenGL->renderRect(overlayBox, dimColor, {.damage = &fullDamage});
-
-        // Render trail circles if gesture is active
-        if (g_gestureState.dragDetected && !g_gestureState.timestampedPath.empty()) {
+        // Render trail circles if there are any points to render
+        if (!g_gestureState.timestampedPath.empty()) {
             // Get trail configuration
             static auto* const PCIRCLERADIUS = (Hyprlang::FLOAT* const*)
                 HyprlandAPI::getConfigValue(
@@ -126,6 +131,19 @@ void CRecordModePassElement::draw(const CRegion& damage) {
 
             auto now = std::chrono::steady_clock::now();
 
+            // Clean up old path points that are beyond fade duration
+            auto fadeThreshold = now - std::chrono::milliseconds(fadeDurationMs);
+            auto it = g_gestureState.timestampedPath.begin();
+            while (it != g_gestureState.timestampedPath.end() &&
+                   it->timestamp < fadeThreshold) {
+                it++;
+            }
+            if (it != g_gestureState.timestampedPath.begin()) {
+                g_gestureState.timestampedPath.erase(
+                    g_gestureState.timestampedPath.begin(), it
+                );
+            }
+
             // Render circles for each point in the path
             for (const auto& pathPoint : g_gestureState.timestampedPath) {
                 // Calculate age of this point in milliseconds
@@ -157,6 +175,17 @@ void CRecordModePassElement::draw(const CRegion& damage) {
                     {.round = static_cast<int>(circleRadius)}
                 );
             }
+
+            // Continue scheduling frames while there are points to fade out
+            if (!g_gestureState.timestampedPath.empty()) {
+                try {
+                    if (g_pCompositor) {
+                        g_pCompositor->scheduleFrameForMonitor(monitor);
+                    }
+                } catch (...) {
+                    // Silently catch scheduling errors
+                }
+            }
         }
 
     } catch (const std::exception& e) {
@@ -166,7 +195,7 @@ void CRecordModePassElement::draw(const CRegion& damage) {
     }
 }
 
-bool CRecordModePassElement::needsLiveBlur() {
+bool CMouseGestureOverlay::needsLiveBlur() {
     try {
         return false;
     } catch (...) {
@@ -174,7 +203,7 @@ bool CRecordModePassElement::needsLiveBlur() {
     }
 }
 
-bool CRecordModePassElement::needsPrecomputeBlur() {
+bool CMouseGestureOverlay::needsPrecomputeBlur() {
     try {
         return false;
     } catch (...) {
@@ -182,7 +211,7 @@ bool CRecordModePassElement::needsPrecomputeBlur() {
     }
 }
 
-std::optional<CBox> CRecordModePassElement::boundingBox() {
+std::optional<CBox> CMouseGestureOverlay::boundingBox() {
     try {
         // Get the monitor this overlay is bound to
         auto monitor = pMonitor.lock();

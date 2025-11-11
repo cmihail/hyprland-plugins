@@ -2,10 +2,10 @@
 #include <hyprland/src/render/pass/PassElement.hpp>
 #include <hyprland/src/helpers/Monitor.hpp>
 
-class CRecordModePassElement : public IPassElement {
+class CMouseGestureOverlay : public IPassElement {
   public:
-    CRecordModePassElement(PHLMONITOR monitor);
-    virtual ~CRecordModePassElement() = default;
+    CMouseGestureOverlay(PHLMONITOR monitor);
+    virtual ~CMouseGestureOverlay() = default;
 
     virtual void                draw(const CRegion& damage);
     virtual bool                needsLiveBlur();
@@ -13,7 +13,7 @@ class CRecordModePassElement : public IPassElement {
     virtual std::optional<CBox> boundingBox();
 
     virtual const char*         passName() {
-        return "CRecordModePassElement";
+        return "CMouseGestureOverlay";
     }
 
   private:

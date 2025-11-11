@@ -27,7 +27,7 @@
 
 #include "stroke.hpp"
 #include "ascii_gesture.hpp"
-#include "RecordModePassElement.hpp"
+#include "MouseGestureOverlay.hpp"
 
 inline HANDLE PHANDLE = nullptr;
 
@@ -60,7 +60,7 @@ struct MouseGestureState {
         mouseDownPos = {0, 0};
         dragDetected = false;
         path.clear();
-        timestampedPath.clear();
+        // Don't clear timestampedPath - let points fade out naturally
         pressButton = 0;
         pressTimeMs = 0;
     }
@@ -653,11 +653,6 @@ static void setupRenderHook() {
                     damageAllMonitors();
                 }
 
-                // Only add overlay when in record mode
-                if (!g_recordMode) {
-                    return;
-                }
-
                 // Safety checks
                 if (!g_pHyprOpenGL || !g_pHyprRenderer) {
                     return;
@@ -673,7 +668,7 @@ static void setupRenderHook() {
                 // This hook is called once per monitor per frame, so each
                 // monitor will get its own overlay instance
                 g_pHyprRenderer->m_renderPass.add(
-                    makeUnique<CRecordModePassElement>(monitor)
+                    makeUnique<CMouseGestureOverlay>(monitor)
                 );
 
                 // Schedule next frame to keep overlay visible continuously
@@ -822,35 +817,9 @@ static void setupMouseMoveHook() {
                 g_gestureState.path.push_back(mousePos);
                 g_gestureState.timestampedPath.push_back({mousePos, now});
 
-                // Get trail fade duration from config
-                static auto* const PFADEDURATION = (Hyprlang::INT* const*)
-                    HyprlandAPI::getConfigValue(
-                        PHANDLE,
-                        "plugin:mouse_gestures:trail_fade_duration_ms"
-                    )->getDataStaticPtr();
-
-                int fadeDurationMs = 500;  // Default
-                if (PFADEDURATION && *PFADEDURATION) {
-                    fadeDurationMs = static_cast<int>(**PFADEDURATION);
-                }
-
-                // Clean up old path points that are beyond fade duration
-                auto fadeThreshold = now - std::chrono::milliseconds(fadeDurationMs);
-                auto it = g_gestureState.timestampedPath.begin();
-                while (it != g_gestureState.timestampedPath.end() &&
-                       it->timestamp < fadeThreshold) {
-                    it++;
-                }
-                if (it != g_gestureState.timestampedPath.begin()) {
-                    g_gestureState.timestampedPath.erase(
-                        g_gestureState.timestampedPath.begin(), it
-                    );
-                }
-
                 // Damage all monitors to trigger redraw with new trail
-                if (g_recordMode) {
-                    damageAllMonitors();
-                }
+                // Cleanup of old points is handled in the render pass
+                damageAllMonitors();
             }
         } catch (const std::exception&) {
             // Catch all exceptions to prevent crashing Hyprland

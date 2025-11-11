@@ -169,34 +169,34 @@ TEST_F(TrailAnimationTest, CircleBoundingBox) {
     EXPECT_EQ(boxHeight, 16.0);
 }
 
-// Test trail renders only during drag
+// Test trail renders when there are path points
 TEST_F(TrailAnimationTest, TrailRendersDuringDrag) {
-    bool dragDetected = false;
     int pathPoints = 0;
     bool shouldRenderTrail = false;
 
-    // Before drag starts
-    if (dragDetected && pathPoints > 0) {
+    // No path points - no trail
+    if (pathPoints > 0) {
         shouldRenderTrail = true;
     }
     EXPECT_FALSE(shouldRenderTrail);
 
-    // After drag starts
-    dragDetected = true;
+    // Path points exist - trail renders
     pathPoints = 10;
-    if (dragDetected && pathPoints > 0) {
+    shouldRenderTrail = false;
+    if (pathPoints > 0) {
         shouldRenderTrail = true;
     }
     EXPECT_TRUE(shouldRenderTrail);
 }
 
-// Test old path points cleanup
+// Test old path points cleanup (happens continuously in render pass)
 TEST_F(TrailAnimationTest, OldPathPointsCleanup) {
     int fadeDurationMs = 500;
     std::vector<int> pointAges = {0, 100, 300, 600, 800, 1000};  // ms
     std::vector<bool> shouldKeep;
 
     // Determine which points should be kept
+    // Cleanup removes points >= fadeDuration, keeping only younger points
     for (int age : pointAges) {
         shouldKeep.push_back(age < fadeDurationMs);
     }
@@ -229,25 +229,57 @@ TEST_F(TrailAnimationTest, CustomFadeDuration) {
     }
 }
 
-// Test trail only in record mode
-TEST_F(TrailAnimationTest, TrailOnlyInRecordMode) {
-    bool recordMode = false;
-    bool dragDetected = true;
+// Test trail renders based on path points (not drag state)
+TEST_F(TrailAnimationTest, TrailRendersDuringAnyDrag) {
     int pathPoints = 10;
     bool shouldRenderTrail = false;
 
-    // Not in record mode
-    if (recordMode && dragDetected && pathPoints > 0) {
-        shouldRenderTrail = true;
-    }
-    EXPECT_FALSE(shouldRenderTrail);
-
-    // In record mode
-    recordMode = true;
-    if (recordMode && dragDetected && pathPoints > 0) {
+    // Path points exist - trail should render (regardless of drag state)
+    if (pathPoints > 0) {
         shouldRenderTrail = true;
     }
     EXPECT_TRUE(shouldRenderTrail);
+
+    // No path points - no trail
+    pathPoints = 0;
+    shouldRenderTrail = false;
+    if (pathPoints > 0) {
+        shouldRenderTrail = true;
+    }
+    EXPECT_FALSE(shouldRenderTrail);
+}
+
+// Test trail continues to render after drag ends (for fade out)
+TEST_F(TrailAnimationTest, TrailContinuesAfterDragEnds) {
+    // Drag has ended, but points still exist
+    int pathPoints = 10;
+    bool shouldRenderTrail = false;
+
+    // Trail should still render to allow fade out
+    if (pathPoints > 0) {
+        shouldRenderTrail = true;
+    }
+    EXPECT_TRUE(shouldRenderTrail);
+}
+
+// Test dim overlay only in record mode
+TEST_F(TrailAnimationTest, DimOverlayOnlyInRecordMode) {
+    bool recordMode = false;
+    bool shouldRenderDim = false;
+
+    // Not in record mode - dim should not render
+    if (recordMode) {
+        shouldRenderDim = true;
+    }
+    EXPECT_FALSE(shouldRenderDim);
+
+    // In record mode - dim should render
+    recordMode = true;
+    shouldRenderDim = false;
+    if (recordMode) {
+        shouldRenderDim = true;
+    }
+    EXPECT_TRUE(shouldRenderDim);
 }
 
 // Test timestamp storage
@@ -285,16 +317,15 @@ TEST_F(TrailAnimationTest, PathPointVectorOperations) {
     EXPECT_TRUE(path.empty());
 }
 
-// Test damage triggers on path updates
+// Test damage triggers on path updates during drag
 TEST_F(TrailAnimationTest, DamageTriggersOnPathUpdate) {
-    bool recordMode = true;
     bool dragDetected = true;
     int oldPathSize = 5;
     int newPathSize = 6;
     bool shouldTriggerDamage = false;
 
-    // Path size changed while in record mode
-    if (recordMode && dragDetected && newPathSize > oldPathSize) {
+    // Path size changed while dragging - damage should trigger
+    if (dragDetected && newPathSize > oldPathSize) {
         shouldTriggerDamage = true;
     }
 
