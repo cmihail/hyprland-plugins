@@ -176,6 +176,40 @@ static void executeCommand(const std::string& command) {
     }
 }
 
+// Helper function to check if position is inside record mode right square
+static bool isInsideRecordSquare(const Vector2D& mousePos, PHLMONITOR monitor) {
+    if (!monitor) {
+        return false;
+    }
+
+    // Calculate the right square bounds (matching renderRecordModeUI)
+    constexpr float PADDING = 20.0f;
+    constexpr float GAP_WIDTH = 10.0f;
+    constexpr int VISIBLE_GESTURES = 3;
+
+    const Vector2D& monitorSize = monitor->m_size;
+    const Vector2D& monitorPos = monitor->m_position;
+
+    const float verticalSpace = monitorSize.y - (2.0f * PADDING);
+    const float totalGaps = (VISIBLE_GESTURES - 1) * GAP_WIDTH;
+    const float baseHeight = (verticalSpace - totalGaps) / VISIBLE_GESTURES;
+    const float gestureRectHeight = baseHeight * 0.9f;
+    const float gestureRectWidth = gestureRectHeight;
+    const float recordSquareSize = verticalSpace;
+    const float totalWidth = gestureRectWidth + recordSquareSize;
+    const float horizontalMargin = (monitorSize.x - totalWidth) / 3.0f;
+
+    // Right square position and size
+    const float recordSquareX = monitorPos.x + horizontalMargin + gestureRectWidth + horizontalMargin;
+    const float recordSquareY = monitorPos.y + PADDING;
+
+    // Check if mouse is inside the right square
+    return mousePos.x >= recordSquareX &&
+           mousePos.x <= recordSquareX + recordSquareSize &&
+           mousePos.y >= recordSquareY &&
+           mousePos.y <= recordSquareY + recordSquareSize;
+}
+
 // Helper function to add gesture to Hyprland config file
 static bool addGestureToConfig(const std::string& strokeData) {
     const char* home = std::getenv("HOME");
@@ -812,10 +846,9 @@ static SDispatchResult mouseGesturesDispatch(std::string arg) {
         if (arg == "record") {
             g_recordMode = !g_recordMode;
 
-            // Clear trail when entering record mode to avoid visual conflict
-            if (g_recordMode) {
-                g_gestureState.timestampedPath.clear();
-            }
+            // Clear trail and reset gesture state when toggling record mode
+            g_gestureState.timestampedPath.clear();
+            g_gestureState.reset();
 
             // Immediately damage all monitors to show/hide overlay
             damageAllMonitors();
@@ -846,7 +879,7 @@ static void setupMouseButtonHook() {
 
             const uint32_t dragButton = static_cast<uint32_t>(**PDRAGBUTTON);
 
-            // If in record mode and a non-drag button is pressed, cancel recording
+            // If in record mode and a non-drag button is pressed, exit record mode
             if (g_recordMode && e.button != dragButton &&
                 e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
                 g_recordMode = false;
@@ -872,6 +905,17 @@ static void setupMouseButtonHook() {
                 }
 
                 const Vector2D mousePos = g_pInputManager->getMouseCoordsInternal();
+
+                // In record mode, only allow gesture recording in the right square
+                if (g_recordMode) {
+                    auto monitor = g_pCompositor->getMonitorFromVector(mousePos);
+                    if (!isInsideRecordSquare(mousePos, monitor)) {
+                        // Not in the right square - consume event but don't record gesture
+                        info.cancelled = true;
+                        return;
+                    }
+                }
+
                 auto now = std::chrono::steady_clock::now();
                 g_gestureState.rightButtonPressed = true;
                 g_gestureState.mouseDownPos = mousePos;
