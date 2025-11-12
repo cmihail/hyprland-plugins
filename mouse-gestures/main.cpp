@@ -981,8 +981,10 @@ static void setupMouseMoveHook() {
                 }
             }
 
-            // Record path point for gesture matching if drag is active
-            if (g_gestureState.dragDetected) {
+            // Record path point for gesture matching
+            // In record mode: always record all points from the start
+            // In normal mode: only record after drag threshold is exceeded
+            if (g_recordMode || g_gestureState.dragDetected) {
                 g_gestureState.path.push_back(mousePos);
 
                 // Damage all monitors to trigger redraw with new trail
