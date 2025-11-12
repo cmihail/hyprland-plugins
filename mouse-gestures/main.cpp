@@ -87,6 +87,44 @@ SP<HOOK_CALLBACK_FN> g_mouseMoveHook;
 SP<HOOK_CALLBACK_FN> g_mouseAxisHook;
 SP<HOOK_CALLBACK_FN> g_renderHook;
 
+// Helper function to check if there are any visible trail points
+static bool hasVisibleTrailPoints() {
+    if (g_gestureState.timestampedPath.empty()) {
+        return false;
+    }
+
+    try {
+        // Get trail fade duration from config
+        static auto* const PFADEDURATION = (Hyprlang::INT* const*)
+            HyprlandAPI::getConfigValue(
+                PHANDLE,
+                "plugin:mouse_gestures:trail_fade_duration_ms"
+            )->getDataStaticPtr();
+
+        if (!PFADEDURATION || !*PFADEDURATION) {
+            return false;
+        }
+
+        const int fadeDurationMs = **PFADEDURATION;
+        auto now = std::chrono::steady_clock::now();
+
+        // Check if any point is still visible (not fully faded)
+        for (const auto& point : g_gestureState.timestampedPath) {
+            auto age = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - point.timestamp
+            ).count();
+
+            if (age <= fadeDurationMs) {
+                return true;
+            }
+        }
+
+        return false;
+    } catch (...) {
+        return false;
+    }
+}
+
 // Helper function to damage all monitors and schedule frames
 static void damageAllMonitors() {
     try {
@@ -699,13 +737,22 @@ static void setupRenderHook() {
                     makeUnique<CMouseGestureOverlay>(monitor)
                 );
 
-                // Schedule next frame to keep overlay visible continuously
-                try {
-                    if (g_pCompositor) {
-                        g_pCompositor->scheduleFrameForMonitor(monitor);
+                // Only schedule next frame if we need continuous rendering:
+                // - In record mode (UI visible)
+                // - Actively dragging (button pressed and drag detected)
+                // - Trail points are still visible and fading
+                bool needsContinuousRendering = g_recordMode ||
+                    (g_gestureState.rightButtonPressed && g_gestureState.dragDetected) ||
+                    hasVisibleTrailPoints();
+
+                if (needsContinuousRendering) {
+                    try {
+                        if (g_pCompositor) {
+                            g_pCompositor->scheduleFrameForMonitor(monitor);
+                        }
+                    } catch (...) {
+                        // Silently catch scheduling errors
                     }
-                } catch (...) {
-                    // Silently catch scheduling errors
                 }
 
             } catch (const std::exception& e) {
