@@ -70,6 +70,7 @@ MouseGestureState g_gestureState;
 std::vector<GestureAction> g_gestureActions;
 bool g_recordMode = false;
 bool g_lastRecordMode = false;
+bool g_pluginShuttingDown = false;
 
 // Hook handles
 SP<HOOK_CALLBACK_FN> g_mouseButtonHook;
@@ -649,10 +650,25 @@ static void setupRenderHook() {
     try {
         auto onRender = [](void* self, SCallbackInfo& info, std::any param) {
             try {
+                // Don't render if plugin is shutting down
+                if (g_pluginShuttingDown) {
+                    return;
+                }
+
                 // Detect when record mode changes and trigger damage
                 if (g_recordMode != g_lastRecordMode) {
                     g_lastRecordMode = g_recordMode;
                     damageAllMonitors();
+                }
+
+                // Only render when there's something to show
+                bool shouldRender = g_recordMode ||
+                                   (!g_gestureState.timestampedPath.empty() &&
+                                    (g_gestureState.dragDetected ||
+                                     !g_gestureState.rightButtonPressed));
+
+                if (!shouldRender) {
+                    return;
                 }
 
                 // Safety checks
@@ -950,14 +966,18 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
 APICALL EXPORT void PLUGIN_EXIT() {
     try {
-        // Unhook all event handlers FIRST to prevent callbacks from running
+        // Set shutdown flag FIRST to prevent render hook from adding new overlays
+        // and to make existing overlays exit early
+        g_pluginShuttingDown = true;
+
+        // Exit record mode to prevent overlay rendering
+        g_recordMode = false;
+
+        // Unhook all event handlers to prevent callbacks from running
         // during cleanup. This automatically unregisters the callbacks.
         g_mouseButtonHook.reset();
         g_mouseMoveHook.reset();
         g_renderHook.reset();
-
-        // Exit record mode after unhooking to prevent overlay rendering
-        g_recordMode = false;
 
         // Clear gesture state after hooks are removed
         g_gestureState.timestampedPath.clear();

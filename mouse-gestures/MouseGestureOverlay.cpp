@@ -26,13 +26,23 @@ struct MouseGestureState {
 
 extern MouseGestureState g_gestureState;
 extern bool g_recordMode;
+extern bool g_pluginShuttingDown;
 
 CMouseGestureOverlay::CMouseGestureOverlay(PHLMONITOR monitor) : pMonitor(monitor) {
     // Store the monitor this overlay is for
 }
 
+CMouseGestureOverlay::~CMouseGestureOverlay() {
+    // Default destructor
+}
+
 void CMouseGestureOverlay::draw(const CRegion& damage) {
     try {
+        // Don't draw if plugin is shutting down
+        if (g_pluginShuttingDown) {
+            return;
+        }
+
         // Safety check: ensure OpenGL context is valid
         if (!g_pHyprOpenGL) {
             return;

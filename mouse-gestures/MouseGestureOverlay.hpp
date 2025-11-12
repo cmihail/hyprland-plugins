@@ -5,7 +5,7 @@
 class CMouseGestureOverlay : public IPassElement {
   public:
     CMouseGestureOverlay(PHLMONITOR monitor);
-    virtual ~CMouseGestureOverlay() = default;
+    virtual ~CMouseGestureOverlay();
 
     virtual void                draw(const CRegion& damage);
     virtual bool                needsLiveBlur();
