@@ -18,4 +18,20 @@ class CMouseGestureOverlay : public IPassElement {
 
   private:
     WP<CMonitor> pMonitor;
+
+    // Helper methods for rendering
+    void renderBackground(PHLMONITOR monitor, float monScale);
+    void renderRecordModeUI(PHLMONITOR monitor);
+    void renderRecordSquare(const Vector2D& pos, const Vector2D& size,
+                           const CRegion& damage);
+    void renderGestureSquare(float x, float y, float size, size_t gestureIndex,
+                            const CRegion& damage);
+    void renderGestureTrail(PHLMONITOR monitor, const Vector2D& monitorSize);
+
+    struct TrailConfig {
+        float circleRadius;
+        int fadeDurationMs;
+        float r, g, b;
+    };
+    TrailConfig getTrailConfig();
 };

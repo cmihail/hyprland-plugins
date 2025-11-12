@@ -4,6 +4,7 @@ SOURCE_FILES = main.cpp MouseGestureOverlay.cpp
 
 COMPILE_FLAGS = -shared -fPIC --no-gnu-unique -g -std=c++23 -Wall -Wextra -Wno-unused-parameter -Wno-unused-value -Wno-missing-field-initializers -Wno-narrowing -Wno-pointer-arith
 COMPILE_FLAGS += -I "/usr/include/pixman-1" -I "/usr/include/libdrm" -I "/usr/include" -I "$(HYPRLAND_HEADERS)" -I "$(HYPRLAND_HEADERS)/protocols"
+COMPILE_FLAGS += $(shell pkg-config --cflags --libs gdk-pixbuf-2.0)
 
 HYPRLAND_HEADERS ?= /usr/include/hyprland
 

@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <vector>
+#include <unordered_map>
 #include <fstream>
 #include <sstream>
 #include <chrono>
@@ -13,6 +14,7 @@
 #include <wayland-server.h>
 #include <wayland-server-protocol.h>
 #include <linux/input-event-codes.h>
+#include <gdk-pixbuf/gdk-pixbuf.h>
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #define private public
 #include <hyprland/src/Compositor.hpp>
@@ -30,6 +32,9 @@
 #include "MouseGestureOverlay.hpp"
 
 inline HANDLE PHANDLE = nullptr;
+
+// Global background texture shared across all monitors
+inline SP<CTexture> g_pBackgroundTexture;
 
 // Gesture action configuration
 struct GestureAction {
@@ -72,9 +77,14 @@ bool g_recordMode = false;
 bool g_lastRecordMode = false;
 bool g_pluginShuttingDown = false;
 
+// Scroll offset for gesture list in record mode
+float g_scrollOffset = 0.0f;
+float g_maxScrollOffset = 0.0f;
+
 // Hook handles
 SP<HOOK_CALLBACK_FN> g_mouseButtonHook;
 SP<HOOK_CALLBACK_FN> g_mouseMoveHook;
+SP<HOOK_CALLBACK_FN> g_mouseAxisHook;
 SP<HOOK_CALLBACK_FN> g_renderHook;
 
 // Helper function to damage all monitors and schedule frames
@@ -860,6 +870,131 @@ static void setupMouseMoveHook() {
     g_mouseMoveHook = g_pHookSystem->hookDynamic("mouseMove", onMouseMove);
 }
 
+static void setupMouseAxisHook() {
+    auto onMouseAxis = [](void* self, SCallbackInfo& info, std::any param) {
+        try {
+            // Only handle scrolling when in record mode
+            if (!g_recordMode) {
+                return;
+            }
+
+            // Extract event from map (same as workspace-overview)
+            auto eventMap = std::any_cast<
+                std::unordered_map<std::string, std::any>
+            >(param);
+            auto e = std::any_cast<IPointer::SAxisEvent>(eventMap["event"]);
+
+            // Handle vertical scrolling
+            if (e.axis == WL_POINTER_AXIS_VERTICAL_SCROLL) {
+                // Scroll speed multiplier
+                constexpr float SCROLL_SPEED = 30.0f;
+
+                g_scrollOffset += e.delta * SCROLL_SPEED;
+
+                // Clamp scroll offset
+                if (g_scrollOffset < 0.0f) {
+                    g_scrollOffset = 0.0f;
+                }
+                if (g_scrollOffset > g_maxScrollOffset) {
+                    g_scrollOffset = g_maxScrollOffset;
+                }
+
+                // Damage monitors to redraw with new scroll position
+                damageAllMonitors();
+
+                // Consume the event to prevent it from scrolling other things
+                info.cancelled = true;
+            }
+        } catch (const std::exception&) {
+            // Catch all exceptions to prevent crashing Hyprland
+        }
+    };
+
+    g_mouseAxisHook = g_pHookSystem->hookDynamic("mouseAxis", onMouseAxis);
+}
+
+// Helper function to convert pixel data to RGBA format
+static std::vector<uint8_t> convertPixelDataToRGBA(const guchar* pixels, int width, int height,
+                                                    int channels, int stride) {
+    std::vector<uint8_t> pixelData(width * height * 4);
+
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            const guchar* src = pixels + y * stride + x * channels;
+            uint8_t* dst = pixelData.data() + (y * width + x) * 4;
+
+            if (channels == 4) {
+                // RGBA format
+                dst[0] = src[0];  // R
+                dst[1] = src[1];  // G
+                dst[2] = src[2];  // B
+                dst[3] = src[3];  // A
+            } else if (channels == 3) {
+                // RGB format - add alpha channel
+                dst[0] = src[0];  // R
+                dst[1] = src[1];  // G
+                dst[2] = src[2];  // B
+                dst[3] = 255;     // A (fully opaque)
+            }
+        }
+    }
+
+    return pixelData;
+}
+
+// Helper function to create texture from pixel data
+static bool createTextureFromPixelData(const std::vector<uint8_t>& pixelData,
+                                       int width, int height) {
+    const uint32_t drmFormat = DRM_FORMAT_ABGR8888;
+    const uint32_t textureStride = width * 4;
+
+    try {
+        auto* pixels = const_cast<uint8_t*>(pixelData.data());
+        g_pBackgroundTexture = makeShared<CTexture>(drmFormat, pixels, textureStride,
+                                                     Vector2D{(double)width, (double)height},
+                                                     true);
+        return true;
+    } catch (const std::exception&) {
+        g_pBackgroundTexture.reset();
+        return false;
+    }
+}
+
+// Load background image from file path
+static void loadBackgroundImage(const std::string& path) {
+    if (path.empty()) {
+        g_pBackgroundTexture.reset();
+        return;
+    }
+
+    GError* error = nullptr;
+    GdkPixbuf* pixbuf = gdk_pixbuf_new_from_file(path.c_str(), &error);
+
+    if (!pixbuf) {
+        if (error)
+            g_error_free(error);
+        g_pBackgroundTexture.reset();
+        return;
+    }
+
+    const int width = gdk_pixbuf_get_width(pixbuf);
+    const int height = gdk_pixbuf_get_height(pixbuf);
+    const int channels = gdk_pixbuf_get_n_channels(pixbuf);
+
+    if (channels != 3 && channels != 4) {
+        g_object_unref(pixbuf);
+        g_pBackgroundTexture.reset();
+        return;
+    }
+
+    const int stride = gdk_pixbuf_get_rowstride(pixbuf);
+    const guchar* pixels = gdk_pixbuf_get_pixels(pixbuf);
+
+    auto pixelData = convertPixelDataToRGBA(pixels, width, height, channels, stride);
+    g_object_unref(pixbuf);
+
+    createTextureFromPixelData(pixelData, width, height);
+}
 
 
 APICALL EXPORT std::string PLUGIN_API_VERSION() {
@@ -927,6 +1062,11 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         "plugin:mouse_gestures:trail_color_b",
         Hyprlang::FLOAT{1.0}
     );
+    HyprlandAPI::addConfigValue(
+        PHANDLE,
+        "plugin:mouse_gestures:background_path",
+        Hyprlang::STRING{""}
+    );
 
     // Register config keyword for gesture_action
     HyprlandAPI::addConfigKeyword(
@@ -947,7 +1087,20 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     static auto configReloadedHook = HyprlandAPI::registerCallbackDynamic(
         PHANDLE,
         "configReloaded",
-        [&](void* self, SCallbackInfo& info, std::any data) {}
+        [&](void* self, SCallbackInfo& info, std::any data) {
+            // Load background image
+            auto* const PBACKGROUNDPATH =
+                HyprlandAPI::getConfigValue(PHANDLE, "plugin:mouse_gestures:background_path");
+            if (PBACKGROUNDPATH) {
+                try {
+                    auto pathValue = PBACKGROUNDPATH->getValue();
+                    std::string pathStr = std::any_cast<Hyprlang::STRING>(pathValue);
+                    loadBackgroundImage(pathStr);
+                } catch (const std::exception&) {
+                    // Failed to read background_path
+                }
+            }
+        }
     );
 
     // Reload config to apply registered values
@@ -958,6 +1111,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     // Setup mouse event hooks
     setupMouseButtonHook();
     setupMouseMoveHook();
+    setupMouseAxisHook();
     setupRenderHook();
 
 
@@ -977,6 +1131,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
         // during cleanup. This automatically unregisters the callbacks.
         g_mouseButtonHook.reset();
         g_mouseMoveHook.reset();
+        g_mouseAxisHook.reset();
         g_renderHook.reset();
 
         // Clear gesture state after hooks are removed
@@ -985,6 +1140,9 @@ APICALL EXPORT void PLUGIN_EXIT() {
 
         // Clear gesture actions
         g_gestureActions.clear();
+
+        // Clear background texture
+        g_pBackgroundTexture.reset();
     } catch (...) {
         // Silently catch any errors during cleanup
     }

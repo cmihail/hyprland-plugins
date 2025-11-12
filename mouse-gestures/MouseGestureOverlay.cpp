@@ -1,4 +1,5 @@
 #include "MouseGestureOverlay.hpp"
+#include "stroke.hpp"
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/Compositor.hpp>
@@ -28,6 +29,20 @@ extern MouseGestureState g_gestureState;
 extern bool g_recordMode;
 extern bool g_pluginShuttingDown;
 
+// Forward declaration from main.cpp
+struct GestureAction {
+    Stroke pattern;
+    std::string command;
+    std::string name;
+};
+
+extern std::vector<GestureAction> g_gestureActions;
+extern float g_scrollOffset;
+extern float g_maxScrollOffset;
+
+// Background texture
+extern SP<CTexture> g_pBackgroundTexture;
+
 CMouseGestureOverlay::CMouseGestureOverlay(PHLMONITOR monitor) : pMonitor(monitor) {
     // Store the monitor this overlay is for
 }
@@ -38,171 +53,32 @@ CMouseGestureOverlay::~CMouseGestureOverlay() {
 
 void CMouseGestureOverlay::draw(const CRegion& damage) {
     try {
-        // Don't draw if plugin is shutting down
-        if (g_pluginShuttingDown) {
+        // Safety checks
+        if (g_pluginShuttingDown || !g_pHyprOpenGL)
             return;
-        }
 
-        // Safety check: ensure OpenGL context is valid
-        if (!g_pHyprOpenGL) {
-            return;
-        }
-
-        // Get the monitor this overlay is bound to
         auto monitor = pMonitor.lock();
-        if (!monitor) {
+        if (!monitor)
             return;
-        }
 
-        // Additional safety check: verify this is the currently rendering monitor
         auto currentMonitor = g_pHyprOpenGL->m_renderData.pMonitor.lock();
-        if (!currentMonitor || currentMonitor != monitor) {
+        if (!currentMonitor || currentMonitor != monitor)
             return;
-        }
 
-        // Render dimming overlay only in record mode
+        const Vector2D monitorSize = monitor->m_size;
+        const float monScale = monitor->m_scale;
+
+        // Render record mode UI
         if (g_recordMode) {
-            // Create a semi-transparent black overlay covering the entire monitor
-            CBox overlayBox = CBox{{0, 0}, monitor->m_size};
-
-            // Get configured dim opacity
-            static auto* const PDIMOPACITY = (Hyprlang::FLOAT* const*)
-                HyprlandAPI::getConfigValue(
-                    PHANDLE,
-                    "plugin:mouse_gestures:dim_opacity"
-                )->getDataStaticPtr();
-
-            float dimOpacity = 0.2f;  // Default fallback
-            if (PDIMOPACITY && *PDIMOPACITY) {
-                dimOpacity = static_cast<float>(**PDIMOPACITY);
-                // Clamp opacity between 0.0 and 1.0
-                if (dimOpacity < 0.0f) dimOpacity = 0.0f;
-                if (dimOpacity > 1.0f) dimOpacity = 1.0f;
-            }
-
-            // Render the dimming overlay
-            // Using a dark color to dim the screen while keeping windows visible
-            CHyprColor dimColor{0.0, 0.0, 0.0, dimOpacity};
-
-            // Create a damage region covering the entire screen
-            CRegion fullDamage{0, 0, INT16_MAX, INT16_MAX};
-
-            g_pHyprOpenGL->renderRect(overlayBox, dimColor, {.damage = &fullDamage});
+            renderBackground(monitor, monScale);
+            renderRecordModeUI(monitor);
         }
 
-        // Render trail circles when drag is active OR during fade-out after drag
-        // We check dragDetected to avoid showing trail before threshold is crossed
-        // But once drag was detected, trail continues rendering until all points fade
-        if (!g_gestureState.timestampedPath.empty() &&
-            (g_gestureState.dragDetected || !g_gestureState.rightButtonPressed)) {
-            // Get trail configuration
-            static auto* const PCIRCLERADIUS = (Hyprlang::FLOAT* const*)
-                HyprlandAPI::getConfigValue(
-                    PHANDLE,
-                    "plugin:mouse_gestures:trail_circle_radius"
-                )->getDataStaticPtr();
+        // Render gesture trail
+        renderGestureTrail(monitor, monitorSize);
 
-            static auto* const PFADEDURATION = (Hyprlang::INT* const*)
-                HyprlandAPI::getConfigValue(
-                    PHANDLE,
-                    "plugin:mouse_gestures:trail_fade_duration_ms"
-                )->getDataStaticPtr();
-
-            static auto* const PCOLORR = (Hyprlang::FLOAT* const*)
-                HyprlandAPI::getConfigValue(
-                    PHANDLE,
-                    "plugin:mouse_gestures:trail_color_r"
-                )->getDataStaticPtr();
-
-            static auto* const PCOLORG = (Hyprlang::FLOAT* const*)
-                HyprlandAPI::getConfigValue(
-                    PHANDLE,
-                    "plugin:mouse_gestures:trail_color_g"
-                )->getDataStaticPtr();
-
-            static auto* const PCOLORB = (Hyprlang::FLOAT* const*)
-                HyprlandAPI::getConfigValue(
-                    PHANDLE,
-                    "plugin:mouse_gestures:trail_color_b"
-                )->getDataStaticPtr();
-
-            float circleRadius = 8.0f;
-            int fadeDurationMs = 500;
-            float colorR = 0.4f;  // Nice cyan/blue color
-            float colorG = 0.8f;
-            float colorB = 1.0f;
-
-            if (PCIRCLERADIUS && *PCIRCLERADIUS) {
-                circleRadius = static_cast<float>(**PCIRCLERADIUS);
-            }
-            if (PFADEDURATION && *PFADEDURATION) {
-                fadeDurationMs = static_cast<int>(**PFADEDURATION);
-            }
-            if (PCOLORR && *PCOLORR) colorR = static_cast<float>(**PCOLORR);
-            if (PCOLORG && *PCOLORG) colorG = static_cast<float>(**PCOLORG);
-            if (PCOLORB && *PCOLORB) colorB = static_cast<float>(**PCOLORB);
-
-            auto now = std::chrono::steady_clock::now();
-
-            // Clean up old path points that are beyond fade duration
-            auto fadeThreshold = now - std::chrono::milliseconds(fadeDurationMs);
-            auto it = g_gestureState.timestampedPath.begin();
-            while (it != g_gestureState.timestampedPath.end() &&
-                   it->timestamp < fadeThreshold) {
-                it++;
-            }
-            if (it != g_gestureState.timestampedPath.begin()) {
-                g_gestureState.timestampedPath.erase(
-                    g_gestureState.timestampedPath.begin(), it
-                );
-            }
-
-            // Render circles for each point in the path
-            for (const auto& pathPoint : g_gestureState.timestampedPath) {
-                // Calculate age of this point in milliseconds
-                auto ageMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    now - pathPoint.timestamp
-                ).count();
-
-                // Calculate opacity based on age (linear fade)
-                float opacity = 1.0f - (static_cast<float>(ageMs) /
-                                        static_cast<float>(fadeDurationMs));
-                if (opacity < 0.0f) opacity = 0.0f;
-                if (opacity > 1.0f) opacity = 1.0f;
-
-                // Transform global coordinates to monitor-local coordinates
-                Vector2D localPos = pathPoint.position - monitor->m_position;
-
-                // Create circle box
-                CBox circleBox{
-                    {localPos.x - circleRadius,
-                     localPos.y - circleRadius},
-                    {circleRadius * 2, circleRadius * 2}
-                };
-
-                // Render the circle with fading opacity
-                CHyprColor circleColor{colorR, colorG, colorB, opacity};
-                g_pHyprOpenGL->renderRect(
-                    circleBox,
-                    circleColor,
-                    {.round = static_cast<int>(circleRadius)}
-                );
-            }
-
-            // Continue scheduling frames while there are points to fade out
-            if (!g_gestureState.timestampedPath.empty()) {
-                try {
-                    if (g_pCompositor) {
-                        g_pCompositor->scheduleFrameForMonitor(monitor);
-                    }
-                } catch (...) {
-                    // Silently catch scheduling errors
-                }
-            }
-        }
-
-    } catch (const std::exception& e) {
-        // Silently catch and ignore errors to prevent compositor crash
+    } catch (const std::bad_alloc&) {
+        // Handle memory allocation failures
     } catch (...) {
         // Catch any other unexpected errors
     }
@@ -243,4 +119,236 @@ std::optional<CBox> CMouseGestureOverlay::boundingBox() {
         // Return a valid empty box on error
         return CBox{{0, 0}, {0, 0}};
     }
+}
+
+void CMouseGestureOverlay::renderBackground(PHLMONITOR monitor, float monScale) {
+    // Clear to single background color (like workspace-overview)
+    g_pHyprOpenGL->clear(CHyprColor{0, 0, 0, 1.0});
+
+    // Render background image if loaded
+    if (!g_pBackgroundTexture || g_pBackgroundTexture->m_texID == 0)
+        return;
+
+    const Vector2D monitorSize = monitor->m_size;
+    const Vector2D texSize = g_pBackgroundTexture->m_size;
+    CBox bgBox = {{0, 0}, monitorSize};
+
+    const float monitorAspect = monitorSize.x / monitorSize.y;
+    const float textureAspect = texSize.x / texSize.y;
+
+    if (textureAspect > monitorAspect) {
+        const float scale = monitorSize.y / texSize.y;
+        const float scaledWidth = texSize.x * scale;
+        bgBox.x = -(scaledWidth - monitorSize.x) / 2.0f;
+        bgBox.w = scaledWidth;
+    } else {
+        const float scale = monitorSize.x / texSize.x;
+        const float scaledHeight = texSize.y * scale;
+        bgBox.y = -(scaledHeight - monitorSize.y) / 2.0f;
+        bgBox.h = scaledHeight;
+    }
+
+    bgBox.scale(monScale);
+    bgBox.round();
+
+    g_pHyprOpenGL->renderTexture(g_pBackgroundTexture, bgBox, {});
+}
+
+void CMouseGestureOverlay::renderRecordSquare(const Vector2D& pos,
+                                               const Vector2D& size,
+                                               const CRegion& damage) {
+    CHyprColor rectBgColor{0.2, 0.2, 0.2, 1.0};
+    CHyprColor borderColor{0.4, 0.4, 0.4, 1.0};
+    constexpr float BORDER_SIZE = 2.0f;
+
+    // Render background
+    CBox recordRect = CBox{pos, size};
+    g_pHyprOpenGL->renderRect(recordRect, rectBgColor, {.damage = &damage});
+
+    // Render borders
+    CBox topBorder = {pos.x, pos.y, size.x, BORDER_SIZE};
+    g_pHyprOpenGL->renderRect(topBorder, borderColor, {.damage = &damage});
+
+    CBox bottomBorder = {pos.x, pos.y + size.y - BORDER_SIZE,
+                        size.x, BORDER_SIZE};
+    g_pHyprOpenGL->renderRect(bottomBorder, borderColor, {.damage = &damage});
+
+    CBox leftBorder = {pos.x, pos.y, BORDER_SIZE, size.y};
+    g_pHyprOpenGL->renderRect(leftBorder, borderColor, {.damage = &damage});
+
+    CBox rightBorder = {pos.x + size.x - BORDER_SIZE, pos.y,
+                       BORDER_SIZE, size.y};
+    g_pHyprOpenGL->renderRect(rightBorder, borderColor, {.damage = &damage});
+}
+
+void CMouseGestureOverlay::renderGestureSquare(float x, float y, float size,
+                                                size_t gestureIndex,
+                                                const CRegion& damage) {
+    CHyprColor rectBgColor{0.2, 0.2, 0.2, 1.0};
+    CHyprColor borderColor{0.4, 0.4, 0.4, 1.0};
+    CHyprColor gestureColor{0.4, 0.8, 1.0, 1.0};
+    constexpr float BORDER_SIZE = 2.0f;
+    constexpr float POINT_RADIUS = 4.0f;
+    constexpr float INNER_PADDING = 10.0f;
+
+    // Render background
+    CBox gestureBox = CBox{{x, y}, {size, size}};
+    g_pHyprOpenGL->renderRect(gestureBox, rectBgColor, {.damage = &damage});
+
+    // Render borders
+    CBox topBorder = {x, y, size, BORDER_SIZE};
+    g_pHyprOpenGL->renderRect(topBorder, borderColor, {.damage = &damage});
+
+    CBox bottomBorder = {x, y + size - BORDER_SIZE, size, BORDER_SIZE};
+    g_pHyprOpenGL->renderRect(bottomBorder, borderColor, {.damage = &damage});
+
+    CBox leftBorder = {x, y, BORDER_SIZE, size};
+    g_pHyprOpenGL->renderRect(leftBorder, borderColor, {.damage = &damage});
+
+    CBox rightBorder = {x + size - BORDER_SIZE, y, BORDER_SIZE, size};
+    g_pHyprOpenGL->renderRect(rightBorder, borderColor, {.damage = &damage});
+
+    // Render gesture pattern if it exists
+    if (gestureIndex >= g_gestureActions.size())
+        return;
+
+    const auto& gesture = g_gestureActions[gestureIndex];
+    if (!gesture.pattern.isFinished())
+        return;
+
+    const auto& points = gesture.pattern.getPoints();
+    const float drawWidth = size - 2 * INNER_PADDING;
+    const float drawHeight = size - 2 * INNER_PADDING;
+
+    for (const auto& point : points) {
+        float px = x + INNER_PADDING + point.x * drawWidth;
+        float py = y + INNER_PADDING + point.y * drawHeight;
+
+        CBox pointBox = CBox{{px - POINT_RADIUS, py - POINT_RADIUS},
+                            {POINT_RADIUS * 2, POINT_RADIUS * 2}};
+
+        g_pHyprOpenGL->renderRect(pointBox, gestureColor,
+                                 {.damage = &damage,
+                                  .round = static_cast<int>(POINT_RADIUS)});
+    }
+}
+
+void CMouseGestureOverlay::renderRecordModeUI(PHLMONITOR monitor) {
+    constexpr float PADDING = 20.0f;
+    constexpr float GAP_WIDTH = 10.0f;
+    constexpr int VISIBLE_GESTURES = 3;
+
+    const Vector2D monitorSize = monitor->m_size;
+    CRegion fullDamage{0, 0, INT16_MAX, INT16_MAX};
+
+    // Calculate layout dimensions
+    const float verticalSpace = monitorSize.y - (2.0f * PADDING);
+    const float totalGaps = (VISIBLE_GESTURES - 1) * GAP_WIDTH;
+    const float baseHeight = (verticalSpace - totalGaps) / VISIBLE_GESTURES;
+    const float gestureRectHeight = baseHeight * 0.9f;
+    const float gestureRectWidth = gestureRectHeight;
+    const float recordSquareSize = verticalSpace;
+    const float totalWidth = gestureRectWidth + recordSquareSize;
+    const float horizontalMargin = (monitorSize.x - totalWidth) / 3.0f;
+
+    // Render right record square
+    const Vector2D recordPos = {
+        horizontalMargin + gestureRectWidth + horizontalMargin,
+        PADDING
+    };
+    const Vector2D recordSize = {recordSquareSize, recordSquareSize};
+    renderRecordSquare(recordPos, recordSize, fullDamage);
+
+    // Calculate scroll offset
+    const size_t totalGestures = g_gestureActions.size();
+    if (totalGestures > VISIBLE_GESTURES) {
+        const float totalHeight = totalGestures * (gestureRectHeight + GAP_WIDTH);
+        g_maxScrollOffset = totalHeight - verticalSpace;
+    } else {
+        g_maxScrollOffset = 0.0f;
+    }
+
+    g_scrollOffset = std::clamp(g_scrollOffset, 0.0f, g_maxScrollOffset);
+
+    // Render gesture squares
+    for (size_t i = 0; i < totalGestures; ++i) {
+        const float yPos = PADDING + i * (gestureRectHeight + GAP_WIDTH) -
+                          g_scrollOffset;
+
+        if (yPos + gestureRectHeight < 0 || yPos > monitorSize.y)
+            continue;
+
+        renderGestureSquare(horizontalMargin, yPos, gestureRectWidth, i,
+                           fullDamage);
+    }
+}
+
+void CMouseGestureOverlay::renderGestureTrail(PHLMONITOR monitor,
+                                               const Vector2D& monitorSize) {
+    // Only render trail if there are points and drag was detected
+    if (g_gestureState.timestampedPath.empty() ||
+        (!g_gestureState.dragDetected && g_gestureState.rightButtonPressed))
+        return;
+
+    auto config = getTrailConfig();
+    auto now = std::chrono::steady_clock::now();
+
+    for (const auto& point : g_gestureState.timestampedPath) {
+        auto age = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - point.timestamp
+        ).count();
+
+        if (age > config.fadeDurationMs)
+            continue;
+
+        float alpha = 1.0f - (static_cast<float>(age) / config.fadeDurationMs);
+        CHyprColor color{config.r, config.g, config.b, alpha};
+
+        Vector2D localPos = point.position - monitor->m_position;
+        CBox circleBox = CBox{
+            {localPos.x - config.circleRadius, localPos.y - config.circleRadius},
+            {config.circleRadius * 2, config.circleRadius * 2}
+        };
+
+        g_pHyprOpenGL->renderRect(circleBox, color, {
+            .round = static_cast<int>(config.circleRadius)
+        });
+    }
+}
+
+CMouseGestureOverlay::TrailConfig CMouseGestureOverlay::getTrailConfig() {
+    static auto* const PCIRCLERADIUS = (Hyprlang::FLOAT* const*)
+        HyprlandAPI::getConfigValue(
+            PHANDLE, "plugin:mouse_gestures:trail_circle_radius"
+        )->getDataStaticPtr();
+
+    static auto* const PFADEDURATION = (Hyprlang::INT* const*)
+        HyprlandAPI::getConfigValue(
+            PHANDLE, "plugin:mouse_gestures:trail_fade_duration_ms"
+        )->getDataStaticPtr();
+
+    static auto* const PTRAILR = (Hyprlang::FLOAT* const*)
+        HyprlandAPI::getConfigValue(
+            PHANDLE, "plugin:mouse_gestures:trail_color_r"
+        )->getDataStaticPtr();
+
+    static auto* const PTRAILG = (Hyprlang::FLOAT* const*)
+        HyprlandAPI::getConfigValue(
+            PHANDLE, "plugin:mouse_gestures:trail_color_g"
+        )->getDataStaticPtr();
+
+    static auto* const PTRAILB = (Hyprlang::FLOAT* const*)
+        HyprlandAPI::getConfigValue(
+            PHANDLE, "plugin:mouse_gestures:trail_color_b"
+        )->getDataStaticPtr();
+
+    return {
+        .circleRadius = (PCIRCLERADIUS && *PCIRCLERADIUS) ?
+                       static_cast<float>(**PCIRCLERADIUS) : 8.0f,
+        .fadeDurationMs = (PFADEDURATION && *PFADEDURATION) ?
+                         **PFADEDURATION : 300,
+        .r = (PTRAILR && *PTRAILR) ? static_cast<float>(**PTRAILR) : 0.4f,
+        .g = (PTRAILG && *PTRAILG) ? static_cast<float>(**PTRAILG) : 0.8f,
+        .b = (PTRAILB && *PTRAILB) ? static_cast<float>(**PTRAILB) : 1.0f
+    };
 }
