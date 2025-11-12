@@ -432,34 +432,23 @@ void COverview::setupMouseButtonHook() {
                             findWorkspaceAtGlobalPosition(mousePos);
 
                         if (targetOverview && targetIndex >= 0) {
-                            bool sameWs = (
-                                targetOverview == g_dragState.sourceOverview &&
-                                targetIndex == g_dragState.sourceWorkspaceIndex
+                            // Always move/retile window to target workspace
+                            auto draggedWin = g_dragState.draggedWindow;
+                            targetOverview->moveWindowToWorkspace(
+                                draggedWin, targetIndex, mousePos
                             );
 
-                            if (!sameWs) {
-                                // Move window to target workspace
-                                auto draggedWin = g_dragState.draggedWindow;
-                                targetOverview->moveWindowToWorkspace(
-                                    draggedWin, targetIndex, mousePos
-                                );
+                            // For cross-monitor moves, redraw source
+                            bool isCrossMonitor = (
+                                g_dragState.sourceOverview &&
+                                g_dragState.sourceOverview != targetOverview
+                            );
 
-                                // For cross-monitor moves, redraw source
-                                bool isCrossMonitor = (
-                                    g_dragState.sourceOverview &&
-                                    g_dragState.sourceOverview != targetOverview
+                            if (isCrossMonitor) {
+                                refreshSourceWorkspacesAfterCrossMonitorMove(
+                                    g_dragState.sourceOverview,
+                                    g_dragState.sourceWorkspaceIndex
                                 );
-
-                                if (isCrossMonitor) {
-                                    refreshSourceWorkspacesAfterCrossMonitorMove(
-                                        g_dragState.sourceOverview,
-                                        g_dragState.sourceWorkspaceIndex
-                                    );
-                                }
-                            } else {
-                                // Dropping on same workspace - trigger single refresh to clear drag preview
-                                std::vector<int> workspacesToRefresh = {targetIndex};
-                                setupSingleWorkspaceRefresh(targetOverview, workspacesToRefresh, 50);
                             }
                         }
                     }
@@ -2430,10 +2419,6 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
         damage();
     }
 
-    // Don't move if it's already in the target workspace
-    if (window->m_workspace == targetImage.pWorkspace)
-        return;
-
     // Store source workspace for redrawing
     const auto sourceWorkspace = window->m_workspace;
     int sourceIndex = -1;
@@ -2455,6 +2440,12 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
 
     if (!window || !targetImage.pWorkspace)
         return;
+
+    // If already in target workspace and no valid tiling target, don't move
+    if (window->m_workspace == targetImage.pWorkspace &&
+        (dropDirection == DIRECTION_DEFAULT || !targetWindow)) {
+        return;
+    }
 
     PHLWINDOW originalFocus = g_pCompositor->m_lastWindow.lock();
     bool didFocus = false;

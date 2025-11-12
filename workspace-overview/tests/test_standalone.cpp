@@ -6713,3 +6713,175 @@ TEST(SmartTilingTest, LargeWindowSmartTiling) {
     int directionRight = calculateDropDirection(largeWindow, 2880.0f, 1080.0f);
     EXPECT_EQ(directionRight, DIRECTION_RIGHT);
 }
+
+// Test helper: Determine if same-workspace drop should proceed with tiling
+static bool shouldProceedWithSameWorkspaceTiling(
+    bool sameWorkspace,
+    bool hasTargetWindow,
+    bool targetIsFloating,
+    bool targetIsFullscreen,
+    int dropDirection
+) {
+    if (!sameWorkspace) {
+        // Different workspace - always proceed
+        return true;
+    }
+
+    // Same workspace - only proceed if we have a valid tiling target
+    if (dropDirection == DIRECTION_DEFAULT || !hasTargetWindow) {
+        return false;
+    }
+
+    // Don't tile against floating or fullscreen windows
+    if (targetIsFloating || targetIsFullscreen) {
+        return false;
+    }
+
+    return true;
+}
+
+// Test: Same-workspace drop with valid target window should proceed
+TEST(SameWorkspaceTilingTest, ValidTargetWindowShouldProceed) {
+    bool result = shouldProceedWithSameWorkspaceTiling(
+        true,  // sameWorkspace
+        true,  // hasTargetWindow
+        false, // targetIsFloating
+        false, // targetIsFullscreen
+        DIRECTION_LEFT
+    );
+    EXPECT_TRUE(result);
+
+    // Test with different directions
+    result = shouldProceedWithSameWorkspaceTiling(
+        true, true, false, false, DIRECTION_RIGHT
+    );
+    EXPECT_TRUE(result);
+
+    result = shouldProceedWithSameWorkspaceTiling(
+        true, true, false, false, DIRECTION_UP
+    );
+    EXPECT_TRUE(result);
+
+    result = shouldProceedWithSameWorkspaceTiling(
+        true, true, false, false, DIRECTION_DOWN
+    );
+    EXPECT_TRUE(result);
+}
+
+// Test: Same-workspace drop without target window should be skipped
+TEST(SameWorkspaceTilingTest, NoTargetWindowShouldSkip) {
+    bool result = shouldProceedWithSameWorkspaceTiling(
+        true,  // sameWorkspace
+        false, // hasTargetWindow
+        false, // targetIsFloating
+        false, // targetIsFullscreen
+        DIRECTION_DEFAULT
+    );
+    EXPECT_FALSE(result);
+}
+
+// Test: Same-workspace drop with default direction should be skipped
+TEST(SameWorkspaceTilingTest, DefaultDirectionShouldSkip) {
+    bool result = shouldProceedWithSameWorkspaceTiling(
+        true,  // sameWorkspace
+        true,  // hasTargetWindow
+        false, // targetIsFloating
+        false, // targetIsFullscreen
+        DIRECTION_DEFAULT
+    );
+    EXPECT_FALSE(result);
+}
+
+// Test: Same-workspace drop with floating target should be skipped
+TEST(SameWorkspaceTilingTest, FloatingTargetShouldSkip) {
+    bool result = shouldProceedWithSameWorkspaceTiling(
+        true,  // sameWorkspace
+        true,  // hasTargetWindow
+        true,  // targetIsFloating
+        false, // targetIsFullscreen
+        DIRECTION_LEFT
+    );
+    EXPECT_FALSE(result);
+}
+
+// Test: Same-workspace drop with fullscreen target should be skipped
+TEST(SameWorkspaceTilingTest, FullscreenTargetShouldSkip) {
+    bool result = shouldProceedWithSameWorkspaceTiling(
+        true,  // sameWorkspace
+        true,  // hasTargetWindow
+        false, // targetIsFloating
+        true,  // targetIsFullscreen
+        DIRECTION_RIGHT
+    );
+    EXPECT_FALSE(result);
+}
+
+// Test: Cross-workspace drop should always proceed regardless of target
+TEST(SameWorkspaceTilingTest, CrossWorkspaceAlwaysProceeds) {
+    // Even without target window
+    bool result = shouldProceedWithSameWorkspaceTiling(
+        false, // sameWorkspace
+        false, // hasTargetWindow
+        false, // targetIsFloating
+        false, // targetIsFullscreen
+        DIRECTION_DEFAULT
+    );
+    EXPECT_TRUE(result);
+
+    // Even with floating target
+    result = shouldProceedWithSameWorkspaceTiling(
+        false, true, true, false, DIRECTION_LEFT
+    );
+    EXPECT_TRUE(result);
+
+    // Even with fullscreen target
+    result = shouldProceedWithSameWorkspaceTiling(
+        false, true, false, true, DIRECTION_RIGHT
+    );
+    EXPECT_TRUE(result);
+}
+
+// Test: Same-workspace tiling with multiple windows
+TEST(SameWorkspaceTilingTest, MultipleWindowScenarios) {
+    // Landscape window on left side of workspace
+    MockWindow window1 = {0.0f, 0.0f, 1200.0f, 800.0f};  // Landscape
+    int direction = calculateDropDirection(window1, 900.0f, 400.0f);
+    EXPECT_EQ(direction, DIRECTION_RIGHT);  // Cursor right of center
+
+    bool shouldTile = shouldProceedWithSameWorkspaceTiling(
+        true, true, false, false, direction
+    );
+    EXPECT_TRUE(shouldTile);
+
+    // Landscape window on right side, cursor on left
+    MockWindow window2 = {960.0f, 0.0f, 1200.0f, 800.0f};  // Landscape
+    direction = calculateDropDirection(window2, 1200.0f, 400.0f);
+    EXPECT_EQ(direction, DIRECTION_LEFT);  // Cursor left of center
+
+    shouldTile = shouldProceedWithSameWorkspaceTiling(
+        true, true, false, false, direction
+    );
+    EXPECT_TRUE(shouldTile);
+}
+
+// Test: Same-workspace drop between left and right panels
+TEST(SameWorkspaceTilingTest, BetweenLeftAndRightPanels) {
+    // Dragging from left panel preview to right panel active view
+    // Both show the same workspace but at different positions
+
+    // Left panel: small preview
+    MockWindow leftPreview = {20.0f, 20.0f, 400.0f, 300.0f};
+
+    // Right panel: large view
+    MockWindow rightView = {440.0f, 20.0f, 1200.0f, 900.0f};
+
+    // Calculate direction when dropping on right panel
+    int direction = calculateDropDirection(rightView, 900.0f, 500.0f);
+    EXPECT_NE(direction, DIRECTION_DEFAULT);
+
+    // Should proceed with tiling
+    bool shouldTile = shouldProceedWithSameWorkspaceTiling(
+        true, true, false, false, direction
+    );
+    EXPECT_TRUE(shouldTile);
+}
