@@ -239,9 +239,15 @@ static bool addGestureToConfig(const std::string& strokeData) {
         inFile.close();
 
         if (foundMouseGestures && mouseGesturesSectionEnd > 0) {
-            // Generate ASCII art for the gesture
-            Stroke previewStroke = Stroke::deserialize(strokeData);
-            auto asciiArt = AsciiGestureRenderer::render(previewStroke);
+            // Check if ASCII art comments are enabled
+            static auto* const PENABLEASCIIART = (Hyprlang::STRING const*)
+                HyprlandAPI::getConfigValue(
+                    PHANDLE,
+                    "plugin:mouse_gestures:enable_ascii_art_comments"
+                )->getDataStaticPtr();
+
+            bool enableAsciiArt = PENABLEASCIIART && *PENABLEASCIIART &&
+                                  std::string(*PENABLEASCIIART) == "true";
 
             // Get default command for config from config
             static auto* const PDEFAULTCMDFORCONFIG = (Hyprlang::STRING const*)
@@ -262,11 +268,17 @@ static bool addGestureToConfig(const std::string& strokeData) {
 
             std::string gestureAction = "    gesture_action = " + defaultCmd + "|" + strokeData;
 
-            // Insert ASCII art first, then gesture_action
+            // Insert ASCII art first (if enabled), then gesture_action
             int insertPos = mouseGesturesSectionEnd;
-            for (const auto& artLine : asciiArt) {
-                lines.insert(lines.begin() + insertPos, "    " + artLine);
-                insertPos++;
+            if (enableAsciiArt) {
+                // Generate ASCII art for the gesture
+                Stroke previewStroke = Stroke::deserialize(strokeData);
+                auto asciiArt = AsciiGestureRenderer::render(previewStroke);
+
+                for (const auto& artLine : asciiArt) {
+                    lines.insert(lines.begin() + insertPos, "    " + artLine);
+                    insertPos++;
+                }
             }
             lines.insert(lines.begin() + insertPos, gestureAction);
 
@@ -318,9 +330,15 @@ static bool addGestureToConfig(const std::string& strokeData) {
         inFile.close();
 
         if (pluginSectionEnd > 0) {
-            // Generate ASCII art for the gesture
-            Stroke previewStroke = Stroke::deserialize(strokeData);
-            auto asciiArt = AsciiGestureRenderer::render(previewStroke);
+            // Check if ASCII art comments are enabled
+            static auto* const PENABLEASCIIART = (Hyprlang::STRING const*)
+                HyprlandAPI::getConfigValue(
+                    PHANDLE,
+                    "plugin:mouse_gestures:enable_ascii_art_comments"
+                )->getDataStaticPtr();
+
+            bool enableAsciiArt = PENABLEASCIIART && *PENABLEASCIIART &&
+                                  std::string(*PENABLEASCIIART) == "true";
 
             // Get default command for config from config
             static auto* const PDEFAULTCMDFORCONFIG = (Hyprlang::STRING const*)
@@ -345,9 +363,15 @@ static bool addGestureToConfig(const std::string& strokeData) {
                 "  mouse_gestures {"
             };
 
-            // Add ASCII art with proper indentation
-            for (const auto& artLine : asciiArt) {
-                newSection.push_back("    " + artLine);
+            // Add ASCII art with proper indentation (if enabled)
+            if (enableAsciiArt) {
+                // Generate ASCII art for the gesture
+                Stroke previewStroke = Stroke::deserialize(strokeData);
+                auto asciiArt = AsciiGestureRenderer::render(previewStroke);
+
+                for (const auto& artLine : asciiArt) {
+                    newSection.push_back("    " + artLine);
+                }
             }
 
             // Add gesture action
@@ -375,9 +399,15 @@ static bool addGestureToConfig(const std::string& strokeData) {
     std::ofstream outFile(hyprlandConf, std::ios::app);
     if (!outFile.is_open()) return false;
 
-    // Generate ASCII art for the gesture
-    Stroke previewStroke = Stroke::deserialize(strokeData);
-    auto asciiArt = AsciiGestureRenderer::render(previewStroke);
+    // Check if ASCII art comments are enabled
+    static auto* const PENABLEASCIIART = (Hyprlang::STRING const*)
+        HyprlandAPI::getConfigValue(
+            PHANDLE,
+            "plugin:mouse_gestures:enable_ascii_art_comments"
+        )->getDataStaticPtr();
+
+    bool enableAsciiArt = PENABLEASCIIART && *PENABLEASCIIART &&
+                          std::string(*PENABLEASCIIART) == "true";
 
     // Get default command for config from config
     static auto* const PDEFAULTCMDFORCONFIG = (Hyprlang::STRING const*)
@@ -399,9 +429,15 @@ static bool addGestureToConfig(const std::string& strokeData) {
     outFile << "\nplugin {\n";
     outFile << "  mouse_gestures {\n";
 
-    // Write ASCII art
-    for (const auto& artLine : asciiArt) {
-        outFile << "    " << artLine << "\n";
+    // Write ASCII art (if enabled)
+    if (enableAsciiArt) {
+        // Generate ASCII art for the gesture
+        Stroke previewStroke = Stroke::deserialize(strokeData);
+        auto asciiArt = AsciiGestureRenderer::render(previewStroke);
+
+        for (const auto& artLine : asciiArt) {
+            outFile << "    " << artLine << "\n";
+        }
     }
 
     outFile << "    gesture_action = " << defaultCmd << "|" << strokeData << "\n";
@@ -797,21 +833,21 @@ static void setupMouseButtonHook() {
         try {
             auto e = std::any_cast<IPointer::SButtonEvent>(param);
 
-            // Get configured action button (default: BTN_RIGHT = 273)
-            static auto* const PACTIONBUTTON = (Hyprlang::INT* const*)
+            // Get configured drag button (default: BTN_RIGHT = 273)
+            static auto* const PDRAGBUTTON = (Hyprlang::INT* const*)
                 HyprlandAPI::getConfigValue(
                     PHANDLE,
-                    "plugin:mouse_gestures:action_button"
+                    "plugin:mouse_gestures:drag_button"
                 )->getDataStaticPtr();
 
-            if (!PACTIONBUTTON || !*PACTIONBUTTON) {
+            if (!PDRAGBUTTON || !*PDRAGBUTTON) {
                 return;
             }
 
-            const uint32_t actionButton = static_cast<uint32_t>(**PACTIONBUTTON);
+            const uint32_t dragButton = static_cast<uint32_t>(**PDRAGBUTTON);
 
-            // If in record mode and a non-action button is pressed, cancel recording
-            if (g_recordMode && e.button != actionButton &&
+            // If in record mode and a non-drag button is pressed, cancel recording
+            if (g_recordMode && e.button != dragButton &&
                 e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
                 g_recordMode = false;
                 g_gestureState.reset();
@@ -825,12 +861,12 @@ static void setupMouseButtonHook() {
                 return;
             }
 
-            // Only handle configured action button for gesture detection
-            if (e.button != actionButton)
+            // Only handle configured drag button for gesture detection
+            if (e.button != dragButton)
                 return;
 
             if (e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
-                // Action button pressed - record position and time
+                // Drag button pressed - record position and time
                 if (!g_pInputManager) {
                     return;
                 }
@@ -845,13 +881,13 @@ static void setupMouseButtonHook() {
                 g_gestureState.timestampedPath.clear();
                 g_gestureState.timestampedPath.push_back({mousePos, now});
                 g_gestureState.pressTime = now;
-                g_gestureState.pressButton = actionButton;
+                g_gestureState.pressButton = dragButton;
                 g_gestureState.pressTimeMs = e.timeMs;
 
                 // Consume the press - will replay on release if no drag detected
                 info.cancelled = true;
             } else {
-                // Action button released
+                // Drag button released
                 if (g_gestureState.dragDetected) {
                     handleGestureDetected();
                 } else {
@@ -1066,7 +1102,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     );
     HyprlandAPI::addConfigValue(
         PHANDLE,
-        "plugin:mouse_gestures:action_button",
+        "plugin:mouse_gestures:drag_button",
         Hyprlang::INT{273}
     ); // BTN_RIGHT
     HyprlandAPI::addConfigValue(
@@ -1086,7 +1122,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     );
     HyprlandAPI::addConfigValue(
         PHANDLE,
-        "plugin:mouse_gestures:trail_circle_radius",
+        "plugin:mouse_gestures:drag_trail_circle_radius",
         Hyprlang::FLOAT{8.0}
     );
     HyprlandAPI::addConfigValue(
@@ -1096,18 +1132,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     );
     HyprlandAPI::addConfigValue(
         PHANDLE,
-        "plugin:mouse_gestures:trail_color_r",
-        Hyprlang::FLOAT{0.4}
+        "plugin:mouse_gestures:drag_trail_color",
+        Hyprlang::INT{0x4C7FA6FF}
     );
     HyprlandAPI::addConfigValue(
         PHANDLE,
-        "plugin:mouse_gestures:trail_color_g",
-        Hyprlang::FLOAT{0.8}
-    );
-    HyprlandAPI::addConfigValue(
-        PHANDLE,
-        "plugin:mouse_gestures:trail_color_b",
-        Hyprlang::FLOAT{1.0}
+        "plugin:mouse_gestures:enable_ascii_art_comments",
+        Hyprlang::STRING{""}
     );
     HyprlandAPI::addConfigValue(
         PHANDLE,

@@ -18,7 +18,7 @@ plugin {
     mouse_gestures {
         # Plugin configuration (optional - these are the defaults)
         drag_threshold = 50          # Pixels to move before detecting gesture
-        action_button = 273          # BTN_RIGHT (right mouse button)
+        drag_button = 273            # BTN_RIGHT (right mouse button)
         match_threshold = 0.15       # Lower = stricter matching
 
         # Define gesture actions using pipe-delimited format
@@ -44,7 +44,7 @@ To create gesture patterns:
    ```
    You'll see a notification that recording mode is enabled.
 
-2. **Draw your gesture** using the action button (right mouse button by default).
+2. **Draw your gesture** using the drag button (right mouse button by default).
    - If the gesture matches an existing one, you'll see an orange notification showing which command it duplicates (no new entry will be added)
    - If the gesture is unique, it will be automatically added to your Hyprland configuration file
 

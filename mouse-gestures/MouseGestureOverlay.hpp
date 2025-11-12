@@ -31,7 +31,7 @@ class CMouseGestureOverlay : public IPassElement {
     struct TrailConfig {
         float circleRadius;
         int fadeDurationMs;
-        float r, g, b;
+        CHyprColor color;
     };
     TrailConfig getTrailConfig();
 };

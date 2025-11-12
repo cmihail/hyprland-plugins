@@ -186,10 +186,13 @@ void CMouseGestureOverlay::renderGestureSquare(float x, float y, float size,
                                                 const CRegion& damage) {
     CHyprColor rectBgColor{0.2, 0.2, 0.2, 1.0};
     CHyprColor borderColor{0.4, 0.4, 0.4, 1.0};
-    CHyprColor gestureColor{0.4, 0.8, 1.0, 1.0};
     constexpr float BORDER_SIZE = 2.0f;
-    constexpr float POINT_RADIUS = 4.0f;
     constexpr float INNER_PADDING = 10.0f;
+
+    // Get trail config for color and radius
+    auto config = getTrailConfig();
+    const CHyprColor gestureColor = config.color;
+    const float pointRadius = config.circleRadius;
 
     // Render background
     CBox gestureBox = CBox{{x, y}, {size, size}};
@@ -224,12 +227,12 @@ void CMouseGestureOverlay::renderGestureSquare(float x, float y, float size,
         float px = x + INNER_PADDING + point.x * drawWidth;
         float py = y + INNER_PADDING + point.y * drawHeight;
 
-        CBox pointBox = CBox{{px - POINT_RADIUS, py - POINT_RADIUS},
-                            {POINT_RADIUS * 2, POINT_RADIUS * 2}};
+        CBox pointBox = CBox{{px - pointRadius, py - pointRadius},
+                            {pointRadius * 2, pointRadius * 2}};
 
         g_pHyprOpenGL->renderRect(pointBox, gestureColor,
                                  {.damage = &damage,
-                                  .round = static_cast<int>(POINT_RADIUS)});
+                                  .round = static_cast<int>(pointRadius)});
     }
 }
 
@@ -302,7 +305,8 @@ void CMouseGestureOverlay::renderGestureTrail(PHLMONITOR monitor,
             continue;
 
         float alpha = 1.0f - (static_cast<float>(age) / config.fadeDurationMs);
-        CHyprColor color{config.r, config.g, config.b, alpha};
+        CHyprColor color = config.color;
+        color.a = alpha;
 
         Vector2D localPos = point.position - monitor->m_position;
         CBox circleBox = CBox{
@@ -319,7 +323,7 @@ void CMouseGestureOverlay::renderGestureTrail(PHLMONITOR monitor,
 CMouseGestureOverlay::TrailConfig CMouseGestureOverlay::getTrailConfig() {
     static auto* const PCIRCLERADIUS = (Hyprlang::FLOAT* const*)
         HyprlandAPI::getConfigValue(
-            PHANDLE, "plugin:mouse_gestures:trail_circle_radius"
+            PHANDLE, "plugin:mouse_gestures:drag_trail_circle_radius"
         )->getDataStaticPtr();
 
     static auto* const PFADEDURATION = (Hyprlang::INT* const*)
@@ -327,28 +331,20 @@ CMouseGestureOverlay::TrailConfig CMouseGestureOverlay::getTrailConfig() {
             PHANDLE, "plugin:mouse_gestures:trail_fade_duration_ms"
         )->getDataStaticPtr();
 
-    static auto* const PTRAILR = (Hyprlang::FLOAT* const*)
+    static auto* const PTRAILCOLOR = (Hyprlang::INT* const*)
         HyprlandAPI::getConfigValue(
-            PHANDLE, "plugin:mouse_gestures:trail_color_r"
+            PHANDLE, "plugin:mouse_gestures:drag_trail_color"
         )->getDataStaticPtr();
 
-    static auto* const PTRAILG = (Hyprlang::FLOAT* const*)
-        HyprlandAPI::getConfigValue(
-            PHANDLE, "plugin:mouse_gestures:trail_color_g"
-        )->getDataStaticPtr();
-
-    static auto* const PTRAILB = (Hyprlang::FLOAT* const*)
-        HyprlandAPI::getConfigValue(
-            PHANDLE, "plugin:mouse_gestures:trail_color_b"
-        )->getDataStaticPtr();
+    CHyprColor trailColor = (PTRAILCOLOR && *PTRAILCOLOR) ?
+        CHyprColor{(uint32_t)**PTRAILCOLOR} :
+        CHyprColor{0x4C7FA6FF};
 
     return {
         .circleRadius = (PCIRCLERADIUS && *PCIRCLERADIUS) ?
                        static_cast<float>(**PCIRCLERADIUS) : 8.0f,
         .fadeDurationMs = (PFADEDURATION && *PFADEDURATION) ?
                          **PFADEDURATION : 300,
-        .r = (PTRAILR && *PTRAILR) ? static_cast<float>(**PTRAILR) : 0.4f,
-        .g = (PTRAILG && *PTRAILG) ? static_cast<float>(**PTRAILG) : 0.8f,
-        .b = (PTRAILB && *PTRAILB) ? static_cast<float>(**PTRAILB) : 1.0f
+        .color = trailColor
     };
 }
