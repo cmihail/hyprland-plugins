@@ -483,8 +483,9 @@ static bool batchDeleteGesturesFromConfig(
                 }
             }
 
-            // Write back to file
-            std::ofstream outFile(configPath);
+            // Write to temporary file first (atomic write)
+            std::string tempPath = configPath + ".tmp";
+            std::ofstream outFile(tempPath);
             if (!outFile.is_open()) {
                 return false;
             }
@@ -493,6 +494,13 @@ static bool batchDeleteGesturesFromConfig(
                 outFile << l << "\n";
             }
             outFile.close();
+
+            // Atomically rename temp file to final file
+            if (std::rename(tempPath.c_str(), configPath.c_str()) != 0) {
+                // Failed to rename, try to clean up temp file
+                std::remove(tempPath.c_str());
+                return false;
+            }
             return true;
         }
     }
@@ -606,14 +614,22 @@ static bool addGestureToConfig(const std::string& strokeData) {
             }
             lines.insert(lines.begin() + insertPos, gestureAction);
 
-            // Write back to file
-            std::ofstream outFile(configPath);
+            // Write to temporary file first (atomic write)
+            std::string tempPath = configPath + ".tmp";
+            std::ofstream outFile(tempPath);
             if (!outFile.is_open()) return false;
 
             for (const auto& l : lines) {
                 outFile << l << "\n";
             }
             outFile.close();
+
+            // Atomically rename temp file to final file
+            if (std::rename(tempPath.c_str(), configPath.c_str()) != 0) {
+                // Failed to rename, try to clean up temp file
+                std::remove(tempPath.c_str());
+                return false;
+            }
             return true;
         }
     }
@@ -706,14 +722,22 @@ static bool addGestureToConfig(const std::string& strokeData) {
                 lines.insert(lines.begin() + pluginSectionEnd, newSection[i]);
             }
 
-            // Write back to file
-            std::ofstream outFile(configPath);
+            // Write to temporary file first (atomic write)
+            std::string tempPath = configPath + ".tmp";
+            std::ofstream outFile(tempPath);
             if (!outFile.is_open()) return false;
 
             for (const auto& l : lines) {
                 outFile << l << "\n";
             }
             outFile.close();
+
+            // Atomically rename temp file to final file
+            if (std::rename(tempPath.c_str(), configPath.c_str()) != 0) {
+                // Failed to rename, try to clean up temp file
+                std::remove(tempPath.c_str());
+                return false;
+            }
             return true;
         }
     }
@@ -1061,7 +1085,6 @@ static Hyprlang::CParseResult onGestureAction(const char* COMMAND, const char* V
 
         g_gestureActions.push_back(action);
 
-
     } catch (const std::exception& e) {
         // Silently catch errors
     }
@@ -1160,6 +1183,12 @@ static SDispatchResult mouseGesturesDispatch(std::string arg) {
             // If we're exiting record mode, process pending changes (additions and deletions)
             if (wasRecordMode && !g_recordMode) {
                 processPendingGestureChanges();
+            }
+
+            // If we're entering record mode, reset scroll offsets to show first gesture
+            if (!wasRecordMode && g_recordMode) {
+                g_scrollOffsets.clear();
+                g_maxScrollOffsets.clear();
             }
 
             // Clear trail and reset gesture state when toggling record mode
