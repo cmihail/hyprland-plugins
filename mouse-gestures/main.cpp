@@ -84,6 +84,9 @@ std::unordered_map<PHLMONITOR, float> g_maxScrollOffsets;
 // Pending gesture deletions (deferred until exiting record mode)
 std::vector<std::string> g_pendingGestureDeletions;
 
+// Pending gesture additions (deferred until exiting record mode)
+std::vector<std::string> g_pendingGestureAdditions;
+
 // Hook handles
 SP<HOOK_CALLBACK_FN> g_mouseButtonHook;
 SP<HOOK_CALLBACK_FN> g_mouseMoveHook;
@@ -290,6 +293,7 @@ static bool isInsideRecordSquare(const Vector2D& mousePos, PHLMONITOR monitor) {
 static std::string normalizeStrokeData(const std::string& stroke);
 static bool batchDeleteGesturesFromConfig(
     const std::vector<std::string>& strokesToDelete);
+static bool addGestureToConfig(const std::string& strokeData);
 
 // Normalize stroke data by replacing -0.000000 with 0.000000
 static std::string normalizeStrokeData(const std::string& stroke) {
@@ -341,6 +345,46 @@ static void processPendingGestureDeletions() {
     std::thread([deletionsToProcess]() {
         batchDeleteGesturesFromConfig(deletionsToProcess);
     }).detach();
+}
+
+// Helper function to process pending gesture additions
+static void processPendingGestureAdditions() {
+    if (g_pendingGestureAdditions.empty()) {
+        return;
+    }
+    std::vector<std::string> additionsToProcess = g_pendingGestureAdditions;
+    g_pendingGestureAdditions.clear();
+    std::thread([additionsToProcess]() {
+        for (const auto& strokeData : additionsToProcess) {
+            addGestureToConfig(strokeData);
+        }
+    }).detach();
+}
+
+// Helper function to process all pending changes on record mode exit
+static void processPendingGestureChanges() {
+    // First, handle conflicts: if a gesture was added then deleted,
+    // remove from both lists (no config write needed)
+    std::vector<std::string> filteredAdditions;
+    for (const auto& addition : g_pendingGestureAdditions) {
+        bool foundInDeletions = false;
+        for (size_t i = 0; i < g_pendingGestureDeletions.size(); ++i) {
+            if (normalizeStrokeData(addition) == normalizeStrokeData(g_pendingGestureDeletions[i])) {
+                // Found a match - remove from deletions and don't add to filtered list
+                g_pendingGestureDeletions.erase(g_pendingGestureDeletions.begin() + i);
+                foundInDeletions = true;
+                break;
+            }
+        }
+        if (!foundInDeletions) {
+            filteredAdditions.push_back(addition);
+        }
+    }
+    g_pendingGestureAdditions = filteredAdditions;
+
+    // Now process additions and deletions
+    processPendingGestureAdditions();
+    processPendingGestureDeletions();
 }
 
 // Helper function to batch delete multiple gestures from config file
@@ -828,46 +872,64 @@ static void handleGestureDetected() {
 
         // If in record mode, save the stroke data
         if (g_recordMode) {
-
             try {
-                // First check if this gesture matches any existing gesture
-                const GestureAction* matchingAction =
-                    findMatchingGestureAction(g_gestureState.path);
+                // Serialize the stroke
+                std::string strokeData = inputStroke.serialize();
 
-                if (matchingAction) {
-                    // Gesture already exists, notify user
-                    std::string message = "[mouse-gestures] Duplicated "
-                        "gesture with command: " + matchingAction->command;
-                    HyprlandAPI::addNotification(
+                // Add to pending additions (will be written to config on exit)
+                g_pendingGestureAdditions.push_back(strokeData);
+
+                // Get default command for new gestures
+                static auto* const PDEFAULTCMDFORCONFIG = (Hyprlang::STRING const*)
+                    HyprlandAPI::getConfigValue(
                         PHANDLE,
-                        message,
-                        {1, 0.65, 0, 1},  // Orange color for warning
-                        5000
-                    );
-                } else {
-                    // No match, add to config file
-                    std::string strokeData = inputStroke.serialize();
+                        "plugin:mouse_gestures:default_command_for_config"
+                    )->getDataStaticPtr();
 
-                    if (addGestureToConfig(strokeData)) {
-                        HyprlandAPI::addNotification(
-                            PHANDLE,
-                            "[mouse-gestures] Gesture added to config",
-                            {0, 0.5, 1, 1},
-                            3000
-                        );
+                std::string defaultCmd;
+                if (PDEFAULTCMDFORCONFIG && *PDEFAULTCMDFORCONFIG) {
+                    defaultCmd = std::string(*PDEFAULTCMDFORCONFIG);
+                } else {
+                    defaultCmd = "";
+                }
+
+                // Add to in-memory list for immediate display
+                GestureAction newAction;
+                newAction.name = "";
+                newAction.command = defaultCmd;
+                newAction.pattern = inputStroke;
+                g_gestureActions.push_back(newAction);
+
+                // Auto-scroll to show the newly added gesture on all monitors
+                if (g_pCompositor && g_gestureActions.size() > 3) {
+                    for (auto& monitor : g_pCompositor->m_monitors) {
+                        if (!monitor) continue;
+
+                        constexpr float PADDING = 20.0f;
+                        constexpr float GAP_WIDTH = 10.0f;
+                        constexpr int VISIBLE_GESTURES = 3;
+
+                        const float verticalSpace = monitor->m_size.y - (2.0f * PADDING);
+                        const float totalGaps = (VISIBLE_GESTURES - 1) * GAP_WIDTH;
+                        const float baseHeight = (verticalSpace - totalGaps) / VISIBLE_GESTURES;
+                        const float gestureRectHeight = baseHeight * 0.9f;
+
+                        // Scroll to bottom to show newest gestures
+                        const float totalHeight = g_gestureActions.size() * (gestureRectHeight + GAP_WIDTH);
+                        const float maxScrollOffset = totalHeight - verticalSpace;
+                        g_scrollOffsets[monitor] = std::max(0.0f, maxScrollOffset);
                     }
                 }
+
+                // Damage all monitors to update UI with new gesture
+                damageAllMonitors();
             } catch (const std::exception&) {
                 // Silently catch errors
             }
 
-            g_recordMode = false;
-            // Process any pending gesture deletions before exiting record mode
-            processPendingGestureDeletions();
-            // Clear trail from the recorded gesture
-            g_gestureState.timestampedPath.clear();
-            // Damage all monitors to remove overlay
-            damageAllMonitors();
+            // Stay in record mode - don't exit
+            // Don't process pending changes yet
+            // Don't clear trail - let it fade naturally
             return;
         }
 
@@ -1095,9 +1157,9 @@ static SDispatchResult mouseGesturesDispatch(std::string arg) {
             bool wasRecordMode = g_recordMode;
             g_recordMode = !g_recordMode;
 
-            // If we're exiting record mode, process pending deletions
+            // If we're exiting record mode, process pending changes (additions and deletions)
             if (wasRecordMode && !g_recordMode) {
-                processPendingGestureDeletions();
+                processPendingGestureChanges();
             }
 
             // Clear trail and reset gesture state when toggling record mode
@@ -1180,8 +1242,8 @@ static void setupMouseButtonHook() {
                 } else {
                     // Delete button pressed but not on a delete button - exit record mode
                     g_recordMode = false;
-                    // Process any pending gesture deletions before exiting record mode
-                    processPendingGestureDeletions();
+                    // Process any pending gesture changes before exiting record mode
+                    processPendingGestureChanges();
                     g_gestureState.reset();
                     g_gestureState.timestampedPath.clear();
 
@@ -1198,8 +1260,8 @@ static void setupMouseButtonHook() {
             if (g_recordMode && e.button != dragButton && e.button != deleteButton &&
                 e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
                 g_recordMode = false;
-                // Process any pending gesture deletions before exiting record mode
-                processPendingGestureDeletions();
+                // Process any pending gesture changes before exiting record mode
+                processPendingGestureChanges();
                 g_gestureState.reset();
                 g_gestureState.timestampedPath.clear();
 
@@ -1590,7 +1652,13 @@ APICALL EXPORT void PLUGIN_EXIT() {
         // Exit record mode to prevent overlay rendering
         g_recordMode = false;
 
-        // Process any pending gesture deletions synchronously before exit
+        // Process any pending gesture changes synchronously before exit
+        if (!g_pendingGestureAdditions.empty()) {
+            for (const auto& strokeData : g_pendingGestureAdditions) {
+                addGestureToConfig(strokeData);
+            }
+            g_pendingGestureAdditions.clear();
+        }
         if (!g_pendingGestureDeletions.empty()) {
             batchDeleteGesturesFromConfig(g_pendingGestureDeletions);
             g_pendingGestureDeletions.clear();

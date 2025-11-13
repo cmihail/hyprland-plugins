@@ -5,8 +5,10 @@
 #include <filesystem>
 #include <cstdlib>
 
-// Mock the global state from main.cpp
+// Mock the global state from main.cpp (anonymous namespace to avoid multiple definition)
+namespace {
 std::vector<std::string> g_pendingGestureDeletions;
+}
 
 // Test helper: Create a temporary config file
 class TempConfigFile {
