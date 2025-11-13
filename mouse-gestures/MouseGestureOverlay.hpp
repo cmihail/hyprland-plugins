@@ -26,6 +26,7 @@ class CMouseGestureOverlay : public IPassElement {
                            const CRegion& damage);
     void renderGestureSquare(float x, float y, float size, size_t gestureIndex,
                             const CRegion& damage);
+    void renderDeleteButton(float x, float y, float size, const CRegion& damage);
     void renderGestureTrail(PHLMONITOR monitor, const Vector2D& monitorSize);
 
     struct TrailConfig {

@@ -37,8 +37,8 @@ struct GestureAction {
 };
 
 extern std::vector<GestureAction> g_gestureActions;
-extern float g_scrollOffset;
-extern float g_maxScrollOffset;
+extern std::unordered_map<PHLMONITOR, float> g_scrollOffsets;
+extern std::unordered_map<PHLMONITOR, float> g_maxScrollOffsets;
 
 // Background texture
 extern SP<CTexture> g_pBackgroundTexture;
@@ -181,6 +181,71 @@ void CMouseGestureOverlay::renderRecordSquare(const Vector2D& pos,
     g_pHyprOpenGL->renderRect(rightBorder, borderColor, {.damage = &damage});
 }
 
+void CMouseGestureOverlay::renderDeleteButton(float x, float y, float size,
+                                               const CRegion& damage) {
+    // Safety check - only render in record mode
+    if (!g_recordMode || g_pluginShuttingDown) {
+        return;
+    }
+
+    // Create a larger circular button with red-ish color and X marker
+    const float circleSize = 36.0f; // Larger button for better visibility
+    const float margin = 4.0f; // Margin from top and right edges
+
+    CBox bgBox;
+    bgBox.x = x + size - circleSize - margin; // Top-right corner with margin
+    bgBox.y = y + margin;
+    bgBox.w = circleSize;
+    bgBox.h = circleSize;
+
+    // Red-ish background color
+    CHyprColor deleteButtonColor{0.85, 0.2, 0.2, 0.9}; // Brighter red, more opaque
+    g_pHyprOpenGL->renderRect(bgBox, deleteButtonColor,
+                              {.damage = &damage,
+                               .round = static_cast<int>(circleSize / 2)});
+
+    // Draw X marker with smoother lines
+    const float xSize = circleSize * 0.5f; // Larger X relative to button
+    const float centerX = bgBox.x + circleSize / 2.0f;
+    const float centerY = bgBox.y + circleSize / 2.0f;
+    const float lineWidth = 1.75f; // Half of previous thickness
+    const float lineLength = xSize;
+
+    // First diagonal: top-left to bottom-right (45 degrees)
+    // Draw as a rotated rectangle for smoother appearance
+    const float halfWidth = lineWidth / 2.0f;
+    const float halfLength = lineLength / 2.0f;
+
+    // Calculate the four corners of the first diagonal line
+    const float cos45 = 0.7071067811865476f; // cos(45°)
+    const float sin45 = 0.7071067811865476f; // sin(45°)
+
+    // First diagonal line (top-left to bottom-right)
+    for (float offset = -halfWidth; offset <= halfWidth; offset += 0.5f) {
+        for (float t = -halfLength; t <= halfLength; t += 0.5f) {
+            float px = centerX + t * cos45 - offset * sin45;
+            float py = centerY + t * sin45 + offset * cos45;
+            CBox pointBox = CBox{{px - 0.5f, py - 0.5f}, {1.0f, 1.0f}};
+            g_pHyprOpenGL->renderRect(pointBox, CHyprColor{1.0, 1.0, 1.0, 1.0},
+                                     {.damage = &damage});
+        }
+    }
+
+    // Second diagonal line (top-right to bottom-left)
+    const float cos135 = -0.7071067811865476f; // cos(135°)
+    const float sin135 = 0.7071067811865476f;  // sin(135°)
+
+    for (float offset = -halfWidth; offset <= halfWidth; offset += 0.5f) {
+        for (float t = -halfLength; t <= halfLength; t += 0.5f) {
+            float px = centerX + t * cos135 - offset * sin135;
+            float py = centerY + t * sin135 + offset * cos135;
+            CBox pointBox = CBox{{px - 0.5f, py - 0.5f}, {1.0f, 1.0f}};
+            g_pHyprOpenGL->renderRect(pointBox, CHyprColor{1.0, 1.0, 1.0, 1.0},
+                                     {.damage = &damage});
+        }
+    }
+}
+
 void CMouseGestureOverlay::renderGestureSquare(float x, float y, float size,
                                                 size_t gestureIndex,
                                                 const CRegion& damage) {
@@ -234,6 +299,11 @@ void CMouseGestureOverlay::renderGestureSquare(float x, float y, float size,
                                  {.damage = &damage,
                                   .round = static_cast<int>(pointRadius)});
     }
+
+    // Render delete button on top-right corner (only in record mode)
+    if (g_recordMode) {
+        renderDeleteButton(x, y, size, damage);
+    }
 }
 
 void CMouseGestureOverlay::renderRecordModeUI(PHLMONITOR monitor) {
@@ -262,21 +332,24 @@ void CMouseGestureOverlay::renderRecordModeUI(PHLMONITOR monitor) {
     const Vector2D recordSize = {recordSquareSize, recordSquareSize};
     renderRecordSquare(recordPos, recordSize, fullDamage);
 
-    // Calculate scroll offset
+    // Calculate scroll offset for this monitor
     const size_t totalGestures = g_gestureActions.size();
+    float& maxScrollOffset = g_maxScrollOffsets[monitor];
+    float& scrollOffset = g_scrollOffsets[monitor];
+
     if (totalGestures > VISIBLE_GESTURES) {
         const float totalHeight = totalGestures * (gestureRectHeight + GAP_WIDTH);
-        g_maxScrollOffset = totalHeight - verticalSpace;
+        maxScrollOffset = totalHeight - verticalSpace;
     } else {
-        g_maxScrollOffset = 0.0f;
+        maxScrollOffset = 0.0f;
     }
 
-    g_scrollOffset = std::clamp(g_scrollOffset, 0.0f, g_maxScrollOffset);
+    scrollOffset = std::clamp(scrollOffset, 0.0f, maxScrollOffset);
 
     // Render gesture squares
     for (size_t i = 0; i < totalGestures; ++i) {
         const float yPos = PADDING + i * (gestureRectHeight + GAP_WIDTH) -
-                          g_scrollOffset;
+                          scrollOffset;
 
         if (yPos + gestureRectHeight < 0 || yPos > monitorSize.y)
             continue;

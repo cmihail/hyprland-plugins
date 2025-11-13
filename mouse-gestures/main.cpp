@@ -77,9 +77,12 @@ bool g_recordMode = false;
 bool g_lastRecordMode = false;
 bool g_pluginShuttingDown = false;
 
-// Scroll offset for gesture list in record mode
-float g_scrollOffset = 0.0f;
-float g_maxScrollOffset = 0.0f;
+// Scroll offset for gesture list in record mode (per-monitor)
+std::unordered_map<PHLMONITOR, float> g_scrollOffsets;
+std::unordered_map<PHLMONITOR, float> g_maxScrollOffsets;
+
+// Pending gesture deletions (deferred until exiting record mode)
+std::vector<std::string> g_pendingGestureDeletions;
 
 // Hook handles
 SP<HOOK_CALLBACK_FN> g_mouseButtonHook;
@@ -176,6 +179,79 @@ static void executeCommand(const std::string& command) {
     }
 }
 
+// Helper to calculate gesture rectangle layout
+struct GestureLayout {
+    float gestureRectHeight;
+    float gestureRectWidth;
+    float horizontalMargin;
+};
+
+static GestureLayout calculateGestureLayout(PHLMONITOR monitor) {
+    constexpr float PADDING = 20.0f;
+    constexpr float GAP_WIDTH = 10.0f;
+    constexpr int VISIBLE_GESTURES = 3;
+
+    const Vector2D& monitorSize = monitor->m_size;
+    const float verticalSpace = monitorSize.y - (2.0f * PADDING);
+    const float totalGaps = (VISIBLE_GESTURES - 1) * GAP_WIDTH;
+    const float baseHeight = (verticalSpace - totalGaps) / VISIBLE_GESTURES;
+    const float gestureRectHeight = baseHeight * 0.9f;
+    const float gestureRectWidth = gestureRectHeight;
+    const float recordSquareSize = verticalSpace;
+    const float totalWidth = gestureRectWidth + recordSquareSize;
+    const float horizontalMargin = (monitorSize.x - totalWidth) / 3.0f;
+
+    return {gestureRectHeight, gestureRectWidth, horizontalMargin};
+}
+
+// Helper function to check if position is inside a delete button
+static int getDeleteButtonAtPosition(const Vector2D& mousePos,
+                                      PHLMONITOR monitor) {
+    if (!monitor || !g_recordMode) {
+        return -1;
+    }
+
+    constexpr float PADDING = 20.0f;
+    constexpr float GAP_WIDTH = 10.0f;
+    const float circleSize = 36.0f;
+    const float margin = 4.0f;
+
+    auto layout = calculateGestureLayout(monitor);
+    const Vector2D& monitorPos = monitor->m_position;
+    const Vector2D& monitorSize = monitor->m_size;
+
+    float scrollOffset = 0.0f;
+    if (g_scrollOffsets.find(monitor) != g_scrollOffsets.end()) {
+        scrollOffset = g_scrollOffsets[monitor];
+    }
+
+    const size_t totalGestures = g_gestureActions.size();
+    for (size_t i = 0; i < totalGestures; ++i) {
+        const float yPosLocal = PADDING + i * (layout.gestureRectHeight +
+                                GAP_WIDTH) - scrollOffset;
+
+        if (yPosLocal + layout.gestureRectHeight < 0 ||
+            yPosLocal > monitorSize.y) {
+            continue;
+        }
+
+        const float deleteButtonXLocal = layout.horizontalMargin +
+            layout.gestureRectWidth - circleSize - margin;
+        const float deleteButtonYLocal = yPosLocal + margin;
+        const float deleteButtonXGlobal = monitorPos.x + deleteButtonXLocal;
+        const float deleteButtonYGlobal = monitorPos.y + deleteButtonYLocal;
+
+        if (mousePos.x >= deleteButtonXGlobal &&
+            mousePos.x <= deleteButtonXGlobal + circleSize &&
+            mousePos.y >= deleteButtonYGlobal &&
+            mousePos.y <= deleteButtonYGlobal + circleSize) {
+            return static_cast<int>(i);
+        }
+    }
+
+    return -1;
+}
+
 // Helper function to check if position is inside record mode right square
 static bool isInsideRecordSquare(const Vector2D& mousePos, PHLMONITOR monitor) {
     if (!monitor) {
@@ -208,6 +284,176 @@ static bool isInsideRecordSquare(const Vector2D& mousePos, PHLMONITOR monitor) {
            mousePos.x <= recordSquareX + recordSquareSize &&
            mousePos.y >= recordSquareY &&
            mousePos.y <= recordSquareY + recordSquareSize;
+}
+
+// Forward declarations
+static std::string normalizeStrokeData(const std::string& stroke);
+static bool batchDeleteGesturesFromConfig(
+    const std::vector<std::string>& strokesToDelete);
+
+// Normalize stroke data by replacing -0.000000 with 0.000000
+static std::string normalizeStrokeData(const std::string& stroke) {
+    std::string normalized = stroke;
+    size_t pos = 0;
+    while ((pos = normalized.find("-0.000000", pos)) != std::string::npos) {
+        normalized.replace(pos, 9, "0.000000");
+        pos += 8;
+    }
+    return normalized;
+}
+
+// Helper to find ASCII art comments before a gesture line
+static void findAsciiArtComments(const std::vector<std::string>& lines,
+                                  int gestureLineIndex,
+                                  std::vector<int>& asciiArtLines) {
+    int lookbackLine = gestureLineIndex - 1;
+    while (lookbackLine >= 0) {
+        std::string prevLine = lines[lookbackLine];
+        prevLine.erase(0, prevLine.find_first_not_of(" \t"));
+        if (prevLine.find("#") == 0) {
+            asciiArtLines.push_back(lookbackLine);
+            lookbackLine--;
+        } else {
+            break;
+        }
+    }
+}
+
+// Helper to check if stroke matches any in deletion list
+static bool shouldDeleteStroke(const std::string& strokeData,
+                                const std::vector<std::string>& strokesToDelete) {
+    std::string normalizedStroke = normalizeStrokeData(strokeData);
+    for (const auto& strokeToDelete : strokesToDelete) {
+        if (normalizedStroke == normalizeStrokeData(strokeToDelete)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Helper function to process pending gesture deletions
+static void processPendingGestureDeletions() {
+    if (g_pendingGestureDeletions.empty()) {
+        return;
+    }
+    std::vector<std::string> deletionsToProcess = g_pendingGestureDeletions;
+    g_pendingGestureDeletions.clear();
+    std::thread([deletionsToProcess]() {
+        batchDeleteGesturesFromConfig(deletionsToProcess);
+    }).detach();
+}
+
+// Helper function to batch delete multiple gestures from config file
+static bool batchDeleteGesturesFromConfig(
+    const std::vector<std::string>& strokesToDelete) {
+    if (strokesToDelete.empty()) {
+        return true;
+    }
+
+    const char* home = std::getenv("HOME");
+    if (!home) {
+        return false;
+    }
+
+    std::string configBasePath = std::string(home) + "/.config/hypr";
+    std::vector<std::string> configPaths = {
+        configBasePath + "/config/plugins.conf",
+        configBasePath + "/hyprland.conf"
+    };
+
+    // Try each config file
+    for (const auto& configPath : configPaths) {
+        std::ifstream inFile(configPath);
+        if (!inFile.is_open()) {
+            continue;
+        }
+
+        std::vector<std::string> lines;
+        std::string line;
+        std::vector<int> linesToDelete;
+        std::vector<int> asciiArtLinesToDelete;
+
+        // Read the file and find all gesture_action lines to delete
+        int currentLine = 0;
+        while (std::getline(inFile, line)) {
+            lines.push_back(line);
+
+            std::string trimmed = line;
+            trimmed.erase(0, trimmed.find_first_not_of(" \t"));
+            trimmed.erase(trimmed.find_last_not_of(" \t") + 1);
+
+            // Check if this is a gesture_action line with any of our strokes
+            if (trimmed.find("gesture_action") == 0) {
+                size_t equalPos = trimmed.find('=');
+                if (equalPos != std::string::npos) {
+                    std::string value = trimmed.substr(equalPos + 1);
+                    size_t pipePos = value.rfind('|');
+                    if (pipePos != std::string::npos) {
+                        std::string strokeData = value.substr(pipePos + 1);
+
+                        // Trim whitespace
+                        size_t start = strokeData.find_first_not_of(" \t\n\r");
+                        size_t end = strokeData.find_last_not_of(" \t\n\r");
+                        if (start != std::string::npos &&
+                            end != std::string::npos) {
+                            strokeData = strokeData.substr(start,
+                                                            end - start + 1);
+                        }
+
+                        // Check if this stroke should be deleted
+                        if (shouldDeleteStroke(strokeData, strokesToDelete)) {
+                            linesToDelete.push_back(currentLine);
+                            findAsciiArtComments(lines, currentLine,
+                                                 asciiArtLinesToDelete);
+                        }
+                    }
+                }
+            }
+            currentLine++;
+        }
+        inFile.close();
+
+        if (!linesToDelete.empty()) {
+            // Sort all lines to delete in descending order
+            std::sort(linesToDelete.begin(), linesToDelete.end(),
+                      std::greater<int>());
+            std::sort(asciiArtLinesToDelete.begin(),
+                      asciiArtLinesToDelete.end(), std::greater<int>());
+
+            // Delete ASCII art lines first
+            for (int idx : asciiArtLinesToDelete) {
+                lines.erase(lines.begin() + idx);
+            }
+
+            // Then delete gesture_action lines
+            for (int idx : linesToDelete) {
+                // Adjust index based on how many ASCII art lines were deleted before it
+                int adjustedIdx = idx;
+                for (int asciiIdx : asciiArtLinesToDelete) {
+                    if (asciiIdx < idx) {
+                        adjustedIdx--;
+                    }
+                }
+                if (adjustedIdx >= 0 && adjustedIdx < static_cast<int>(lines.size())) {
+                    lines.erase(lines.begin() + adjustedIdx);
+                }
+            }
+
+            // Write back to file
+            std::ofstream outFile(configPath);
+            if (!outFile.is_open()) {
+                return false;
+            }
+
+            for (const auto& l : lines) {
+                outFile << l << "\n";
+            }
+            outFile.close();
+            return true;
+        }
+    }
+
+    return false;
 }
 
 // Helper function to add gesture to Hyprland config file
@@ -616,6 +862,8 @@ static void handleGestureDetected() {
             }
 
             g_recordMode = false;
+            // Process any pending gesture deletions before exiting record mode
+            processPendingGestureDeletions();
             // Clear trail from the recorded gesture
             g_gestureState.timestampedPath.clear();
             // Damage all monitors to remove overlay
@@ -844,7 +1092,13 @@ static void setupRenderHook() {
 static SDispatchResult mouseGesturesDispatch(std::string arg) {
     try {
         if (arg == "record") {
+            bool wasRecordMode = g_recordMode;
             g_recordMode = !g_recordMode;
+
+            // If we're exiting record mode, process pending deletions
+            if (wasRecordMode && !g_recordMode) {
+                processPendingGestureDeletions();
+            }
 
             // Clear trail and reset gesture state when toggling record mode
             g_gestureState.timestampedPath.clear();
@@ -879,10 +1133,73 @@ static void setupMouseButtonHook() {
 
             const uint32_t dragButton = static_cast<uint32_t>(**PDRAGBUTTON);
 
-            // If in record mode and a non-drag button is pressed, exit record mode
-            if (g_recordMode && e.button != dragButton &&
+            // Get configured delete gesture button (default: BTN_LEFT = 272)
+            static auto* const PDELETEBUTTON = (Hyprlang::INT* const*)
+                HyprlandAPI::getConfigValue(
+                    PHANDLE,
+                    "plugin:mouse_gestures:delete_gesture_button"
+                )->getDataStaticPtr();
+
+            const uint32_t deleteButton = (PDELETEBUTTON && *PDELETEBUTTON) ?
+                static_cast<uint32_t>(**PDELETEBUTTON) : 272;
+
+            // Handle delete button clicks in record mode
+            if (g_recordMode && e.button == deleteButton &&
+                e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
+                if (!g_pInputManager) {
+                    return;
+                }
+
+                const Vector2D mousePos = g_pInputManager->getMouseCoordsInternal();
+                auto monitor = g_pCompositor->getMonitorFromVector(mousePos);
+
+                int deleteButtonIndex = getDeleteButtonAtPosition(mousePos, monitor);
+
+                if (deleteButtonIndex >= 0) {
+                    // Capture the gesture data BEFORE removing from vector
+                    if (static_cast<size_t>(deleteButtonIndex) <
+                        g_gestureActions.size()) {
+                        std::string gestureStrokeData =
+                            g_gestureActions[deleteButtonIndex].pattern.serialize();
+
+                        // Add to pending deletions list
+                        g_pendingGestureDeletions.push_back(gestureStrokeData);
+
+                        // Immediately remove gesture from UI
+                        g_gestureActions.erase(
+                            g_gestureActions.begin() + deleteButtonIndex
+                        );
+                    }
+
+                    // Immediately redraw to show updated UI
+                    damageAllMonitors();
+
+                    // Consume the event and keep record mode on
+                    info.cancelled = true;
+                    return;
+                } else {
+                    // Delete button pressed but not on a delete button - exit record mode
+                    g_recordMode = false;
+                    // Process any pending gesture deletions before exiting record mode
+                    processPendingGestureDeletions();
+                    g_gestureState.reset();
+                    g_gestureState.timestampedPath.clear();
+
+                    // Damage all monitors to remove overlay immediately
+                    damageAllMonitors();
+
+                    // Consume the event to prevent it from going through
+                    info.cancelled = true;
+                    return;
+                }
+            }
+
+            // If in record mode and a non-drag/non-delete button is pressed, exit record mode
+            if (g_recordMode && e.button != dragButton && e.button != deleteButton &&
                 e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
                 g_recordMode = false;
+                // Process any pending gesture deletions before exiting record mode
+                processPendingGestureDeletions();
                 g_gestureState.reset();
                 g_gestureState.timestampedPath.clear();
 
@@ -1007,6 +1324,16 @@ static void setupMouseAxisHook() {
                 return;
             }
 
+            // Get the monitor where the mouse currently is
+            if (!g_pInputManager) {
+                return;
+            }
+            const Vector2D mousePos = g_pInputManager->getMouseCoordsInternal();
+            auto monitor = g_pCompositor->getMonitorFromVector(mousePos);
+            if (!monitor) {
+                return;
+            }
+
             // Extract event from map (same as workspace-overview)
             auto eventMap = std::any_cast<
                 std::unordered_map<std::string, std::any>
@@ -1018,18 +1345,25 @@ static void setupMouseAxisHook() {
                 // Scroll speed multiplier
                 constexpr float SCROLL_SPEED = 30.0f;
 
-                g_scrollOffset += e.delta * SCROLL_SPEED;
+                // Get or initialize scroll offset for this monitor
+                float& scrollOffset = g_scrollOffsets[monitor];
+                float& maxScrollOffset = g_maxScrollOffsets[monitor];
+
+                scrollOffset += e.delta * SCROLL_SPEED;
 
                 // Clamp scroll offset
-                if (g_scrollOffset < 0.0f) {
-                    g_scrollOffset = 0.0f;
+                if (scrollOffset < 0.0f) {
+                    scrollOffset = 0.0f;
                 }
-                if (g_scrollOffset > g_maxScrollOffset) {
-                    g_scrollOffset = g_maxScrollOffset;
+                if (scrollOffset > maxScrollOffset) {
+                    scrollOffset = maxScrollOffset;
                 }
 
-                // Damage monitors to redraw with new scroll position
-                damageAllMonitors();
+                // Damage only the affected monitor
+                if (g_pHyprRenderer) {
+                    g_pHyprRenderer->damageMonitor(monitor);
+                    g_pCompositor->scheduleFrameForMonitor(monitor);
+                }
 
                 // Consume the event to prevent it from scrolling other things
                 info.cancelled = true;
@@ -1191,6 +1525,11 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         "plugin:mouse_gestures:background_path",
         Hyprlang::STRING{""}
     );
+    HyprlandAPI::addConfigValue(
+        PHANDLE,
+        "plugin:mouse_gestures:delete_gesture_button",
+        Hyprlang::INT{272}
+    ); // BTN_LEFT
 
     // Register config keyword for gesture_action
     HyprlandAPI::addConfigKeyword(
@@ -1250,6 +1589,12 @@ APICALL EXPORT void PLUGIN_EXIT() {
 
         // Exit record mode to prevent overlay rendering
         g_recordMode = false;
+
+        // Process any pending gesture deletions synchronously before exit
+        if (!g_pendingGestureDeletions.empty()) {
+            batchDeleteGesturesFromConfig(g_pendingGestureDeletions);
+            g_pendingGestureDeletions.clear();
+        }
 
         // Unhook all event handlers to prevent callbacks from running
         // during cleanup. This automatically unregisters the callbacks.
