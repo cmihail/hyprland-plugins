@@ -1608,6 +1608,11 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     );
     HyprlandAPI::addConfigValue(
         PHANDLE,
+        "plugin:mouse_gestures:drag_trail_end_color",
+        Hyprlang::INT{0xA64C7FFF}
+    );
+    HyprlandAPI::addConfigValue(
+        PHANDLE,
         "plugin:mouse_gestures:enable_ascii_art_comments",
         Hyprlang::STRING{""}
     );

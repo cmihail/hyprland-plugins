@@ -154,6 +154,66 @@ void CMouseGestureOverlay::renderBackground(PHLMONITOR monitor, float monScale) 
     g_pHyprOpenGL->renderTexture(g_pBackgroundTexture, bgBox, {});
 }
 
+CHyprColor CMouseGestureOverlay::interpolateColor(const CHyprColor& start,
+                                                  const CHyprColor& end,
+                                                  float t) {
+    CHyprColor result;
+    result.r = start.r + (end.r - start.r) * t;
+    result.g = start.g + (end.g - start.g) * t;
+    result.b = start.b + (end.b - start.b) * t;
+    result.a = start.a + (end.a - start.a) * t;
+    return result;
+}
+
+void CMouseGestureOverlay::renderBoxBorders(float x, float y, float size,
+                                            const CHyprColor& color,
+                                            float borderSize,
+                                            const CRegion& damage) {
+    CBox topBorder = {x, y, size, borderSize};
+    g_pHyprOpenGL->renderRect(topBorder, color, {.damage = &damage});
+
+    CBox bottomBorder = {x, y + size - borderSize, size, borderSize};
+    g_pHyprOpenGL->renderRect(bottomBorder, color, {.damage = &damage});
+
+    CBox leftBorder = {x, y, borderSize, size};
+    g_pHyprOpenGL->renderRect(leftBorder, color, {.damage = &damage});
+
+    CBox rightBorder = {x + size - borderSize, y, borderSize, size};
+    g_pHyprOpenGL->renderRect(rightBorder, color, {.damage = &damage});
+}
+
+void CMouseGestureOverlay::renderGesturePattern(float x, float y, float size,
+                                                const std::vector<Point>& points,
+                                                const TrailConfig& config,
+                                                const CRegion& damage) {
+    constexpr float INNER_PADDING = 10.0f;
+    const float drawWidth = size - 2 * INNER_PADDING;
+    const float drawHeight = size - 2 * INNER_PADDING;
+    const size_t numPoints = points.size();
+    const float pointRadius = config.circleRadius;
+
+    for (size_t i = 0; i < numPoints; ++i) {
+        const auto& point = points[i];
+        float px = x + INNER_PADDING + point.x * drawWidth;
+        float py = y + INNER_PADDING + point.y * drawHeight;
+
+        float pathPosition = (numPoints > 1) ?
+            static_cast<float>(i) / static_cast<float>(numPoints - 1) : 0.0f;
+
+        CHyprColor gestureColor = interpolateColor(config.startColor,
+                                                   config.endColor,
+                                                   pathPosition);
+        gestureColor.a = 1.0f;
+
+        CBox pointBox = CBox{{px - pointRadius, py - pointRadius},
+                            {pointRadius * 2, pointRadius * 2}};
+
+        g_pHyprOpenGL->renderRect(pointBox, gestureColor,
+                                 {.damage = &damage,
+                                  .round = static_cast<int>(pointRadius)});
+    }
+}
+
 void CMouseGestureOverlay::renderRecordSquare(const Vector2D& pos,
                                                const Vector2D& size,
                                                const CRegion& damage) {
@@ -252,29 +312,13 @@ void CMouseGestureOverlay::renderGestureSquare(float x, float y, float size,
     CHyprColor rectBgColor{0.2, 0.2, 0.2, 1.0};
     CHyprColor borderColor{0.4, 0.4, 0.4, 1.0};
     constexpr float BORDER_SIZE = 2.0f;
-    constexpr float INNER_PADDING = 10.0f;
-
-    // Get trail config for color and radius
-    auto config = getTrailConfig();
-    const CHyprColor gestureColor = config.color;
-    const float pointRadius = config.circleRadius;
 
     // Render background
     CBox gestureBox = CBox{{x, y}, {size, size}};
     g_pHyprOpenGL->renderRect(gestureBox, rectBgColor, {.damage = &damage});
 
     // Render borders
-    CBox topBorder = {x, y, size, BORDER_SIZE};
-    g_pHyprOpenGL->renderRect(topBorder, borderColor, {.damage = &damage});
-
-    CBox bottomBorder = {x, y + size - BORDER_SIZE, size, BORDER_SIZE};
-    g_pHyprOpenGL->renderRect(bottomBorder, borderColor, {.damage = &damage});
-
-    CBox leftBorder = {x, y, BORDER_SIZE, size};
-    g_pHyprOpenGL->renderRect(leftBorder, borderColor, {.damage = &damage});
-
-    CBox rightBorder = {x + size - BORDER_SIZE, y, BORDER_SIZE, size};
-    g_pHyprOpenGL->renderRect(rightBorder, borderColor, {.damage = &damage});
+    renderBoxBorders(x, y, size, borderColor, BORDER_SIZE, damage);
 
     // Render gesture pattern if it exists
     if (gestureIndex >= g_gestureActions.size())
@@ -284,21 +328,8 @@ void CMouseGestureOverlay::renderGestureSquare(float x, float y, float size,
     if (!gesture.pattern.isFinished())
         return;
 
-    const auto& points = gesture.pattern.getPoints();
-    const float drawWidth = size - 2 * INNER_PADDING;
-    const float drawHeight = size - 2 * INNER_PADDING;
-
-    for (const auto& point : points) {
-        float px = x + INNER_PADDING + point.x * drawWidth;
-        float py = y + INNER_PADDING + point.y * drawHeight;
-
-        CBox pointBox = CBox{{px - pointRadius, py - pointRadius},
-                            {pointRadius * 2, pointRadius * 2}};
-
-        g_pHyprOpenGL->renderRect(pointBox, gestureColor,
-                                 {.damage = &damage,
-                                  .round = static_cast<int>(pointRadius)});
-    }
+    auto config = getTrailConfig();
+    renderGesturePattern(x, y, size, gesture.pattern.getPoints(), config, damage);
 
     // Render delete button on top-right corner (only in record mode)
     if (g_recordMode) {
@@ -368,8 +399,10 @@ void CMouseGestureOverlay::renderGestureTrail(PHLMONITOR monitor,
 
     auto config = getTrailConfig();
     auto now = std::chrono::steady_clock::now();
+    const size_t numPoints = g_gestureState.timestampedPath.size();
 
-    for (const auto& point : g_gestureState.timestampedPath) {
+    for (size_t i = 0; i < numPoints; ++i) {
+        const auto& point = g_gestureState.timestampedPath[i];
         auto age = std::chrono::duration_cast<std::chrono::milliseconds>(
             now - point.timestamp
         ).count();
@@ -377,8 +410,17 @@ void CMouseGestureOverlay::renderGestureTrail(PHLMONITOR monitor,
         if (age > config.fadeDurationMs)
             continue;
 
+        // Calculate position along the path (0.0 at start, 1.0 at end)
+        float pathPosition = (numPoints > 1) ?
+            static_cast<float>(i) / static_cast<float>(numPoints - 1) : 0.0f;
+
+        // Interpolate between start and end colors
+        CHyprColor color = interpolateColor(config.startColor,
+                                           config.endColor,
+                                           pathPosition);
+
+        // Apply alpha fade based on time
         float alpha = 1.0f - (static_cast<float>(age) / config.fadeDurationMs);
-        CHyprColor color = config.color;
         color.a = alpha;
 
         Vector2D localPos = point.position - monitor->m_position;
@@ -409,15 +451,25 @@ CMouseGestureOverlay::TrailConfig CMouseGestureOverlay::getTrailConfig() {
             PHANDLE, "plugin:mouse_gestures:drag_trail_color"
         )->getDataStaticPtr();
 
-    CHyprColor trailColor = (PTRAILCOLOR && *PTRAILCOLOR) ?
+    static auto* const PTRAILENDCOLOR = (Hyprlang::INT* const*)
+        HyprlandAPI::getConfigValue(
+            PHANDLE, "plugin:mouse_gestures:drag_trail_end_color"
+        )->getDataStaticPtr();
+
+    CHyprColor startColor = (PTRAILCOLOR && *PTRAILCOLOR) ?
         CHyprColor{(uint32_t)**PTRAILCOLOR} :
         CHyprColor{0x4C7FA6FF};
+
+    CHyprColor endColor = (PTRAILENDCOLOR && *PTRAILENDCOLOR) ?
+        CHyprColor{(uint32_t)**PTRAILENDCOLOR} :
+        CHyprColor{0xA64C7FFF};
 
     return {
         .circleRadius = (PCIRCLERADIUS && *PCIRCLERADIUS) ?
                        static_cast<float>(**PCIRCLERADIUS) : 8.0f,
         .fadeDurationMs = (PFADEDURATION && *PFADEDURATION) ?
                          **PFADEDURATION : 300,
-        .color = trailColor
+        .startColor = startColor,
+        .endColor = endColor
     };
 }

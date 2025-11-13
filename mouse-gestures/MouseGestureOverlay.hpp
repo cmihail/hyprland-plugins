@@ -1,6 +1,7 @@
 #pragma once
 #include <hyprland/src/render/pass/PassElement.hpp>
 #include <hyprland/src/helpers/Monitor.hpp>
+#include "stroke.hpp"
 
 class CMouseGestureOverlay : public IPassElement {
   public:
@@ -28,11 +29,20 @@ class CMouseGestureOverlay : public IPassElement {
                             const CRegion& damage);
     void renderDeleteButton(float x, float y, float size, const CRegion& damage);
     void renderGestureTrail(PHLMONITOR monitor, const Vector2D& monitorSize);
+    void renderBoxBorders(float x, float y, float size, const CHyprColor& color,
+                         float borderSize, const CRegion& damage);
 
     struct TrailConfig {
         float circleRadius;
         int fadeDurationMs;
-        CHyprColor color;
+        CHyprColor startColor;
+        CHyprColor endColor;
     };
+
+    void renderGesturePattern(float x, float y, float size,
+                             const std::vector<Point>& points,
+                             const TrailConfig& config, const CRegion& damage);
     TrailConfig getTrailConfig();
+    CHyprColor interpolateColor(const CHyprColor& start, const CHyprColor& end,
+                               float t);
 };
