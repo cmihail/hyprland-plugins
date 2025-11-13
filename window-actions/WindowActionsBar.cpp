@@ -271,6 +271,12 @@ void CWindowActionsBar::executeCommand(const std::string& command) {
         return;
     }
 
+    // Focus the window before executing any command to ensure it targets the correct window
+    const auto PWINDOW = m_pWindow.lock();
+    if (PWINDOW) {
+        g_pCompositor->focusWindow(PWINDOW);
+    }
+
     // Use the exec dispatcher to execute the command
     if (g_pKeybindManager && g_pKeybindManager->m_dispatchers.contains("exec")) {
         g_pKeybindManager->m_dispatchers["exec"](command);

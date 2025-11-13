@@ -760,3 +760,124 @@ TEST_F(StandaloneTest, MoveWindowButtonIntegration) {
     float moveAlpha = dragManager.getButtonAlpha(0, moveButton.command, 1.0f);
     EXPECT_FLOAT_EQ(moveAlpha, 1.0f); // Full alpha while dragging
 }
+
+// Mock class for testing automatic window focusing before command execution
+class WindowFocusCommandExecutor {
+private:
+    int m_focusedWindowId = -1;
+    std::string m_lastExecutedCommand;
+    bool m_windowFocusedBeforeExec = false;
+
+public:
+    enum class ExecutionResult {
+        MOVE_WINDOW_INITIATED,
+        COMMAND_EXECUTED,
+        INVALID_COMMAND
+    };
+
+    ExecutionResult executeCommand(const std::string& command, int windowId) {
+        if (command.empty()) {
+            return ExecutionResult::INVALID_COMMAND;
+        }
+
+        // Special case: movewindow doesn't need focusing
+        if (command == "__movewindow__") {
+            m_lastExecutedCommand = command;
+            return ExecutionResult::MOVE_WINDOW_INITIATED;
+        }
+
+        // Focus window before executing any regular command
+        m_focusedWindowId = windowId;
+        m_windowFocusedBeforeExec = true;
+        m_lastExecutedCommand = command;
+
+        return ExecutionResult::COMMAND_EXECUTED;
+    }
+
+    int getFocusedWindowId() const {
+        return m_focusedWindowId;
+    }
+
+    std::string getLastExecutedCommand() const {
+        return m_lastExecutedCommand;
+    }
+
+    bool wasWindowFocusedBeforeExec() const {
+        return m_windowFocusedBeforeExec;
+    }
+
+    void reset() {
+        m_focusedWindowId = -1;
+        m_lastExecutedCommand = "";
+        m_windowFocusedBeforeExec = false;
+    }
+};
+
+TEST_F(StandaloneTest, AutoFocusBeforeCommandExecution) {
+    WindowFocusCommandExecutor executor;
+
+    // Test that regular command focuses window before execution
+    auto result1 = executor.executeCommand("hyprctl dispatch killactive", 123);
+    EXPECT_EQ(result1, WindowFocusCommandExecutor::ExecutionResult::COMMAND_EXECUTED);
+    EXPECT_EQ(executor.getFocusedWindowId(), 123);
+    EXPECT_TRUE(executor.wasWindowFocusedBeforeExec());
+    EXPECT_EQ(executor.getLastExecutedCommand(), "hyprctl dispatch killactive");
+
+    // Test different window
+    executor.reset();
+    auto result2 = executor.executeCommand("hyprctl dispatch togglefloating", 456);
+    EXPECT_EQ(result2, WindowFocusCommandExecutor::ExecutionResult::COMMAND_EXECUTED);
+    EXPECT_EQ(executor.getFocusedWindowId(), 456);
+    EXPECT_TRUE(executor.wasWindowFocusedBeforeExec());
+    EXPECT_EQ(executor.getLastExecutedCommand(), "hyprctl dispatch togglefloating");
+
+    // Test that movewindow doesn't focus (special case)
+    executor.reset();
+    auto result3 = executor.executeCommand("__movewindow__", 789);
+    EXPECT_EQ(result3, WindowFocusCommandExecutor::ExecutionResult::MOVE_WINDOW_INITIATED);
+    EXPECT_EQ(executor.getFocusedWindowId(), -1); // Window not focused for movewindow
+    EXPECT_FALSE(executor.wasWindowFocusedBeforeExec());
+}
+
+TEST_F(StandaloneTest, AutoFocusEnsuresCorrectWindowClosure) {
+    WindowFocusCommandExecutor executor;
+
+    // Simulate scenario: User clicks close button on window 100
+    // Even if window 200 is currently active, window 100 should be closed
+    auto result = executor.executeCommand("hyprctl dispatch killactive", 100);
+
+    EXPECT_EQ(result, WindowFocusCommandExecutor::ExecutionResult::COMMAND_EXECUTED);
+    EXPECT_EQ(executor.getFocusedWindowId(), 100); // Window 100 was focused
+    EXPECT_TRUE(executor.wasWindowFocusedBeforeExec());
+
+    // killactive will now close window 100 since it was focused first
+    EXPECT_EQ(executor.getLastExecutedCommand(), "hyprctl dispatch killactive");
+}
+
+TEST_F(StandaloneTest, AutoFocusWithMultipleCommands) {
+    WindowFocusCommandExecutor executor;
+
+    // Test multiple different commands all focus before execution
+    struct TestCase {
+        std::string command;
+        int windowId;
+    };
+
+    std::vector<TestCase> testCases = {
+        {"hyprctl dispatch killactive", 100},
+        {"hyprctl dispatch fullscreen 1", 200},
+        {"hyprctl dispatch togglegroup", 300},
+        {"hyprctl dispatch togglefloating", 400},
+        {"notify-send 'Window Info'", 500}
+    };
+
+    for (const auto& testCase : testCases) {
+        executor.reset();
+        auto result = executor.executeCommand(testCase.command, testCase.windowId);
+
+        EXPECT_EQ(result, WindowFocusCommandExecutor::ExecutionResult::COMMAND_EXECUTED);
+        EXPECT_EQ(executor.getFocusedWindowId(), testCase.windowId);
+        EXPECT_TRUE(executor.wasWindowFocusedBeforeExec());
+        EXPECT_EQ(executor.getLastExecutedCommand(), testCase.command);
+    }
+}

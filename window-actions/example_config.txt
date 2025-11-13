@@ -12,6 +12,8 @@ plugin = /path/to/your/window-actions.so
 window_actions_button = rgba(e6e6e6ff), rgba(859900dd), ⇱, ⇲, __movewindow__
 
 # Example: Add close button
+# Note: The window is automatically focused before executing the command,
+# so killactive will close the window where the button is placed
 window_actions_button = rgba(ff6b6bff), rgba(333333dd), ✕, ✕, hyprctl dispatch killactive
 
 # Example: Add maximize/restore button

@@ -114,6 +114,8 @@ Each `window_actions_button` line follows this format:
   - Maintains full opacity during drag operation
   - Works with both left-click and configured action button
 
+**Note**: All commands (except `__movewindow__`) automatically focus the window before execution, ensuring commands like `hyprctl dispatch killactive` target the correct window.
+
 #### Plugin Settings
 - **button_size**: Size of buttons in pixels (default: 15)
 - **action_button**: Mouse button code for triggering actions (default: 272 = BTN_LEFT)
