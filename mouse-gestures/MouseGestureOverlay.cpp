@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cmath>
 #include <unordered_map>
+#include <unordered_set>
 
 extern HANDLE PHANDLE;
 
@@ -46,6 +47,11 @@ extern std::unordered_map<PHLMONITOR, float> g_maxScrollOffsets;
 extern std::unordered_map<PHLMONITOR, PHLANIMVAR<Vector2D>> g_recordAnimSize;
 extern std::unordered_map<PHLMONITOR, PHLANIMVAR<Vector2D>> g_recordAnimPos;
 extern std::unordered_map<PHLMONITOR, bool> g_recordModeClosing;
+
+// Animation state for individual gesture add/remove
+extern std::unordered_map<size_t, PHLANIMVAR<float>> g_gestureScaleAnims;
+extern std::unordered_map<size_t, PHLANIMVAR<float>> g_gestureAlphaAnims;
+extern std::unordered_set<size_t> g_gesturesPendingRemoval;
 
 // Background texture
 extern SP<CTexture> g_pBackgroundTexture;
@@ -249,7 +255,8 @@ void CMouseGestureOverlay::renderRecordSquare(const Vector2D& pos,
 }
 
 void CMouseGestureOverlay::renderDeleteButton(float x, float y, float size,
-                                               const CRegion& damage) {
+                                               const CRegion& damage,
+                                               float alpha) {
     // Safety check - only render in record mode
     if (!g_recordMode || g_pluginShuttingDown) {
         return;
@@ -265,8 +272,8 @@ void CMouseGestureOverlay::renderDeleteButton(float x, float y, float size,
     bgBox.w = circleSize;
     bgBox.h = circleSize;
 
-    // Red-ish background color
-    CHyprColor deleteButtonColor{0.85, 0.2, 0.2, 0.9}; // Brighter red, more opaque
+    // Red-ish background color with applied alpha
+    CHyprColor deleteButtonColor{0.85, 0.2, 0.2, 0.9 * alpha}; // Brighter red, more opaque
     g_pHyprOpenGL->renderRect(bgBox, deleteButtonColor,
                               {.damage = &damage,
                                .round = static_cast<int>(circleSize / 2)});
@@ -293,7 +300,7 @@ void CMouseGestureOverlay::renderDeleteButton(float x, float y, float size,
             float px = centerX + t * cos45 - offset * sin45;
             float py = centerY + t * sin45 + offset * cos45;
             CBox pointBox = CBox{{px - 0.5f, py - 0.5f}, {1.0f, 1.0f}};
-            g_pHyprOpenGL->renderRect(pointBox, CHyprColor{1.0, 1.0, 1.0, 1.0},
+            g_pHyprOpenGL->renderRect(pointBox, CHyprColor{1.0, 1.0, 1.0, alpha},
                                      {.damage = &damage});
         }
     }
@@ -307,40 +314,98 @@ void CMouseGestureOverlay::renderDeleteButton(float x, float y, float size,
             float px = centerX + t * cos135 - offset * sin135;
             float py = centerY + t * sin135 + offset * cos135;
             CBox pointBox = CBox{{px - 0.5f, py - 0.5f}, {1.0f, 1.0f}};
-            g_pHyprOpenGL->renderRect(pointBox, CHyprColor{1.0, 1.0, 1.0, 1.0},
+            g_pHyprOpenGL->renderRect(pointBox, CHyprColor{1.0, 1.0, 1.0, alpha},
                                      {.damage = &damage});
         }
+    }
+}
+
+// Helper to get animation values for a gesture
+static void getGestureAnimationValues(size_t gestureIndex, float& scale,
+                                       float& alpha) {
+    scale = 1.0f;
+    alpha = 1.0f;
+
+    try {
+        if (g_gestureScaleAnims.count(gestureIndex) &&
+            g_gestureScaleAnims[gestureIndex]) {
+            scale = std::clamp(g_gestureScaleAnims[gestureIndex]->value(),
+                              0.0f, 1.0f);
+        }
+    } catch (...) {
+        scale = 1.0f;
+    }
+
+    try {
+        if (g_gestureAlphaAnims.count(gestureIndex) &&
+            g_gestureAlphaAnims[gestureIndex]) {
+            alpha = std::clamp(g_gestureAlphaAnims[gestureIndex]->value(),
+                              0.0f, 1.0f);
+        }
+    } catch (...) {
+        alpha = 1.0f;
     }
 }
 
 void CMouseGestureOverlay::renderGestureSquare(float x, float y, float size,
                                                 size_t gestureIndex,
                                                 const CRegion& damage) {
-    CHyprColor rectBgColor{0.2, 0.2, 0.2, 1.0};
-    CHyprColor borderColor{0.4, 0.4, 0.4, 1.0};
-    constexpr float BORDER_SIZE = 2.0f;
+    try {
+        if (gestureIndex >= g_gestureActions.size())
+            return;
 
-    // Render background
-    CBox gestureBox = CBox{{x, y}, {size, size}};
-    g_pHyprOpenGL->renderRect(gestureBox, rectBgColor, {.damage = &damage});
+        float scale, alpha;
+        getGestureAnimationValues(gestureIndex, scale, alpha);
 
-    // Render borders
-    renderBoxBorders(x, y, size, borderColor, BORDER_SIZE, damage);
+        // Skip rendering if fully transparent or invisible
+        if (alpha <= 0.01f || scale <= 0.01f)
+            return;
 
-    // Render gesture pattern if it exists
-    if (gestureIndex >= g_gestureActions.size())
-        return;
+        // Apply scale transform from center
+        const float centerX = x + size / 2.0f;
+        const float centerY = y + size / 2.0f;
+        const float scaledSize = size * scale;
+        const float scaledX = centerX - scaledSize / 2.0f;
+        const float scaledY = centerY - scaledSize / 2.0f;
 
-    const auto& gesture = g_gestureActions[gestureIndex];
-    if (!gesture.pattern.isFinished())
-        return;
+        // Apply alpha to colors
+        CHyprColor rectBgColor{0.2, 0.2, 0.2, alpha};
+        CHyprColor borderColor{0.4, 0.4, 0.4, alpha};
+        constexpr float BORDER_SIZE = 2.0f;
 
-    auto config = getTrailConfig();
-    renderGesturePattern(x, y, size, gesture.pattern.getPoints(), config, damage);
+        // Render background with scaled box
+        CBox gestureBox = CBox{{scaledX, scaledY}, {scaledSize, scaledSize}};
+        g_pHyprOpenGL->renderRect(gestureBox, rectBgColor, {.damage = &damage});
 
-    // Render delete button on top-right corner (only in record mode)
-    if (g_recordMode) {
-        renderDeleteButton(x, y, size, damage);
+        // Render borders with scaled box
+        const float scaledBorderSize = BORDER_SIZE * scale;
+        renderBoxBorders(scaledX, scaledY, scaledSize, borderColor, scaledBorderSize, damage);
+
+        // Double-check gesture still exists
+        if (gestureIndex >= g_gestureActions.size())
+            return;
+
+        const auto& gesture = g_gestureActions[gestureIndex];
+        if (!gesture.pattern.isFinished())
+            return;
+
+        auto config = getTrailConfig();
+
+        // Apply alpha to trail colors
+        config.startColor.a *= alpha;
+        config.endColor.a *= alpha;
+
+        renderGesturePattern(scaledX, scaledY, scaledSize,
+                             gesture.pattern.getPoints(), config, damage);
+
+        // Render delete button on top-right corner (only in record mode)
+        if (g_recordMode) {
+            renderDeleteButton(scaledX, scaledY, scaledSize, damage, alpha);
+        }
+    } catch (const std::exception& e) {
+        // Silently fail to avoid crashing Hyprland
+    } catch (...) {
+        // Catch everything to avoid crashing Hyprland
     }
 }
 

@@ -7,6 +7,7 @@
 #include <cstring>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <fstream>
 #include <sstream>
 #include <chrono>
@@ -89,6 +90,11 @@ std::unordered_map<PHLMONITOR, PHLANIMVAR<Vector2D>> g_recordAnimSize;
 std::unordered_map<PHLMONITOR, PHLANIMVAR<Vector2D>> g_recordAnimPos;
 std::unordered_map<PHLMONITOR, bool> g_recordModeClosing;
 
+// Animation state for individual gesture add/remove
+std::unordered_map<size_t, PHLANIMVAR<float>> g_gestureScaleAnims;
+std::unordered_map<size_t, PHLANIMVAR<float>> g_gestureAlphaAnims;
+std::unordered_set<size_t> g_gesturesPendingRemoval;
+
 // Pending gesture deletions (deferred until exiting record mode)
 std::vector<std::string> g_pendingGestureDeletions;
 
@@ -165,10 +171,127 @@ static void finishRecordModeClose(WP<Hyprutils::Animation::CBaseAnimatedVariable
     g_recordAnimSize.clear();
     g_recordAnimPos.clear();
 
+    // Clear gesture animations
+    g_gestureScaleAnims.clear();
+    g_gestureAlphaAnims.clear();
+    g_gesturesPendingRemoval.clear();
+
     // Process pending changes
     processPendingGestureChanges();
 
     damageAllMonitors();
+}
+
+// Helper to reindex animations after gesture removal
+static void reindexGestureAnimations(size_t removedIndex) {
+    std::unordered_map<size_t, PHLANIMVAR<float>> newScaleAnims;
+    std::unordered_map<size_t, PHLANIMVAR<float>> newAlphaAnims;
+    std::unordered_set<size_t> newPendingRemoval;
+
+    for (const auto& [idx, anim] : g_gestureScaleAnims) {
+        if (idx > removedIndex)
+            newScaleAnims[idx - 1] = anim;
+        else if (idx < removedIndex)
+            newScaleAnims[idx] = anim;
+    }
+    for (const auto& [idx, anim] : g_gestureAlphaAnims) {
+        if (idx > removedIndex)
+            newAlphaAnims[idx - 1] = anim;
+        else if (idx < removedIndex)
+            newAlphaAnims[idx] = anim;
+    }
+    for (size_t idx : g_gesturesPendingRemoval) {
+        if (idx > removedIndex)
+            newPendingRemoval.insert(idx - 1);
+        else if (idx < removedIndex)
+            newPendingRemoval.insert(idx);
+    }
+
+    g_gestureScaleAnims = std::move(newScaleAnims);
+    g_gestureAlphaAnims = std::move(newAlphaAnims);
+    g_gesturesPendingRemoval = std::move(newPendingRemoval);
+}
+
+// Helper function to complete gesture removal after animation
+static void finishGestureRemoval(const std::string& strokeData) {
+    try {
+        if (g_pluginShuttingDown)
+            return;
+
+        for (size_t i = 0; i < g_gestureActions.size(); ++i) {
+            try {
+                if (g_gestureActions[i].pattern.serialize() == strokeData) {
+                    g_gestureActions.erase(g_gestureActions.begin() + i);
+                    g_gestureScaleAnims.erase(i);
+                    g_gestureAlphaAnims.erase(i);
+                    g_gesturesPendingRemoval.erase(i);
+                    reindexGestureAnimations(i);
+                    break;
+                }
+            } catch (...) {
+                // Silently continue if error processing this gesture
+            }
+        }
+
+        damageAllMonitors();
+    } catch (...) {
+        // Silently fail to avoid crashing Hyprland
+    }
+}
+
+// Helper function to start gesture removal animation
+static void startGestureRemovalAnimation(size_t gestureIndex) {
+    try {
+        if (gestureIndex >= g_gestureActions.size())
+            return;
+
+        // Mark gesture as pending removal
+        g_gesturesPendingRemoval.insert(gestureIndex);
+
+        // Capture stroke data for the removal callback
+        std::string strokeData = g_gestureActions[gestureIndex].pattern.serialize();
+
+        if (g_pAnimationManager && g_pConfigManager) {
+            auto animConfig = g_pConfigManager->getAnimationPropertyConfig("windowsMove");
+
+            // Create/get scale animation and reverse it (1.0 -> 0.0)
+            auto& scaleVar = g_gestureScaleAnims[gestureIndex];
+            if (!scaleVar) {
+                g_pAnimationManager->createAnimation(1.0f, scaleVar, animConfig, AVARDAMAGE_NONE);
+            }
+            scaleVar->setValue(1.0f);  // Start at full size
+            *scaleVar = 0.0f;  // Animate to invisible/tiny
+
+            // Create/get alpha animation and reverse it (1.0 -> 0.0)
+            auto& alphaVar = g_gestureAlphaAnims[gestureIndex];
+            if (!alphaVar) {
+                g_pAnimationManager->createAnimation(1.0f, alphaVar, animConfig, AVARDAMAGE_NONE);
+            }
+            alphaVar->setValue(1.0f);  // Start at opaque
+            *alphaVar = 0.0f;  // Animate to transparent
+
+            // Set update callbacks to trigger redraws
+            auto damageAll = [](WP<Hyprutils::Animation::CBaseAnimatedVariable> var) {
+                try {
+                    damageAllMonitors();
+                } catch (...) {
+                    // Ignore errors in callback
+                }
+            };
+            scaleVar->setUpdateCallback(damageAll);
+            alphaVar->setUpdateCallback(damageAll);
+
+            // Set callback on scale animation to finish removal when done
+            scaleVar->setCallbackOnEnd(
+                [strokeData](WP<Hyprutils::Animation::CBaseAnimatedVariable> var) {
+                    finishGestureRemoval(strokeData);
+                });
+        }
+
+        damageAllMonitors();
+    } catch (...) {
+        // Silently fail to avoid crashing Hyprland
+    }
 }
 
 // Helper function to start the record mode close animation
@@ -1042,6 +1165,44 @@ static void handleGestureDetected() {
                 newAction.pattern = inputStroke;
                 g_gestureActions.push_back(newAction);
 
+                // Initialize scale and fade-in animation for the new gesture
+                size_t newGestureIndex = g_gestureActions.size() - 1;
+                try {
+                    if (g_pAnimationManager && g_pConfigManager) {
+                        auto animConfig = g_pConfigManager->
+                            getAnimationPropertyConfig("windowsMove");
+
+                        // Create scale animation (0.0 -> 1.0)
+                        auto& scaleVar = g_gestureScaleAnims[newGestureIndex];
+                        g_pAnimationManager->createAnimation(1.0f, scaleVar,
+                                                             animConfig,
+                                                             AVARDAMAGE_NONE);
+                        scaleVar->setValue(0.0f);  // Start invisible/tiny
+                        *scaleVar = 1.0f;  // Animate to full size
+
+                        // Create alpha animation (0.0 -> 1.0)
+                        auto& alphaVar = g_gestureAlphaAnims[newGestureIndex];
+                        g_pAnimationManager->createAnimation(1.0f, alphaVar,
+                                                             animConfig,
+                                                             AVARDAMAGE_NONE);
+                        alphaVar->setValue(0.0f);  // Start transparent
+                        *alphaVar = 1.0f;  // Animate to opaque
+
+                        // Set update callbacks to trigger redraws
+                        auto damageAll = [](WP<Hyprutils::Animation::CBaseAnimatedVariable> var) {
+                            try {
+                                damageAllMonitors();
+                            } catch (...) {
+                                // Ignore errors in callback
+                            }
+                        };
+                        scaleVar->setUpdateCallback(damageAll);
+                        alphaVar->setUpdateCallback(damageAll);
+                    }
+                } catch (...) {
+                    // Silently fail to avoid crashing Hyprland
+                }
+
                 // Auto-scroll to show the newly added gesture on all monitors
                 if (g_pCompositor && g_gestureActions.size() > 3) {
                     for (auto& monitor : g_pCompositor->m_monitors) {
@@ -1441,7 +1602,7 @@ static void setupMouseButtonHook() {
                 int deleteButtonIndex = getDeleteButtonAtPosition(mousePos, monitor);
 
                 if (deleteButtonIndex >= 0) {
-                    // Capture the gesture data BEFORE removing from vector
+                    // Capture the gesture data BEFORE animating removal
                     if (static_cast<size_t>(deleteButtonIndex) <
                         g_gestureActions.size()) {
                         std::string gestureStrokeData =
@@ -1450,13 +1611,11 @@ static void setupMouseButtonHook() {
                         // Add to pending deletions list
                         g_pendingGestureDeletions.push_back(gestureStrokeData);
 
-                        // Immediately remove gesture from UI
-                        g_gestureActions.erase(
-                            g_gestureActions.begin() + deleteButtonIndex
-                        );
+                        // Start removal animation (gesture will be erased when animation completes)
+                        startGestureRemovalAnimation(deleteButtonIndex);
                     }
 
-                    // Immediately redraw to show updated UI
+                    // Redraw to show animation
                     damageAllMonitors();
 
                     // Consume the event and keep record mode on
@@ -1891,6 +2050,11 @@ APICALL EXPORT void PLUGIN_EXIT() {
 
         // Clear gesture actions
         g_gestureActions.clear();
+
+        // Clear gesture animations
+        g_gestureScaleAnims.clear();
+        g_gestureAlphaAnims.clear();
+        g_gesturesPendingRemoval.clear();
 
         // Clear background texture
         g_pBackgroundTexture.reset();
