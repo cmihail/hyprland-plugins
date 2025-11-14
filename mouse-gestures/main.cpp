@@ -436,6 +436,9 @@ static GestureLayout calculateGestureLayout(PHLMONITOR monitor) {
     constexpr float PADDING = 20.0f;
     constexpr float GAP_WIDTH = 10.0f;
     constexpr int VISIBLE_GESTURES = 3;
+    constexpr float TEXT_HEIGHT = 80.0f;
+    constexpr float TEXT_GAP = 20.0f;
+    constexpr float BOTTOM_MARGIN = 20.0f;
 
     const Vector2D& monitorSize = monitor->m_size;
     const float verticalSpace = monitorSize.y - (2.0f * PADDING);
@@ -443,8 +446,14 @@ static GestureLayout calculateGestureLayout(PHLMONITOR monitor) {
     const float baseHeight = (verticalSpace - totalGaps) / VISIBLE_GESTURES;
     const float gestureRectHeight = baseHeight * 0.9f;
     const float gestureRectWidth = gestureRectHeight;
-    // Use fixed small margin on left side (matching MouseGestureOverlay.cpp)
-    const float horizontalMargin = PADDING;
+
+    // Calculate record square size (matching MouseGestureOverlay.cpp)
+    const float maxVerticalSize = monitorSize.y - (PADDING + TEXT_HEIGHT +
+                                                    TEXT_GAP) - BOTTOM_MARGIN;
+    const float recordSquareSize = maxVerticalSize;
+
+    // Calculate equal spacing for all three gaps (matching MouseGestureOverlay.cpp)
+    const float horizontalMargin = (monitorSize.x - gestureRectWidth - recordSquareSize) / 3.0f;
 
     return {gestureRectHeight, gestureRectWidth, horizontalMargin};
 }
@@ -507,6 +516,9 @@ static bool isInsideRecordSquare(const Vector2D& mousePos, PHLMONITOR monitor) {
     constexpr float PADDING = 20.0f;
     constexpr float GAP_WIDTH = 10.0f;
     constexpr int VISIBLE_GESTURES = 3;
+    constexpr float TEXT_HEIGHT = 80.0f;
+    constexpr float TEXT_GAP = 20.0f;
+    constexpr float BOTTOM_MARGIN = 20.0f;
 
     const Vector2D& monitorSize = monitor->m_size;
     const Vector2D& monitorPos = monitor->m_position;
@@ -516,13 +528,18 @@ static bool isInsideRecordSquare(const Vector2D& mousePos, PHLMONITOR monitor) {
     const float baseHeight = (verticalSpace - totalGaps) / VISIBLE_GESTURES;
     const float gestureRectHeight = baseHeight * 0.9f;
     const float gestureRectWidth = gestureRectHeight;
-    const float recordSquareSize = verticalSpace;
-    const float totalWidth = gestureRectWidth + recordSquareSize;
-    const float horizontalMargin = (monitorSize.x - totalWidth) / 3.0f;
+
+    // Calculate record square size (matching MouseGestureOverlay.cpp)
+    const float maxVerticalSize = monitorSize.y - (PADDING + TEXT_HEIGHT +
+                                                    TEXT_GAP) - BOTTOM_MARGIN;
+    const float recordSquareSize = maxVerticalSize;
+
+    // Calculate equal spacing for all three gaps (matching MouseGestureOverlay.cpp)
+    const float horizontalMargin = (monitorSize.x - gestureRectWidth - recordSquareSize) / 3.0f;
 
     // Right square position and size
     const float recordSquareX = monitorPos.x + horizontalMargin + gestureRectWidth + horizontalMargin;
-    const float recordSquareY = monitorPos.y + PADDING;
+    const float recordSquareY = monitorPos.y + PADDING + TEXT_HEIGHT + TEXT_GAP;
 
     // Check if mouse is inside the right square
     return mousePos.x >= recordSquareX &&

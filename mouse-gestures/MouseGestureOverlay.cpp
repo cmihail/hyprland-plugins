@@ -555,21 +555,22 @@ void CMouseGestureOverlay::renderRecordModeUI(PHLMONITOR monitor) {
     const float baseHeight = (verticalSpace - totalGaps) / VISIBLE_GESTURES;
     const float gestureRectHeight = baseHeight * 0.9f;
     const float gestureRectWidth = gestureRectHeight;
-    // Use fixed small margins on left and right sides
-    const float horizontalMargin = PADDING;
+
     // Rectangle extends from below the text to the bottom margin
     const float maxVerticalSize = monitorSize.y - (PADDING + TEXT_HEIGHT +
                                                     TEXT_GAP) - BOTTOM_MARGIN;
-    // Also ensure it fits horizontally with margins on both sides
-    const float maxHorizontalSize = monitorSize.x - (horizontalMargin +
-                                     gestureRectWidth + horizontalMargin +
-                                     horizontalMargin);
-    const float recordSquareSize = std::min(maxVerticalSize, maxHorizontalSize);
+    const float recordSquareSize = std::min(maxVerticalSize, maxVerticalSize);
+
+    // Calculate equal spacing for all three gaps:
+    // monitorSize.x = leftGap + gestureRectWidth + middleGap + recordSquareSize + rightGap
+    // where leftGap = middleGap = rightGap
+    // So: monitorSize.x = 3 * gap + gestureRectWidth + recordSquareSize
+    const float horizontalMargin = (monitorSize.x - gestureRectWidth - recordSquareSize) / 3.0f;
 
     // Apply animation transform to record square
-    // Position record square close to the right edge with horizontalMargin
+    // Position record square with equal spacing on all sides
     Vector2D recordPos = {
-        monitorSize.x - horizontalMargin - recordSquareSize,
+        horizontalMargin + gestureRectWidth + horizontalMargin,
         PADDING + TEXT_HEIGHT + TEXT_GAP
     };
     Vector2D recordSize = {recordSquareSize, recordSquareSize};
