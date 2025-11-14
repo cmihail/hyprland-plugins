@@ -3,8 +3,10 @@
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/Compositor.hpp>
+#include <hyprland/src/helpers/AnimatedVariable.hpp>
 #include <chrono>
 #include <cmath>
+#include <unordered_map>
 
 extern HANDLE PHANDLE;
 
@@ -39,6 +41,11 @@ struct GestureAction {
 extern std::vector<GestureAction> g_gestureActions;
 extern std::unordered_map<PHLMONITOR, float> g_scrollOffsets;
 extern std::unordered_map<PHLMONITOR, float> g_maxScrollOffsets;
+
+// Animation state for record mode entry
+extern std::unordered_map<PHLMONITOR, PHLANIMVAR<Vector2D>> g_recordAnimSize;
+extern std::unordered_map<PHLMONITOR, PHLANIMVAR<Vector2D>> g_recordAnimPos;
+extern std::unordered_map<PHLMONITOR, bool> g_recordModeClosing;
 
 // Background texture
 extern SP<CTexture> g_pBackgroundTexture;
@@ -345,6 +352,21 @@ void CMouseGestureOverlay::renderRecordModeUI(PHLMONITOR monitor) {
     const Vector2D monitorSize = monitor->m_size;
     CRegion fullDamage{0, 0, INT16_MAX, INT16_MAX};
 
+    // Check if we have animation for this monitor
+    Vector2D currentSize = monitorSize;
+    Vector2D currentPos = {0, 0};
+    float zoomScale = 1.0f;
+
+    if (g_recordAnimSize.count(monitor) && g_recordAnimPos.count(monitor)) {
+        auto& sizeVar = g_recordAnimSize[monitor];
+        auto& posVar = g_recordAnimPos[monitor];
+        if (sizeVar && posVar) {
+            currentSize = sizeVar->value();
+            currentPos = posVar->value();
+            zoomScale = currentSize.x / monitorSize.x;
+        }
+    }
+
     // Calculate layout dimensions
     const float verticalSpace = monitorSize.y - (2.0f * PADDING);
     const float totalGaps = (VISIBLE_GESTURES - 1) * GAP_WIDTH;
@@ -355,13 +377,24 @@ void CMouseGestureOverlay::renderRecordModeUI(PHLMONITOR monitor) {
     const float totalWidth = gestureRectWidth + recordSquareSize;
     const float horizontalMargin = (monitorSize.x - totalWidth) / 3.0f;
 
-    // Render right record square
-    const Vector2D recordPos = {
+    // Apply animation transform to record square
+    Vector2D recordPos = {
         horizontalMargin + gestureRectWidth + horizontalMargin,
         PADDING
     };
-    const Vector2D recordSize = {recordSquareSize, recordSquareSize};
-    renderRecordSquare(recordPos, recordSize, fullDamage);
+    Vector2D recordSize = {recordSquareSize, recordSquareSize};
+
+    // Transform the position and size based on animation
+    Vector2D transformedRecordPos = {
+        recordPos.x * zoomScale + currentPos.x,
+        recordPos.y * zoomScale + currentPos.y
+    };
+    Vector2D transformedRecordSize = {
+        recordSize.x * zoomScale,
+        recordSize.y * zoomScale
+    };
+
+    renderRecordSquare(transformedRecordPos, transformedRecordSize, fullDamage);
 
     // Calculate scroll offset for this monitor
     const size_t totalGestures = g_gestureActions.size();
@@ -377,7 +410,7 @@ void CMouseGestureOverlay::renderRecordModeUI(PHLMONITOR monitor) {
 
     scrollOffset = std::clamp(scrollOffset, 0.0f, maxScrollOffset);
 
-    // Render gesture squares
+    // Render gesture squares with animation transform
     for (size_t i = 0; i < totalGestures; ++i) {
         const float yPos = PADDING + i * (gestureRectHeight + GAP_WIDTH) -
                           scrollOffset;
@@ -385,7 +418,12 @@ void CMouseGestureOverlay::renderRecordModeUI(PHLMONITOR monitor) {
         if (yPos + gestureRectHeight < 0 || yPos > monitorSize.y)
             continue;
 
-        renderGestureSquare(horizontalMargin, yPos, gestureRectWidth, i,
+        // Transform the position and size
+        float transformedX = horizontalMargin * zoomScale + currentPos.x;
+        float transformedY = yPos * zoomScale + currentPos.y;
+        float transformedSize = gestureRectWidth * zoomScale;
+
+        renderGestureSquare(transformedX, transformedY, transformedSize, i,
                            fullDamage);
     }
 }

@@ -154,8 +154,3 @@ TEST_F(ScrollOffsetResetTest, CleanStateEnterRecordMode) {
     EXPECT_TRUE(g_maxScrollOffsets.empty());
     EXPECT_TRUE(g_recordMode);
 }
-
-int main(int argc, char **argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

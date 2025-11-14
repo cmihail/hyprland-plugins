@@ -238,8 +238,3 @@ TEST_F(AtomicWritesTest, RenameIsAtomic) {
     EXPECT_EQ(partialReads.load(), 0);
     EXPECT_GT(completeReads.load(), 0);
 }
-
-int main(int argc, char **argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

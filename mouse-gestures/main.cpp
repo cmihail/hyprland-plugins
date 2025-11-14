@@ -25,6 +25,9 @@
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/render/pass/PassElement.hpp>
+#include <hyprland/src/helpers/AnimatedVariable.hpp>
+#include <hyprland/src/config/ConfigManager.hpp>
+#include <hyprland/src/managers/animation/AnimationManager.hpp>
 #undef private
 
 #include "stroke.hpp"
@@ -81,6 +84,11 @@ bool g_pluginShuttingDown = false;
 std::unordered_map<PHLMONITOR, float> g_scrollOffsets;
 std::unordered_map<PHLMONITOR, float> g_maxScrollOffsets;
 
+// Animation state for record mode entry (per-monitor)
+std::unordered_map<PHLMONITOR, PHLANIMVAR<Vector2D>> g_recordAnimSize;
+std::unordered_map<PHLMONITOR, PHLANIMVAR<Vector2D>> g_recordAnimPos;
+std::unordered_map<PHLMONITOR, bool> g_recordModeClosing;
+
 // Pending gesture deletions (deferred until exiting record mode)
 std::vector<std::string> g_pendingGestureDeletions;
 
@@ -129,6 +137,116 @@ static bool hasVisibleTrailPoints() {
     } catch (...) {
         return false;
     }
+}
+
+// Forward declarations
+static void damageAllMonitors();
+static void processPendingGestureChanges();
+static void startRecordModeCloseAnimation();
+
+// Damage callback for record mode animations
+static void damageMonitor(WP<Hyprutils::Animation::CBaseAnimatedVariable> var) {
+    if (g_pluginShuttingDown)
+        return;
+
+    damageAllMonitors();
+}
+
+// Callback when record mode close animation finishes
+static void finishRecordModeClose(WP<Hyprutils::Animation::CBaseAnimatedVariable> var) {
+    if (g_pluginShuttingDown)
+        return;
+
+    // Actually turn off record mode now that animation is complete
+    g_recordMode = false;
+
+    // Clear closing flags and animations for all monitors
+    g_recordModeClosing.clear();
+    g_recordAnimSize.clear();
+    g_recordAnimPos.clear();
+
+    // Process pending changes
+    processPendingGestureChanges();
+
+    damageAllMonitors();
+}
+
+// Helper function to start the record mode close animation
+static void startRecordModeCloseAnimation() {
+    if (!g_recordMode)
+        return;
+
+    // Initialize close animations for all monitors
+    if (g_pCompositor && g_pConfigManager && g_pAnimationManager) {
+        auto animConfig = g_pConfigManager->getAnimationPropertyConfig("windowsMove");
+
+        for (auto& monitor : g_pCompositor->m_monitors) {
+            if (!monitor)
+                continue;
+
+            const Vector2D monitorSize = monitor->m_size;
+
+            // Calculate the record square position (where we'll zoom to)
+            constexpr float PADDING = 20.0f;
+            const float verticalSpace = monitorSize.y - (2.0f * PADDING);
+            constexpr int VISIBLE_GESTURES = 3;
+            constexpr float GAP_WIDTH = 10.0f;
+            const float totalGaps = (VISIBLE_GESTURES - 1) * GAP_WIDTH;
+            const float baseHeight = (verticalSpace - totalGaps) / VISIBLE_GESTURES;
+            const float gestureRectHeight = baseHeight * 0.9f;
+            const float gestureRectWidth = gestureRectHeight;
+            const float recordSquareSize = verticalSpace;
+            const float totalWidth = gestureRectWidth + recordSquareSize;
+            const float horizontalMargin = (monitorSize.x - totalWidth) / 3.0f;
+
+            const float recordSquareX = horizontalMargin + gestureRectWidth + horizontalMargin;
+            const float recordSquareY = PADDING;
+
+            // Calculate the center of the record square
+            const Vector2D recordCenter = Vector2D{
+                recordSquareX + recordSquareSize / 2.0f,
+                recordSquareY + recordSquareSize / 2.0f
+            };
+
+            // Calculate scale to zoom the record square to fill the screen
+            const float scaleX = monitorSize.x / recordSquareSize;
+            const float scaleY = monitorSize.y / recordSquareSize;
+            const float scale = std::min(scaleX, scaleY);
+
+            const Vector2D screenCenter = monitorSize / 2.0f;
+
+            // Get or create animations
+            auto& sizeVar = g_recordAnimSize[monitor];
+            auto& posVar = g_recordAnimPos[monitor];
+
+            if (!sizeVar) {
+                g_pAnimationManager->createAnimation(monitorSize, sizeVar, animConfig, AVARDAMAGE_NONE);
+            }
+            if (!posVar) {
+                g_pAnimationManager->createAnimation(Vector2D{0, 0}, posVar, animConfig, AVARDAMAGE_NONE);
+            }
+
+            sizeVar->setUpdateCallback(damageMonitor);
+            posVar->setUpdateCallback(damageMonitor);
+
+            // Set goal to zoom INTO record square (reverse of entry)
+            *sizeVar = monitorSize * scale;
+            *posVar = (screenCenter - recordCenter) * scale;
+
+            // Set callback to finish closing when animation completes
+            sizeVar->setCallbackOnEnd(finishRecordModeClose);
+
+            // Mark this monitor as closing
+            g_recordModeClosing[monitor] = true;
+        }
+    }
+
+    // Clear trail and reset gesture state
+    g_gestureState.timestampedPath.clear();
+    g_gestureState.reset();
+
+    // Damage all monitors to start animation
+    damageAllMonitors();
 }
 
 // Helper function to damage all monitors and schedule frames
@@ -1178,25 +1296,86 @@ static SDispatchResult mouseGesturesDispatch(std::string arg) {
     try {
         if (arg == "record") {
             bool wasRecordMode = g_recordMode;
-            g_recordMode = !g_recordMode;
 
-            // If we're exiting record mode, process pending changes (additions and deletions)
-            if (wasRecordMode && !g_recordMode) {
-                processPendingGestureChanges();
+            // If we're exiting record mode, start close animation
+            if (wasRecordMode) {
+                startRecordModeCloseAnimation();
             }
-
-            // If we're entering record mode, reset scroll offsets to show first gesture
-            if (!wasRecordMode && g_recordMode) {
+            // If we're entering record mode, reset scroll offsets and setup animations
+            else if (!wasRecordMode) {
+                g_recordMode = true;
                 g_scrollOffsets.clear();
                 g_maxScrollOffsets.clear();
+
+                // Clear any closing states
+                g_recordModeClosing.clear();
+
+                // Initialize animations for all monitors
+                if (g_pCompositor && g_pConfigManager && g_pAnimationManager) {
+                    auto animConfig = g_pConfigManager->getAnimationPropertyConfig("windowsMove");
+
+                    for (auto& monitor : g_pCompositor->m_monitors) {
+                        if (!monitor)
+                            continue;
+
+                        const Vector2D monitorSize = monitor->m_size;
+
+                        // Calculate the record square position (where we'll zoom from)
+                        constexpr float PADDING = 20.0f;
+                        const float verticalSpace = monitorSize.y - (2.0f * PADDING);
+                        constexpr int VISIBLE_GESTURES = 3;
+                        constexpr float GAP_WIDTH = 10.0f;
+                        const float totalGaps = (VISIBLE_GESTURES - 1) * GAP_WIDTH;
+                        const float baseHeight = (verticalSpace - totalGaps) / VISIBLE_GESTURES;
+                        const float gestureRectHeight = baseHeight * 0.9f;
+                        const float gestureRectWidth = gestureRectHeight;
+                        const float recordSquareSize = verticalSpace;
+                        const float totalWidth = gestureRectWidth + recordSquareSize;
+                        const float horizontalMargin = (monitorSize.x - totalWidth) / 3.0f;
+
+                        const float recordSquareX = horizontalMargin + gestureRectWidth + horizontalMargin;
+                        const float recordSquareY = PADDING;
+
+                        // Calculate the center of the record square
+                        const Vector2D recordCenter = Vector2D{
+                            recordSquareX + recordSquareSize / 2.0f,
+                            recordSquareY + recordSquareSize / 2.0f
+                        };
+
+                        // Calculate scale to zoom the record square to fill the screen
+                        const float scaleX = monitorSize.x / recordSquareSize;
+                        const float scaleY = monitorSize.y / recordSquareSize;
+                        const float scale = std::min(scaleX, scaleY);
+
+                        const Vector2D screenCenter = monitorSize / 2.0f;
+
+                        // Create animations
+                        auto& sizeVar = g_recordAnimSize[monitor];
+                        auto& posVar = g_recordAnimPos[monitor];
+
+                        g_pAnimationManager->createAnimation(monitorSize, sizeVar, animConfig, AVARDAMAGE_NONE);
+                        g_pAnimationManager->createAnimation(Vector2D{0, 0}, posVar, animConfig, AVARDAMAGE_NONE);
+
+                        sizeVar->setUpdateCallback(damageMonitor);
+                        posVar->setUpdateCallback(damageMonitor);
+
+                        // Set initial value (zoomed into record square)
+                        sizeVar->setValue(monitorSize * scale);
+                        posVar->setValue((screenCenter - recordCenter) * scale);
+
+                        // Set goal (normal view) - this starts the animation
+                        *sizeVar = monitorSize;
+                        *posVar = Vector2D{0, 0};
+                    }
+                }
+
+                // Clear trail and reset gesture state when entering record mode
+                g_gestureState.timestampedPath.clear();
+                g_gestureState.reset();
+
+                // Immediately damage all monitors to show overlay
+                damageAllMonitors();
             }
-
-            // Clear trail and reset gesture state when toggling record mode
-            g_gestureState.timestampedPath.clear();
-            g_gestureState.reset();
-
-            // Immediately damage all monitors to show/hide overlay
-            damageAllMonitors();
         }
     } catch (const std::exception& e) {
         // Catch errors to prevent crashes
@@ -1234,6 +1413,21 @@ static void setupMouseButtonHook() {
             const uint32_t deleteButton = (PDELETEBUTTON && *PDELETEBUTTON) ?
                 static_cast<uint32_t>(**PDELETEBUTTON) : 272;
 
+            // Check if any monitor is closing
+            bool anyMonitorClosing = false;
+            for (const auto& [mon, closing] : g_recordModeClosing) {
+                if (closing) {
+                    anyMonitorClosing = true;
+                    break;
+                }
+            }
+
+            // Block interactions during closing animation
+            if (g_recordMode && anyMonitorClosing) {
+                info.cancelled = true;
+                return;
+            }
+
             // Handle delete button clicks in record mode
             if (g_recordMode && e.button == deleteButton &&
                 e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
@@ -1270,14 +1464,7 @@ static void setupMouseButtonHook() {
                     return;
                 } else {
                     // Delete button pressed but not on a delete button - exit record mode
-                    g_recordMode = false;
-                    // Process any pending gesture changes before exiting record mode
-                    processPendingGestureChanges();
-                    g_gestureState.reset();
-                    g_gestureState.timestampedPath.clear();
-
-                    // Damage all monitors to remove overlay immediately
-                    damageAllMonitors();
+                    startRecordModeCloseAnimation();
 
                     // Consume the event to prevent it from going through
                     info.cancelled = true;
@@ -1288,14 +1475,7 @@ static void setupMouseButtonHook() {
             // If in record mode and a non-drag/non-delete button is pressed, exit record mode
             if (g_recordMode && e.button != dragButton && e.button != deleteButton &&
                 e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
-                g_recordMode = false;
-                // Process any pending gesture changes before exiting record mode
-                processPendingGestureChanges();
-                g_gestureState.reset();
-                g_gestureState.timestampedPath.clear();
-
-                // Damage all monitors to remove overlay immediately
-                damageAllMonitors();
+                startRecordModeCloseAnimation();
 
                 // Consume the event to prevent it from going through
                 info.cancelled = true;
