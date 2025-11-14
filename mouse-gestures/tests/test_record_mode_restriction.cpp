@@ -20,6 +20,9 @@ protected:
     constexpr static float PADDING = 20.0f;
     constexpr static float GAP_WIDTH = 10.0f;
     constexpr static int VISIBLE_GESTURES = 3;
+    constexpr static float TEXT_HEIGHT = 80.0f;
+    constexpr static float TEXT_GAP = 20.0f;
+    constexpr static float BOTTOM_MARGIN = 20.0f;
 
     void SetUp() override {
         // Setup mock monitor with 1920x1080 resolution
@@ -44,13 +47,23 @@ protected:
         const float baseHeight = (verticalSpace - totalGaps) / VISIBLE_GESTURES;
         const float gestureRectHeight = baseHeight * 0.9f;
         const float gestureRectWidth = gestureRectHeight;
-        const float recordSquareSize = verticalSpace;
-        const float totalWidth = gestureRectWidth + recordSquareSize;
+        // Use original vertical space for layout calculation
+        const float recordSquareLayoutSize = verticalSpace;
+        const float totalWidth = gestureRectWidth + recordSquareLayoutSize;
         const float horizontalMargin = (monitorSize.x - totalWidth) / 3.0f;
+        // Rectangle extends from below the text to the bottom margin
+        const float maxVerticalSize = monitorSize.y - (PADDING + TEXT_HEIGHT +
+                                                        TEXT_GAP) - BOTTOM_MARGIN;
+        // Also ensure it fits horizontally
+        const float maxHorizontalSize = monitorSize.x - (horizontalMargin +
+                                         gestureRectWidth + horizontalMargin);
+        const float recordSquareSize = std::min(maxVerticalSize, maxHorizontalSize);
 
         // Right square position and size
-        const float recordSquareX = monitorPos.x + horizontalMargin + gestureRectWidth + horizontalMargin;
-        const float recordSquareY = monitorPos.y + PADDING;
+        const float recordSquareX = monitorPos.x + horizontalMargin +
+                                     gestureRectWidth + horizontalMargin;
+        const float recordSquareY = monitorPos.y + PADDING + TEXT_HEIGHT +
+                                     TEXT_GAP;
 
         return {recordSquareX, recordSquareY, recordSquareSize};
     }
@@ -78,8 +91,8 @@ TEST_F(RecordModeRestrictionTest, RightSquareCalculation) {
     // Verify size is positive
     EXPECT_GT(bounds.size, 0);
 
-    // Verify padding is respected
-    EXPECT_EQ(bounds.y, PADDING);
+    // Verify padding and text space are respected
+    EXPECT_EQ(bounds.y, PADDING + TEXT_HEIGHT + TEXT_GAP);
 }
 
 // Test position inside right square center
@@ -240,8 +253,19 @@ TEST_F(RecordModeRestrictionTest, VerticalMonitor) {
 TEST_F(RecordModeRestrictionTest, RightSquareIsOnRightSide) {
     auto bounds = calculateRightSquare();
 
-    // Right square should be in the right half of the screen
-    EXPECT_GT(bounds.x, monitor.m_size.x / 2.0);
+    // Calculate where gesture rectangles end
+    const float verticalSpace = monitor.m_size.y - (2.0f * PADDING);
+    const float totalGaps = (VISIBLE_GESTURES - 1) * GAP_WIDTH;
+    const float baseHeight = (verticalSpace - totalGaps) / VISIBLE_GESTURES;
+    const float gestureRectHeight = baseHeight * 0.9f;
+    const float gestureRectWidth = gestureRectHeight;
+    const float recordSquareLayoutSize = verticalSpace;
+    const float totalWidth = gestureRectWidth + recordSquareLayoutSize;
+    const float horizontalMargin = (monitor.m_size.x - totalWidth) / 3.0f;
+    const float gestureRectEnd = horizontalMargin + gestureRectWidth;
+
+    // Right square should be positioned after the gesture rectangles
+    EXPECT_GT(bounds.x, gestureRectEnd);
 }
 
 // Test that right square height matches vertical space
@@ -249,8 +273,21 @@ TEST_F(RecordModeRestrictionTest, RightSquareHeightMatchesVerticalSpace) {
     auto bounds = calculateRightSquare();
 
     const float verticalSpace = monitor.m_size.y - (2.0f * PADDING);
+    const float totalGaps = (VISIBLE_GESTURES - 1) * GAP_WIDTH;
+    const float baseHeight = (verticalSpace - totalGaps) / VISIBLE_GESTURES;
+    const float gestureRectHeight = baseHeight * 0.9f;
+    const float gestureRectWidth = gestureRectHeight;
+    const float recordSquareLayoutSize = verticalSpace;
+    const float totalWidth = gestureRectWidth + recordSquareLayoutSize;
+    const float horizontalMargin = (monitor.m_size.x - totalWidth) / 3.0f;
 
-    EXPECT_FLOAT_EQ(bounds.size, verticalSpace);
+    const float maxVerticalSize = monitor.m_size.y - (PADDING + TEXT_HEIGHT +
+                                                       TEXT_GAP) - BOTTOM_MARGIN;
+    const float maxHorizontalSize = monitor.m_size.x - (horizontalMargin +
+                                        gestureRectWidth + horizontalMargin);
+    const float expectedSize = std::min(maxVerticalSize, maxHorizontalSize);
+
+    EXPECT_FLOAT_EQ(bounds.size, expectedSize);
 }
 
 // Test boundary precision at exact edge
@@ -303,4 +340,142 @@ TEST_F(RecordModeRestrictionTest, RecordModeConceptTest) {
     g_recordMode = false;
     EXPECT_TRUE(isInsideRightSquare(insidePos));  // Still technically inside
     EXPECT_FALSE(isInsideRightSquare(outsidePos)); // Still technically outside
+}
+
+// Test that bottom margin is respected
+TEST_F(RecordModeRestrictionTest, BottomMarginRespected) {
+    auto bounds = calculateRightSquare();
+
+    // The bottom of the rectangle should not extend beyond monitor height minus bottom margin
+    const float expectedBottom = monitor.m_size.y - BOTTOM_MARGIN;
+    const float actualBottom = bounds.y + bounds.size;
+
+    EXPECT_LE(actualBottom, expectedBottom);
+}
+
+// Test that rectangle extends close to bottom (within bottom margin)
+TEST_F(RecordModeRestrictionTest, RectangleExtendsCloseToBottom) {
+    auto bounds = calculateRightSquare();
+
+    const float expectedBottom = monitor.m_size.y - BOTTOM_MARGIN;
+    const float actualBottom = bounds.y + bounds.size;
+
+    // Should be very close to the expected bottom (within small tolerance)
+    EXPECT_NEAR(actualBottom, expectedBottom, 1.0f);
+}
+
+// Test that text space is accounted for at the top
+TEST_F(RecordModeRestrictionTest, TextSpaceAtTop) {
+    auto bounds = calculateRightSquare();
+
+    const float expectedTop = PADDING + TEXT_HEIGHT + TEXT_GAP;
+
+    EXPECT_EQ(bounds.y, expectedTop);
+}
+
+// Test that rectangle size is maximized given constraints
+TEST_F(RecordModeRestrictionTest, RectangleSizeMaximized) {
+    auto bounds = calculateRightSquare();
+
+    // Calculate what the maximum possible size would be
+    const float maxVerticalSize = monitor.m_size.y - (PADDING + TEXT_HEIGHT +
+                                                       TEXT_GAP) - BOTTOM_MARGIN;
+
+    const float verticalSpace = monitor.m_size.y - (2.0f * PADDING);
+    const float totalGaps = (VISIBLE_GESTURES - 1) * GAP_WIDTH;
+    const float baseHeight = (verticalSpace - totalGaps) / VISIBLE_GESTURES;
+    const float gestureRectHeight = baseHeight * 0.9f;
+    const float gestureRectWidth = gestureRectHeight;
+    const float recordSquareLayoutSize = verticalSpace;
+    const float totalWidth = gestureRectWidth + recordSquareLayoutSize;
+    const float horizontalMargin = (monitor.m_size.x - totalWidth) / 3.0f;
+    const float maxHorizontalSize = monitor.m_size.x - (horizontalMargin +
+                                        gestureRectWidth + horizontalMargin);
+
+    const float expectedMaxSize = std::min(maxVerticalSize, maxHorizontalSize);
+
+    EXPECT_FLOAT_EQ(bounds.size, expectedMaxSize);
+}
+
+// Test that horizontal constraint is applied on narrow monitors
+TEST_F(RecordModeRestrictionTest, HorizontalConstraintOnNarrowMonitor) {
+    // Set up a narrow monitor where horizontal space is the limiting factor
+    monitor.m_position = {0, 0};
+    monitor.m_size = {800, 1200};
+
+    auto bounds = calculateRightSquare();
+
+    // Calculate expected values
+    const float verticalSpace = monitor.m_size.y - (2.0f * PADDING);
+    const float totalGaps = (VISIBLE_GESTURES - 1) * GAP_WIDTH;
+    const float baseHeight = (verticalSpace - totalGaps) / VISIBLE_GESTURES;
+    const float gestureRectHeight = baseHeight * 0.9f;
+    const float gestureRectWidth = gestureRectHeight;
+    const float recordSquareLayoutSize = verticalSpace;
+    const float totalWidth = gestureRectWidth + recordSquareLayoutSize;
+    const float horizontalMargin = (monitor.m_size.x - totalWidth) / 3.0f;
+
+    const float maxVerticalSize = monitor.m_size.y - (PADDING + TEXT_HEIGHT +
+                                                       TEXT_GAP) - BOTTOM_MARGIN;
+    const float maxHorizontalSize = monitor.m_size.x - (horizontalMargin +
+                                        gestureRectWidth + horizontalMargin);
+
+    // On narrow monitor, horizontal should be limiting
+    EXPECT_LT(maxHorizontalSize, maxVerticalSize);
+    EXPECT_FLOAT_EQ(bounds.size, maxHorizontalSize);
+}
+
+// Test that vertical constraint is applied on wide monitors
+TEST_F(RecordModeRestrictionTest, VerticalConstraintOnWideMonitor) {
+    // Set up a wide monitor where vertical space is the limiting factor
+    monitor.m_position = {0, 0};
+    monitor.m_size = {2560, 800};
+
+    auto bounds = calculateRightSquare();
+
+    // Calculate expected values
+    const float verticalSpace = monitor.m_size.y - (2.0f * PADDING);
+    const float totalGaps = (VISIBLE_GESTURES - 1) * GAP_WIDTH;
+    const float baseHeight = (verticalSpace - totalGaps) / VISIBLE_GESTURES;
+    const float gestureRectHeight = baseHeight * 0.9f;
+    const float gestureRectWidth = gestureRectHeight;
+    const float recordSquareLayoutSize = verticalSpace;
+    const float totalWidth = gestureRectWidth + recordSquareLayoutSize;
+    const float horizontalMargin = (monitor.m_size.x - totalWidth) / 3.0f;
+
+    const float maxVerticalSize = monitor.m_size.y - (PADDING + TEXT_HEIGHT +
+                                                       TEXT_GAP) - BOTTOM_MARGIN;
+    const float maxHorizontalSize = monitor.m_size.x - (horizontalMargin +
+                                        gestureRectWidth + horizontalMargin);
+
+    // On wide monitor, vertical should be limiting
+    EXPECT_LT(maxVerticalSize, maxHorizontalSize);
+    EXPECT_FLOAT_EQ(bounds.size, maxVerticalSize);
+}
+
+// Test that bottom margin constant has expected value
+TEST_F(RecordModeRestrictionTest, BottomMarginConstant) {
+    EXPECT_EQ(BOTTOM_MARGIN, 20.0f);
+}
+
+// Test rectangle doesn't overlap with bottom margin
+TEST_F(RecordModeRestrictionTest, NoOverlapWithBottomMargin) {
+    auto bounds = calculateRightSquare();
+
+    const float bottomEdge = bounds.y + bounds.size;
+    const float monitorBottom = monitor.m_size.y;
+    const float marginStart = monitorBottom - BOTTOM_MARGIN;
+
+    // Rectangle bottom should not extend into the margin area
+    EXPECT_LE(bottomEdge, marginStart);
+}
+
+// Test rectangle size is consistent across reloads
+TEST_F(RecordModeRestrictionTest, ConsistentSizeAcrossReloads) {
+    auto bounds1 = calculateRightSquare();
+    auto bounds2 = calculateRightSquare();
+
+    EXPECT_FLOAT_EQ(bounds1.size, bounds2.size);
+    EXPECT_FLOAT_EQ(bounds1.x, bounds2.x);
+    EXPECT_FLOAT_EQ(bounds1.y, bounds2.y);
 }

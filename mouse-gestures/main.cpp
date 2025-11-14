@@ -80,6 +80,7 @@ std::vector<GestureAction> g_gestureActions;
 bool g_recordMode = false;
 bool g_lastRecordMode = false;
 bool g_pluginShuttingDown = false;
+std::string g_configFilePath;
 
 // Scroll offset for gesture list in record mode (per-monitor)
 std::unordered_map<PHLMONITOR, float> g_scrollOffsets;
@@ -742,11 +743,55 @@ static bool batchDeleteGesturesFromConfig(
                 std::remove(tempPath.c_str());
                 return false;
             }
+            g_configFilePath = configPath;
             return true;
         }
     }
 
     return false;
+}
+
+// Helper function to detect which config file is being used
+static void detectConfigFilePath() {
+    const char* home = std::getenv("HOME");
+    if (!home) {
+        return;
+    }
+
+    std::string configBasePath = std::string(home) + "/.config/hypr";
+    std::vector<std::string> configPaths = {
+        configBasePath + "/config/plugins.conf",
+        configBasePath + "/hyprland.conf"
+    };
+
+    // Try each config file to see which one contains mouse_gestures configuration
+    for (const auto& configPath : configPaths) {
+        std::ifstream inFile(configPath);
+        if (!inFile.is_open()) {
+            continue;
+        }
+
+        std::string line;
+        while (std::getline(inFile, line)) {
+            std::string trimmed = line;
+            trimmed.erase(0, trimmed.find_first_not_of(" \t"));
+            trimmed.erase(trimmed.find_last_not_of(" \t") + 1);
+
+            // Check if this line contains mouse_gestures configuration
+            if (trimmed.find("mouse_gestures") != std::string::npos ||
+                trimmed.find("gesture_action") != std::string::npos) {
+                g_configFilePath = configPath;
+                inFile.close();
+                return;
+            }
+        }
+        inFile.close();
+    }
+
+    // Default to plugins.conf if no config found
+    if (g_configFilePath.empty()) {
+        g_configFilePath = configBasePath + "/config/plugins.conf";
+    }
 }
 
 // Helper function to add gesture to Hyprland config file
@@ -871,6 +916,7 @@ static bool addGestureToConfig(const std::string& strokeData) {
                 std::remove(tempPath.c_str());
                 return false;
             }
+            g_configFilePath = configPath;
             return true;
         }
     }
@@ -979,6 +1025,7 @@ static bool addGestureToConfig(const std::string& strokeData) {
                 std::remove(tempPath.c_str());
                 return false;
             }
+            g_configFilePath = configPath;
             return true;
         }
     }
@@ -1986,6 +2033,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         PHANDLE,
         "configReloaded",
         [&](void* self, SCallbackInfo& info, std::any data) {
+            // Detect which config file is being used
+            detectConfigFilePath();
+
             // Load background image
             auto* const PBACKGROUNDPATH =
                 HyprlandAPI::getConfigValue(PHANDLE, "plugin:mouse_gestures:background_path");

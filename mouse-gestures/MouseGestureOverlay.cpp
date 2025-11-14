@@ -8,6 +8,8 @@
 #include <cmath>
 #include <unordered_map>
 #include <unordered_set>
+#include <cairo/cairo.h>
+#include <pango/pangocairo.h>
 
 extern HANDLE PHANDLE;
 
@@ -42,6 +44,7 @@ struct GestureAction {
 extern std::vector<GestureAction> g_gestureActions;
 extern std::unordered_map<PHLMONITOR, float> g_scrollOffsets;
 extern std::unordered_map<PHLMONITOR, float> g_maxScrollOffsets;
+extern std::string g_configFilePath;
 
 // Animation state for record mode entry
 extern std::unordered_map<PHLMONITOR, PHLANIMVAR<Vector2D>> g_recordAnimSize;
@@ -413,6 +416,9 @@ void CMouseGestureOverlay::renderRecordModeUI(PHLMONITOR monitor) {
     constexpr float PADDING = 20.0f;
     constexpr float GAP_WIDTH = 10.0f;
     constexpr int VISIBLE_GESTURES = 3;
+    constexpr float TEXT_HEIGHT = 80.0f;
+    constexpr float TEXT_GAP = 20.0f;
+    constexpr float BOTTOM_MARGIN = 20.0f;
 
     const Vector2D monitorSize = monitor->m_size;
     CRegion fullDamage{0, 0, INT16_MAX, INT16_MAX};
@@ -438,14 +444,22 @@ void CMouseGestureOverlay::renderRecordModeUI(PHLMONITOR monitor) {
     const float baseHeight = (verticalSpace - totalGaps) / VISIBLE_GESTURES;
     const float gestureRectHeight = baseHeight * 0.9f;
     const float gestureRectWidth = gestureRectHeight;
-    const float recordSquareSize = verticalSpace;
-    const float totalWidth = gestureRectWidth + recordSquareSize;
+    // Use original vertical space for layout calculation
+    const float recordSquareLayoutSize = verticalSpace;
+    const float totalWidth = gestureRectWidth + recordSquareLayoutSize;
     const float horizontalMargin = (monitorSize.x - totalWidth) / 3.0f;
+    // Rectangle extends from below the text to the bottom margin
+    const float maxVerticalSize = monitorSize.y - (PADDING + TEXT_HEIGHT +
+                                                    TEXT_GAP) - BOTTOM_MARGIN;
+    // Also ensure it fits horizontally
+    const float maxHorizontalSize = monitorSize.x - (horizontalMargin +
+                                     gestureRectWidth + horizontalMargin);
+    const float recordSquareSize = std::min(maxVerticalSize, maxHorizontalSize);
 
     // Apply animation transform to record square
     Vector2D recordPos = {
         horizontalMargin + gestureRectWidth + horizontalMargin,
-        PADDING
+        PADDING + TEXT_HEIGHT + TEXT_GAP
     };
     Vector2D recordSize = {recordSquareSize, recordSquareSize};
 
@@ -458,6 +472,54 @@ void CMouseGestureOverlay::renderRecordModeUI(PHLMONITOR monitor) {
         recordSize.x * zoomScale,
         recordSize.y * zoomScale
     };
+
+    // Render text above the record square
+    const float textX = recordPos.x;
+    const float textY = PADDING;
+    const float textWidth = recordSquareSize;
+
+    // Create textures for the two text lines
+    SP<CTexture> line1Texture = makeShared<CTexture>();
+    SP<CTexture> line2Texture = makeShared<CTexture>();
+
+    // Render first line: "Register a new gesture."
+    const std::string line1Text = "Register a new gesture.";
+    Vector2D line1BufferSize = {textWidth, TEXT_HEIGHT / 2.0f};
+    renderText(line1Texture, line1Text, CHyprColor{1.0, 1.0, 1.0, 1.0},
+              line1BufferSize, monitor->m_scale, 18);
+
+    // Render second line: "Config file: <path>"
+    std::string line2Text = "Config file: ";
+    if (!g_configFilePath.empty()) {
+        line2Text += g_configFilePath;
+    } else {
+        line2Text += "not set";
+    }
+    Vector2D line2BufferSize = {textWidth, TEXT_HEIGHT / 2.0f};
+    renderText(line2Texture, line2Text, CHyprColor{0.8, 0.8, 0.8, 1.0},
+              line2BufferSize, monitor->m_scale, 14);
+
+    // Transform text positions based on animation
+    Vector2D transformedTextPos1 = {
+        textX * zoomScale + currentPos.x,
+        textY * zoomScale + currentPos.y
+    };
+    Vector2D transformedTextPos2 = {
+        textX * zoomScale + currentPos.x,
+        (textY + TEXT_HEIGHT / 2.0f) * zoomScale + currentPos.y
+    };
+
+    // Render the text textures
+    if (line1Texture && line1Texture->m_texID != 0) {
+        CBox line1Box = {transformedTextPos1,
+                        {textWidth * zoomScale, (TEXT_HEIGHT / 2.0f) * zoomScale}};
+        g_pHyprOpenGL->renderTexture(line1Texture, line1Box, {});
+    }
+    if (line2Texture && line2Texture->m_texID != 0) {
+        CBox line2Box = {transformedTextPos2,
+                        {textWidth * zoomScale, (TEXT_HEIGHT / 2.0f) * zoomScale}};
+        g_pHyprOpenGL->renderTexture(line2Texture, line2Box, {});
+    }
 
     renderRecordSquare(transformedRecordPos, transformedRecordSize, fullDamage);
 
@@ -536,6 +598,59 @@ void CMouseGestureOverlay::renderGestureTrail(PHLMONITOR monitor,
             .round = static_cast<int>(config.circleRadius)
         });
     }
+}
+
+void CMouseGestureOverlay::renderText(SP<CTexture> out,
+                                       const std::string& text,
+                                       const CHyprColor& color,
+                                       const Vector2D& bufferSize,
+                                       float scale,
+                                       int fontSize) {
+    const auto CAIROSURFACE = cairo_image_surface_create(CAIRO_FORMAT_ARGB32,
+                                                         bufferSize.x,
+                                                         bufferSize.y);
+    const auto CAIRO = cairo_create(CAIROSURFACE);
+
+    cairo_save(CAIRO);
+    cairo_set_operator(CAIRO, CAIRO_OPERATOR_CLEAR);
+    cairo_paint(CAIRO);
+    cairo_restore(CAIRO);
+
+    PangoLayout* layout = pango_cairo_create_layout(CAIRO);
+    PangoFontDescription* fontDesc = pango_font_description_from_string("Sans");
+
+    pango_font_description_set_size(fontDesc, fontSize * PANGO_SCALE);
+    pango_layout_set_font_description(layout, fontDesc);
+    pango_layout_set_text(layout, text.c_str(), -1);
+
+    int textW, textH;
+    pango_layout_get_size(layout, &textW, &textH);
+    textW /= PANGO_SCALE;
+    textH /= PANGO_SCALE;
+
+    cairo_set_source_rgba(CAIRO, color.r, color.g, color.b, color.a);
+    cairo_move_to(CAIRO, (bufferSize.x - textW) / 2.0, (bufferSize.y - textH) / 2.0);
+    pango_cairo_show_layout(CAIRO, layout);
+
+    g_object_unref(layout);
+    pango_font_description_free(fontDesc);
+
+    const auto DATA = cairo_image_surface_get_data(CAIROSURFACE);
+    out->allocate();
+    glBindTexture(GL_TEXTURE_2D, out->m_texID);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+
+#ifndef GLES2
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, GL_BLUE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, GL_RED);
+#endif
+
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, bufferSize.x, bufferSize.y, 0,
+                GL_RGBA, GL_UNSIGNED_BYTE, DATA);
+
+    cairo_destroy(CAIRO);
+    cairo_surface_destroy(CAIROSURFACE);
 }
 
 CMouseGestureOverlay::TrailConfig CMouseGestureOverlay::getTrailConfig() {
