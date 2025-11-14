@@ -81,6 +81,7 @@ bool g_recordMode = false;
 bool g_lastRecordMode = false;
 bool g_pluginShuttingDown = false;
 std::string g_configFilePath;
+Vector2D g_lastMousePos = {0, 0};
 
 // Scroll offset for gesture list in record mode (per-monitor)
 std::unordered_map<PHLMONITOR, float> g_scrollOffsets;
@@ -442,9 +443,8 @@ static GestureLayout calculateGestureLayout(PHLMONITOR monitor) {
     const float baseHeight = (verticalSpace - totalGaps) / VISIBLE_GESTURES;
     const float gestureRectHeight = baseHeight * 0.9f;
     const float gestureRectWidth = gestureRectHeight;
-    const float recordSquareSize = verticalSpace;
-    const float totalWidth = gestureRectWidth + recordSquareSize;
-    const float horizontalMargin = (monitorSize.x - totalWidth) / 3.0f;
+    // Use fixed small margin on left side (matching MouseGestureOverlay.cpp)
+    const float horizontalMargin = PADDING;
 
     return {gestureRectHeight, gestureRectWidth, horizontalMargin};
 }
@@ -1754,14 +1754,20 @@ static void setupMouseButtonHook() {
 static void setupMouseMoveHook() {
     auto onMouseMove = [](void* self, SCallbackInfo& info, std::any param) {
         try {
-            if (!g_gestureState.rightButtonPressed)
-                return;
-
             if (!g_pInputManager) {
                 return;
             }
 
             const Vector2D mousePos = g_pInputManager->getMouseCoordsInternal();
+
+            // Update global mouse position for hover detection in record mode
+            if (g_recordMode) {
+                g_lastMousePos = mousePos;
+                damageAllMonitors(); // Trigger redraw for hover updates
+            }
+
+            if (!g_gestureState.rightButtonPressed)
+                return;
             auto now = std::chrono::steady_clock::now();
 
             // Always record timestamped path points while button is pressed

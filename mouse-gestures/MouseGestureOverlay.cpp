@@ -33,6 +33,7 @@ struct MouseGestureState {
 extern MouseGestureState g_gestureState;
 extern bool g_recordMode;
 extern bool g_pluginShuttingDown;
+extern Vector2D g_lastMousePos;
 
 // Forward declaration from main.cpp
 struct GestureAction {
@@ -64,7 +65,7 @@ CMouseGestureOverlay::CMouseGestureOverlay(PHLMONITOR monitor) : pMonitor(monito
 }
 
 CMouseGestureOverlay::~CMouseGestureOverlay() {
-    // Default destructor
+    // Destructor
 }
 
 void CMouseGestureOverlay::draw(const CRegion& damage) {
@@ -352,7 +353,9 @@ static void getGestureAnimationValues(size_t gestureIndex, float& scale,
 
 void CMouseGestureOverlay::renderGestureSquare(float x, float y, float size,
                                                 size_t gestureIndex,
-                                                const CRegion& damage) {
+                                                const CRegion& damage,
+                                                float recordSquareX,
+                                                PHLMONITOR monitor) {
     try {
         if (gestureIndex >= g_gestureActions.size())
             return;
@@ -405,6 +408,114 @@ void CMouseGestureOverlay::renderGestureSquare(float x, float y, float size,
         if (g_recordMode) {
             renderDeleteButton(scaledX, scaledY, scaledSize, damage, alpha);
         }
+
+        // Render text on hover
+        if (g_recordMode && monitor) {
+            // Convert mouse position to monitor-relative coordinates
+            const Vector2D monitorPos = monitor->m_position;
+            const Vector2D relativeMousePos = {
+                g_lastMousePos.x - monitorPos.x,
+                g_lastMousePos.y - monitorPos.y
+            };
+
+            // Check if mouse is hovering over this gesture rectangle
+            bool isHovered = relativeMousePos.x >= scaledX &&
+                            relativeMousePos.x <= scaledX + scaledSize &&
+                            relativeMousePos.y >= scaledY &&
+                            relativeMousePos.y <= scaledY + scaledSize;
+
+            if (isHovered) {
+
+                std::string commandText;
+                if (gesture.command.empty()) {
+                    commandText = "No command assigned. Modify config file to add a command";
+                } else {
+                    commandText = gesture.command;
+                }
+
+                // Trim to 100 characters
+                if (commandText.length() > 100) {
+                    commandText = commandText.substr(0, 97) + "...";
+                }
+
+                // Render tooltip at bottom of gesture rectangle
+                constexpr int FONT_SIZE = 15;
+                constexpr float TOOLTIP_PADDING = 6.0f;
+                // Use 2.5x line height to ensure descenders (g, p, y, q) are not clipped
+                const float lineHeight = FONT_SIZE * 2.5f;
+
+                // Measure actual text width using Pango
+                const auto CAIROSURFACE = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
+                const auto CAIRO = cairo_create(CAIROSURFACE);
+                PangoLayout* layout = pango_cairo_create_layout(CAIRO);
+                PangoFontDescription* fontDesc = pango_font_description_from_string("Sans");
+                pango_font_description_set_size(fontDesc, FONT_SIZE * PANGO_SCALE);
+                pango_layout_set_font_description(layout, fontDesc);
+                pango_layout_set_text(layout, commandText.c_str(), -1);
+
+                int textW, textH;
+                pango_layout_get_size(layout, &textW, &textH);
+                const float measuredTextWidth = static_cast<float>(textW) / PANGO_SCALE;
+
+                g_object_unref(layout);
+                pango_font_description_free(fontDesc);
+                cairo_destroy(CAIRO);
+                cairo_surface_destroy(CAIROSURFACE);
+
+                // Tooltip dimensions
+                const float tooltipWidth = measuredTextWidth + TOOLTIP_PADDING * 2.0f;
+                const float tooltipHeight = lineHeight + TOOLTIP_PADDING * 2.0f;
+
+                // Position tooltip at bottom-left of gesture rectangle
+                const float tooltipX = x;
+                const float tooltipY = y + size - tooltipHeight;
+
+                // Render tooltip background
+                CBox tooltipBg = {{tooltipX, tooltipY}, {tooltipWidth, tooltipHeight}};
+                CHyprColor bgColor{0.1, 0.1, 0.1, 0.9};
+                g_pHyprOpenGL->renderRect(tooltipBg, bgColor, {.damage = &damage});
+
+                // Render tooltip border (manually since renderBoxBorders expects square)
+                CHyprColor borderColor{0.5, 0.5, 0.5, 1.0};
+                constexpr float BORDER_SIZE = 1.0f;
+
+                // Top border
+                CBox topBorder = {{tooltipX, tooltipY}, {tooltipWidth, BORDER_SIZE}};
+                g_pHyprOpenGL->renderRect(topBorder, borderColor, {.damage = &damage});
+
+                // Bottom border
+                CBox bottomBorder = {{tooltipX, tooltipY + tooltipHeight - BORDER_SIZE},
+                                    {tooltipWidth, BORDER_SIZE}};
+                g_pHyprOpenGL->renderRect(bottomBorder, borderColor, {.damage = &damage});
+
+                // Left border
+                CBox leftBorder = {{tooltipX, tooltipY}, {BORDER_SIZE, tooltipHeight}};
+                g_pHyprOpenGL->renderRect(leftBorder, borderColor, {.damage = &damage});
+
+                // Right border
+                CBox rightBorder = {{tooltipX + tooltipWidth - BORDER_SIZE, tooltipY},
+                                   {BORDER_SIZE, tooltipHeight}};
+                g_pHyprOpenGL->renderRect(rightBorder, borderColor, {.damage = &damage});
+
+                // Render text
+                SP<CTexture> commandTexture = makeShared<CTexture>();
+                Vector2D lineBufferSize = {measuredTextWidth, lineHeight};
+
+                CHyprColor textColor{0.9, 0.9, 0.9, 1.0};
+                if (gesture.command.empty()) {
+                    textColor = CHyprColor{0.6, 0.6, 0.6, 1.0};
+                }
+
+                renderText(commandTexture, commandText, textColor, lineBufferSize,
+                          monitor->m_scale, FONT_SIZE);
+
+                if (commandTexture && commandTexture->m_texID != 0) {
+                    CBox textBox = {{tooltipX + TOOLTIP_PADDING, tooltipY + TOOLTIP_PADDING},
+                                   {measuredTextWidth, lineHeight}};
+                    g_pHyprOpenGL->renderTexture(commandTexture, textBox, {});
+                }
+            }
+        }
     } catch (const std::exception& e) {
         // Silently fail to avoid crashing Hyprland
     } catch (...) {
@@ -444,21 +555,21 @@ void CMouseGestureOverlay::renderRecordModeUI(PHLMONITOR monitor) {
     const float baseHeight = (verticalSpace - totalGaps) / VISIBLE_GESTURES;
     const float gestureRectHeight = baseHeight * 0.9f;
     const float gestureRectWidth = gestureRectHeight;
-    // Use original vertical space for layout calculation
-    const float recordSquareLayoutSize = verticalSpace;
-    const float totalWidth = gestureRectWidth + recordSquareLayoutSize;
-    const float horizontalMargin = (monitorSize.x - totalWidth) / 3.0f;
+    // Use fixed small margins on left and right sides
+    const float horizontalMargin = PADDING;
     // Rectangle extends from below the text to the bottom margin
     const float maxVerticalSize = monitorSize.y - (PADDING + TEXT_HEIGHT +
                                                     TEXT_GAP) - BOTTOM_MARGIN;
-    // Also ensure it fits horizontally
+    // Also ensure it fits horizontally with margins on both sides
     const float maxHorizontalSize = monitorSize.x - (horizontalMargin +
-                                     gestureRectWidth + horizontalMargin);
+                                     gestureRectWidth + horizontalMargin +
+                                     horizontalMargin);
     const float recordSquareSize = std::min(maxVerticalSize, maxHorizontalSize);
 
     // Apply animation transform to record square
+    // Position record square close to the right edge with horizontalMargin
     Vector2D recordPos = {
-        horizontalMargin + gestureRectWidth + horizontalMargin,
+        monitorSize.x - horizontalMargin - recordSquareSize,
         PADDING + TEXT_HEIGHT + TEXT_GAP
     };
     Vector2D recordSize = {recordSquareSize, recordSquareSize};
@@ -478,17 +589,14 @@ void CMouseGestureOverlay::renderRecordModeUI(PHLMONITOR monitor) {
     const float textY = PADDING;
     const float textWidth = recordSquareSize;
 
-    // Create textures for the two text lines
-    SP<CTexture> line1Texture = makeShared<CTexture>();
-    SP<CTexture> line2Texture = makeShared<CTexture>();
+    SP<CTexture> headerLine1 = makeShared<CTexture>();
+    SP<CTexture> headerLine2 = makeShared<CTexture>();
 
-    // Render first line: "Register a new gesture."
     const std::string line1Text = "Register a new gesture.";
     Vector2D line1BufferSize = {textWidth, TEXT_HEIGHT / 2.0f};
-    renderText(line1Texture, line1Text, CHyprColor{1.0, 1.0, 1.0, 1.0},
+    renderText(headerLine1, line1Text, CHyprColor{1.0, 1.0, 1.0, 1.0},
               line1BufferSize, monitor->m_scale, 18);
 
-    // Render second line: "Config file: <path>"
     std::string line2Text = "Config file: ";
     if (!g_configFilePath.empty()) {
         line2Text += g_configFilePath;
@@ -496,29 +604,17 @@ void CMouseGestureOverlay::renderRecordModeUI(PHLMONITOR monitor) {
         line2Text += "not set";
     }
     Vector2D line2BufferSize = {textWidth, TEXT_HEIGHT / 2.0f};
-    renderText(line2Texture, line2Text, CHyprColor{0.8, 0.8, 0.8, 1.0},
+    renderText(headerLine2, line2Text, CHyprColor{0.8, 0.8, 0.8, 1.0},
               line2BufferSize, monitor->m_scale, 14);
 
-    // Transform text positions based on animation
-    Vector2D transformedTextPos1 = {
-        textX * zoomScale + currentPos.x,
-        textY * zoomScale + currentPos.y
-    };
-    Vector2D transformedTextPos2 = {
-        textX * zoomScale + currentPos.x,
-        (textY + TEXT_HEIGHT / 2.0f) * zoomScale + currentPos.y
-    };
-
     // Render the text textures
-    if (line1Texture && line1Texture->m_texID != 0) {
-        CBox line1Box = {transformedTextPos1,
-                        {textWidth * zoomScale, (TEXT_HEIGHT / 2.0f) * zoomScale}};
-        g_pHyprOpenGL->renderTexture(line1Texture, line1Box, {});
+    if (headerLine1 && headerLine1->m_texID != 0) {
+        CBox line1Box = {{textX, textY}, {textWidth, TEXT_HEIGHT / 2.0f}};
+        g_pHyprOpenGL->renderTexture(headerLine1, line1Box, {});
     }
-    if (line2Texture && line2Texture->m_texID != 0) {
-        CBox line2Box = {transformedTextPos2,
-                        {textWidth * zoomScale, (TEXT_HEIGHT / 2.0f) * zoomScale}};
-        g_pHyprOpenGL->renderTexture(line2Texture, line2Box, {});
+    if (headerLine2 && headerLine2->m_texID != 0) {
+        CBox line2Box = {{textX, textY + TEXT_HEIGHT / 2.0f}, {textWidth, TEXT_HEIGHT / 2.0f}};
+        g_pHyprOpenGL->renderTexture(headerLine2, line2Box, {});
     }
 
     renderRecordSquare(transformedRecordPos, transformedRecordSize, fullDamage);
@@ -551,7 +647,7 @@ void CMouseGestureOverlay::renderRecordModeUI(PHLMONITOR monitor) {
         float transformedSize = gestureRectWidth * zoomScale;
 
         renderGestureSquare(transformedX, transformedY, transformedSize, i,
-                           fullDamage);
+                           fullDamage, transformedRecordPos.x, monitor);
     }
 }
 
@@ -629,7 +725,12 @@ void CMouseGestureOverlay::renderText(SP<CTexture> out,
     textH /= PANGO_SCALE;
 
     cairo_set_source_rgba(CAIRO, color.r, color.g, color.b, color.a);
-    cairo_move_to(CAIRO, (bufferSize.x - textW) / 2.0, (bufferSize.y - textH) / 2.0);
+
+    // Center horizontally and vertically
+    float xPos = (bufferSize.x - textW) / 2.0;
+    float yPos = (bufferSize.y - textH) / 2.0;
+
+    cairo_move_to(CAIRO, xPos, yPos);
     pango_cairo_show_layout(CAIRO, layout);
 
     g_object_unref(layout);
