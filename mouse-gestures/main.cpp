@@ -12,6 +12,8 @@
 #include <sstream>
 #include <chrono>
 #include <thread>
+#include <mutex>
+#include <atomic>
 #include <wayland-server.h>
 #include <wayland-server-protocol.h>
 #include <linux/input-event-codes.h>
@@ -82,6 +84,10 @@ bool g_lastRecordMode = false;
 bool g_pluginShuttingDown = false;
 std::string g_configFilePath;
 Vector2D g_lastMousePos = {0, 0};
+
+// Synchronization for config file writes
+std::atomic<int> g_fileWriteCount{0};
+std::mutex g_fileWriteMutex;
 
 // Scroll offset for gesture list in record mode (per-monitor)
 std::unordered_map<PHLMONITOR, float> g_scrollOffsets;
@@ -601,8 +607,15 @@ static void processPendingGestureDeletions() {
     }
     std::vector<std::string> deletionsToProcess = g_pendingGestureDeletions;
     g_pendingGestureDeletions.clear();
+    g_fileWriteCount++;
     std::thread([deletionsToProcess]() {
-        batchDeleteGesturesFromConfig(deletionsToProcess);
+        try {
+            std::lock_guard<std::mutex> lock(g_fileWriteMutex);
+            batchDeleteGesturesFromConfig(deletionsToProcess);
+        } catch (...) {
+            // Silently catch errors
+        }
+        g_fileWriteCount--;
     }).detach();
 }
 
@@ -613,10 +626,17 @@ static void processPendingGestureAdditions() {
     }
     std::vector<std::string> additionsToProcess = g_pendingGestureAdditions;
     g_pendingGestureAdditions.clear();
+    g_fileWriteCount++;
     std::thread([additionsToProcess]() {
-        for (const auto& strokeData : additionsToProcess) {
-            addGestureToConfig(strokeData);
+        try {
+            std::lock_guard<std::mutex> lock(g_fileWriteMutex);
+            for (const auto& strokeData : additionsToProcess) {
+                addGestureToConfig(strokeData);
+            }
+        } catch (...) {
+            // Silently catch errors
         }
+        g_fileWriteCount--;
     }).detach();
 }
 
@@ -1528,6 +1548,16 @@ static SDispatchResult mouseGesturesDispatch(std::string arg) {
             }
             // If we're entering record mode, reset scroll offsets and setup animations
             else if (!wasRecordMode) {
+                // Wait for any ongoing file writes to complete
+                // Use a timeout to avoid infinite waiting
+                constexpr int MAX_WAIT_MS = 5000;  // 5 seconds max wait
+                constexpr int SLEEP_MS = 10;       // Check every 10ms
+                int totalWaitMs = 0;
+                while (g_fileWriteCount > 0 && totalWaitMs < MAX_WAIT_MS) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(SLEEP_MS));
+                    totalWaitMs += SLEEP_MS;
+                }
+
                 g_recordMode = true;
                 g_scrollOffsets.clear();
                 g_maxScrollOffsets.clear();
@@ -2099,15 +2129,19 @@ APICALL EXPORT void PLUGIN_EXIT() {
         g_recordMode = false;
 
         // Process any pending gesture changes synchronously before exit
-        if (!g_pendingGestureAdditions.empty()) {
-            for (const auto& strokeData : g_pendingGestureAdditions) {
-                addGestureToConfig(strokeData);
+        // Lock the mutex to ensure no background threads are writing
+        {
+            std::lock_guard<std::mutex> lock(g_fileWriteMutex);
+            if (!g_pendingGestureAdditions.empty()) {
+                for (const auto& strokeData : g_pendingGestureAdditions) {
+                    addGestureToConfig(strokeData);
+                }
+                g_pendingGestureAdditions.clear();
             }
-            g_pendingGestureAdditions.clear();
-        }
-        if (!g_pendingGestureDeletions.empty()) {
-            batchDeleteGesturesFromConfig(g_pendingGestureDeletions);
-            g_pendingGestureDeletions.clear();
+            if (!g_pendingGestureDeletions.empty()) {
+                batchDeleteGesturesFromConfig(g_pendingGestureDeletions);
+                g_pendingGestureDeletions.clear();
+            }
         }
 
         // Unhook all event handlers to prevent callbacks from running
