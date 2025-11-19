@@ -427,6 +427,7 @@ void COverview::setupMouseButtonHook() {
                 if (g_dragState.isDragging) {
                     // Dragging detected - handle window move
                     if (g_dragState.draggedWindow) {
+
                         // Find target workspace at release position
                         auto [targetOverview, targetIndex] =
                             findWorkspaceAtGlobalPosition(mousePos);
@@ -1838,13 +1839,15 @@ std::pair<COverview*, int> COverview::findWorkspaceAtGlobalPosition(
 ) {
     // Find which monitor the position is on
     const auto monitor = g_pCompositor->getMonitorFromVector(globalPos);
-    if (!monitor)
+    if (!monitor) {
         return {nullptr, -1};
+    }
 
     // Check if that monitor has an overview
     auto it = g_pOverviews.find(monitor);
-    if (it == g_pOverviews.end() || !it->second)
+    if (it == g_pOverviews.end() || !it->second) {
         return {nullptr, -1};
+    }
 
     COverview* overview = it->second.get();
 
@@ -2327,8 +2330,9 @@ int COverview::calculateDropDirection(PHLWINDOW targetWindow, const Vector2D& cu
 
 void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex,
                                       const Vector2D& cursorPos) {
-    if (!window || targetWorkspaceIndex < 0 || targetWorkspaceIndex >= (int)images.size())
+    if (!window || targetWorkspaceIndex < 0 || targetWorkspaceIndex >= (int)images.size()) {
         return;
+    }
 
     auto& targetImage = images[targetWorkspaceIndex];
 
@@ -2434,12 +2438,15 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
 
     Vector2D workspaceCursorPos = convertPreviewToWorkspaceCoords(cursorPos, targetWorkspaceIndex);
 
-    if (targetWindow && !targetWindow->m_isFloating && !targetWindow->isFullscreen()) {
+    // Only calculate drop direction for tiling windows
+    if (!window->m_isFloating && targetWindow && !targetWindow->m_isFloating &&
+        !targetWindow->isFullscreen()) {
         dropDirection = calculateDropDirection(targetWindow, workspaceCursorPos);
     }
 
-    if (!window || !targetImage.pWorkspace)
+    if (!window || !targetImage.pWorkspace) {
         return;
+    }
 
     // If already in target workspace and no valid tiling target, don't move
     if (window->m_workspace == targetImage.pWorkspace &&
@@ -2450,12 +2457,13 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
     PHLWINDOW originalFocus = g_pCompositor->m_lastWindow.lock();
     bool didFocus = false;
 
-    if (dropDirection != DIRECTION_DEFAULT && targetWindow) {
+    // Only attempt tiling operations for non-floating windows
+    if (!window->m_isFloating && dropDirection != DIRECTION_DEFAULT && targetWindow) {
         g_pCompositor->focusWindow(targetWindow);
         didFocus = true;
     }
 
-    if (dropDirection != DIRECTION_DEFAULT && targetWindow) {
+    if (!window->m_isFloating && dropDirection != DIRECTION_DEFAULT && targetWindow) {
         auto layout = g_pLayoutManager->getCurrentLayout();
         if (layout) {
             window->m_workspace = targetImage.pWorkspace;
