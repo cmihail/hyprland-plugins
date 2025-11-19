@@ -193,6 +193,35 @@ plugin:workspace_overview:drop_workspace_color = 0xffffffcc  # White with 80% op
 plugin:workspace_overview:placeholders_num = 5
 ```
 
+### Mouse Button Configuration
+
+```conf
+# Mouse button for closing windows (optional, disabled by default)
+# Click on a window with this button to close it
+# Only closes if the click was not a drag (respects drag_threshold)
+plugin:workspace_overview:kill_window_action_button = 273  # Right-click (example)
+
+# Mouse button for dragging windows between workspaces
+plugin:workspace_overview:drag_window_action_button = 272  # Left-click (default)
+
+# Mouse button for dragging workspaces to reorder them
+plugin:workspace_overview:drag_workspace_action_button = 274  # Middle-click (default)
+
+# Mouse button for selecting a workspace (when not dragging)
+plugin:workspace_overview:select_workspace_action_button = 272  # Left-click (default)
+
+# Minimum pixel distance to initiate a drag operation
+plugin:workspace_overview:drag_threshold = 50.0
+```
+
+**Mouse Button Codes**:
+- 272 = Left mouse button (BTN_LEFT)
+- 273 = Right mouse button (BTN_RIGHT)
+- 274 = Middle mouse button (BTN_MIDDLE)
+- Find other button codes by running `wev` or `xev` and pressing mouse buttons
+
+**Note**: The `kill_window_action_button` is disabled by default. To enable window closing via mouse click, uncomment or add the configuration line with your preferred button code.
+
 ### Layout Constants
 
 The following constants are defined in the code and control the layout:
