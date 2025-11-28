@@ -4,7 +4,7 @@ A Hyprland plugin that adds mouse gesture support using the easystroke pattern m
 
 ## Demo
 
-<video src="mouse-gestures.mp4" controls muted autoplay loop width="100%"></video>
+<video src="https://github.com/cmihail/hyprland-plugins/releases/download/v1.0.0/mouse-gestures.mp4" controls muted autoplay loop width="100%"></video>
 
 ## Features
 
