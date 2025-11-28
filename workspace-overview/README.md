@@ -2,6 +2,10 @@
 
 A Hyprland plugin that provides a visual workspace overview similar to GNOME's Activities view. Shows workspace previews in a split-screen layout: 4 surrounding workspaces on the left (1/3 of screen), and the current workspace on the right (2/3 of screen). Click on any workspace to switch to it.
 
+## Demo
+
+https://github.com/user-attachments/assets/workspace-overview.mp4
+
 ## Features
 
 - **Split-Screen Layout**:

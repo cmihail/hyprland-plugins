@@ -2,6 +2,10 @@
 
 A configurable Hyprland plugin that adds customizable action buttons to window decorations. Supports dynamic button configuration with custom colors, icons, commands, and state-dependent behavior.
 
+## Demo
+
+https://github.com/user-attachments/assets/window-actions.mp4
+
 ## Prerequisites
 
 On Fedora 42, install the required development packages:

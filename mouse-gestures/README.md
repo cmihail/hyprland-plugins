@@ -2,6 +2,10 @@
 
 A Hyprland plugin that adds mouse gesture support using the easystroke pattern matching algorithm.
 
+## Demo
+
+https://github.com/user-attachments/assets/mouse-gestures.mp4
+
 ## Features
 
 - **Easystroke Algorithm**: Uses the same sophisticated pattern matching algorithm as easystroke
