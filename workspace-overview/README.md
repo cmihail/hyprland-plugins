@@ -4,7 +4,7 @@ A Hyprland plugin that provides a visual workspace overview similar to GNOME's A
 
 ## Demo
 
-[Demo Video](workspace-overview.mp4)
+<video src="workspace-overview.mp4" controls muted autoplay loop width="100%"></video>
 
 ## Features
 
