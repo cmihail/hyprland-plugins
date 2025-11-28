@@ -4,7 +4,7 @@ A configurable Hyprland plugin that adds customizable action buttons to window d
 
 ## Demo
 
-https://github.com/user-attachments/assets/window-actions.mp4
+[Demo Video](window-actions.mp4)
 
 ## Prerequisites
 

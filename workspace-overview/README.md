@@ -4,7 +4,7 @@ A Hyprland plugin that provides a visual workspace overview similar to GNOME's A
 
 ## Demo
 
-https://github.com/user-attachments/assets/workspace-overview.mp4
+[Demo Video](workspace-overview.mp4)
 
 ## Features
 
