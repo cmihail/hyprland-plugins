@@ -2,7 +2,6 @@
 #include <algorithm>
 #include <any>
 #include <ctime>
-#include <fstream>
 #include <wayland-server.h>
 #define private public
 #include <hyprland/src/render/Renderer.hpp>
@@ -438,16 +437,6 @@ void COverview::setupMouseButtonHook() {
 
                             // Convert global mousePos to target monitor's local coordinates
                             const Vector2D targetMonitorLocalPos = mousePos - targetOverview->pMonitor->m_position;
-
-                            // Debug logging
-                            std::ofstream debugFile("/tmp/hyprland-debug", std::ios::app);
-                            debugFile << "=== Window Drop Debug ===" << std::endl;
-                            debugFile << "Global mousePos: (" << mousePos.x << ", " << mousePos.y << ")" << std::endl;
-                            debugFile << "Target monitor position: (" << targetOverview->pMonitor->m_position.x
-                                     << ", " << targetOverview->pMonitor->m_position.y << ")" << std::endl;
-                            debugFile << "Target monitor size: (" << targetOverview->pMonitor->m_size.x
-                                     << ", " << targetOverview->pMonitor->m_size.y << ")" << std::endl;
-                            debugFile << "Target monitor local pos: (" << targetMonitorLocalPos.x << ", " << targetMonitorLocalPos.y << ")" << std::endl;
 
                             targetOverview->moveWindowToWorkspace(
                                 draggedWin, targetIndex, targetMonitorLocalPos
@@ -2159,11 +2148,6 @@ Vector2D COverview::convertPreviewToWorkspaceCoords(const Vector2D& pos, int wor
 
     const auto& image = images[workspaceIndex];
 
-    // Debug logging
-    std::ofstream debugFile("/tmp/hyprland-debug", std::ios::app);
-    debugFile << "convertPreviewToWorkspaceCoords input pos: (" << pos.x << ", " << pos.y << ")" << std::endl;
-    debugFile << "Monitor position: (" << pMonitor->m_position.x << ", " << pMonitor->m_position.y << ")" << std::endl;
-
     // Get animation values to transform box the same way as in rendering
     const Vector2D monitorSize = pMonitor->m_size;
     const Vector2D currentSize = size->value();
@@ -2212,13 +2196,6 @@ Vector2D COverview::convertPreviewToWorkspaceCoords(const Vector2D& pos, int wor
     // Convert to global coordinates (windows are positioned globally)
     Vector2D wsPos = {pMonitor->m_position.x + relX * monitorSize.x,
                       pMonitor->m_position.y + relY * monitorSize.y};
-
-    // Debug logging
-    debugFile << "scaledBox: (" << scaledBox.x << ", " << scaledBox.y << ", " << scaledBox.w << ", " << scaledBox.h << ")" << std::endl;
-    debugFile << "relX: " << relX << ", relY: " << relY << std::endl;
-    debugFile << "Output wsPos: (" << wsPos.x << ", " << wsPos.y << ")" << std::endl;
-    debugFile << "========================" << std::endl;
-    debugFile.close();
 
     return wsPos;
 }
@@ -2489,17 +2466,19 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
         didFocus = true;
     }
 
+    // Always use moveWindowToWorkspaceSafe first to properly update all window state
+    // (workspace, monitor, rendering layers, etc.) especially for cross-monitor moves
+    g_pCompositor->moveWindowToWorkspaceSafe(window, targetImage.pWorkspace);
+
+    // If smart tiling is desired, reposition the window using layout manager
     if (!window->m_isFloating && dropDirection != DIRECTION_DEFAULT && targetWindow) {
         auto layout = g_pLayoutManager->getCurrentLayout();
         if (layout) {
-            window->m_workspace = targetImage.pWorkspace;
+            // Remove window from its current position in the layout
             layout->onWindowRemovedTiling(window);
+            // Re-add it with the specified direction to position it relative to target
             layout->onWindowCreatedTiling(window, static_cast<eDirection>(dropDirection));
-        } else {
-            g_pCompositor->moveWindowToWorkspaceSafe(window, targetImage.pWorkspace);
         }
-    } else {
-        g_pCompositor->moveWindowToWorkspaceSafe(window, targetImage.pWorkspace);
     }
 
     if (didFocus && originalFocus) {
