@@ -10,6 +10,7 @@
 #include <hyprland/src/managers/HookSystemManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/managers/KeybindManager.hpp>
+#include <hyprland/src/managers/SeatManager.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
 
@@ -26,6 +27,7 @@ inline HANDLE PHANDLE = nullptr;
 
 // Global state to track toggle
 static bool g_toggleState = false;
+static bool g_selectMode = false; // Track if overlay is in select mode (press/release mouse button)
 static bool g_pluginShuttingDown = false;
 static PHLWORKSPACE g_activeWorkspace = nullptr;
 
@@ -182,6 +184,42 @@ static void moveMouseToCell(int row, int col, int subColumn = -1) {
     }
 }
 
+// Helper function to simulate mouse button press
+static void simulateMouseButtonPress() {
+    try {
+        if (!g_pSeatManager) {
+            return;
+        }
+
+        // Simulate left mouse button press using SeatManager
+        g_pSeatManager->sendPointerButton(0, BTN_LEFT, WL_POINTER_BUTTON_STATE_PRESSED);
+        g_pSeatManager->sendPointerFrame();
+
+    } catch (const std::exception& e) {
+        Debug::log(ERR, "[no-mouse] Error pressing mouse button: {}", e.what());
+    } catch (...) {
+        Debug::log(ERR, "[no-mouse] Unknown error pressing mouse button");
+    }
+}
+
+// Helper function to simulate mouse button release
+static void simulateMouseButtonRelease() {
+    try {
+        if (!g_pSeatManager) {
+            return;
+        }
+
+        // Simulate left mouse button release using SeatManager
+        g_pSeatManager->sendPointerButton(0, BTN_LEFT, WL_POINTER_BUTTON_STATE_RELEASED);
+        g_pSeatManager->sendPointerFrame();
+
+    } catch (const std::exception& e) {
+        Debug::log(ERR, "[no-mouse] Error releasing mouse button: {}", e.what());
+    } catch (...) {
+        Debug::log(ERR, "[no-mouse] Unknown error releasing mouse button");
+    }
+}
+
 // Function to process letter sequence and set pending cell
 static void processLetterSequence() {
     if (g_letterSequence.length() == 2) {
@@ -195,36 +233,17 @@ static void processLetterSequence() {
             int row = firstLetter - 'A';
             int col = secondLetter - 'A';
 
-            // Store as pending cell (wait for SPACE key to execute)
+            // Store as pending cell (for showing sub-grid)
             g_hasPendingCell = true;
             g_pendingRow = row;
             g_pendingCol = col;
 
-            // Trigger redraw to show highlight
+            // Move mouse immediately to the cell center
+            moveMouseToCell(row, col);
+
+            // Trigger redraw to show highlight and sub-grid
             damageAllMonitors();
         }
-    }
-}
-
-// Function to execute pending cell movement
-static void executePendingCell() {
-    if (g_hasPendingCell) {
-        // Move mouse to the pending cell (with optional sub-column refinement)
-        if (g_hasSubColumn) {
-            moveMouseToCell(g_pendingRow, g_pendingCol, g_subColumn);
-        } else {
-            moveMouseToCell(g_pendingRow, g_pendingCol);
-        }
-
-        // Clear pending state
-        g_hasPendingCell = false;
-        g_pendingRow = -1;
-        g_pendingCol = -1;
-        g_hasSubColumn = false;
-        g_subColumn = -1;
-
-        // Auto-exit overlay after moving mouse
-        disableOverlay();
     }
 }
 
@@ -318,6 +337,12 @@ static void unregisterLetterKeybinds() {
 // Function to turn off the overlay
 static void disableOverlay() {
     if (g_toggleState) {
+        // Release mouse button if in select mode
+        if (g_selectMode) {
+            simulateMouseButtonRelease();
+            g_selectMode = false;
+        }
+
         g_toggleState = false;
         g_activeWorkspace = nullptr;
         g_letterSequence.clear();
@@ -341,11 +366,17 @@ static void disableOverlay() {
 // Dispatcher function for no-mouse
 static SDispatchResult noMouseDispatch(std::string arg) {
     try {
-        if (arg == "toggle") {
+        if (arg == "move" || arg == "select") {
+            // Determine if we're entering select mode
+            bool enteringSelectMode = (arg == "select");
+
             // Toggle the state
             g_toggleState = !g_toggleState;
 
             if (g_toggleState) {
+                // Set select mode flag
+                g_selectMode = enteringSelectMode;
+
                 // Capture the active workspace when turning on
                 if (g_pCompositor && g_pCompositor->m_lastMonitor) {
                     g_activeWorkspace = g_pCompositor->m_lastMonitor->m_activeWorkspace;
@@ -355,7 +386,18 @@ static SDispatchResult noMouseDispatch(std::string arg) {
 
                 // Register keybinds for letter capture
                 registerLetterKeybinds();
+
+                // Press mouse button if entering select mode
+                if (g_selectMode) {
+                    simulateMouseButtonPress();
+                }
             } else {
+                // Release mouse button if exiting select mode
+                if (g_selectMode) {
+                    simulateMouseButtonRelease();
+                    g_selectMode = false;
+                }
+
                 // Clear when turning off
                 g_activeWorkspace = nullptr;
                 g_letterSequence.clear();
@@ -457,12 +499,9 @@ static void setupKeyboardHook() {
 
                 // Check for SPACE or RETURN key press (KEY_SPACE = 57, KEY_ENTER = 28)
                 if (e.keycode == KEY_SPACE || e.keycode == KEY_ENTER) {
-                    // Only execute with SPACE/RETURN if we have 2 letters (no sub-column)
-                    // With 3 letters, execution happens automatically
-                    if (g_hasPendingCell && !g_hasSubColumn) {
-                        executePendingCell();
-                        info.cancelled = true;
-                    }
+                    // SPACE/RETURN now just exits the overlay
+                    disableOverlay();
+                    info.cancelled = true;
                     return;
                 }
 
@@ -483,12 +522,26 @@ static void setupKeyboardHook() {
                             g_hasSubColumn = true;
                             g_subColumn = subIndex;
 
-                            debugLog("SUB-CELL MODE: hasSubColumn=" + std::to_string(g_hasSubColumn) +
+                            debugLog("SUB-CELL MODE: hasSubColumn=" +
+                                     std::to_string(g_hasSubColumn) +
                                      ", subColumn=" + std::to_string(g_subColumn) +
-                                     " (letter " + std::string(1, letter) + ") - executing immediately");
+                                     " (letter " + std::string(1, letter) +
+                                     ") - moving to sub-cell");
 
-                            // Execute immediately when 3rd letter is typed (no SPACE needed)
-                            executePendingCell();
+                            // Move to sub-cell immediately but stay in overlay
+                            moveMouseToCell(g_pendingRow, g_pendingCol, g_subColumn);
+
+                            // Clear all state after moving so user can select another cell
+                            g_hasSubColumn = false;
+                            g_subColumn = -1;
+                            g_hasPendingCell = false;
+                            g_pendingRow = -1;
+                            g_pendingCol = -1;
+                            g_letterSequence.clear();
+
+                            // Trigger redraw to hide sub-grid
+                            damageAllMonitors();
+
                             info.cancelled = true;
                             return;
                         } else {
@@ -501,7 +554,8 @@ static void setupKeyboardHook() {
 
                         // Limit to 2 characters
                         if (g_letterSequence.length() > 2) {
-                            g_letterSequence = g_letterSequence.substr(g_letterSequence.length() - 2);
+                            g_letterSequence =
+                                g_letterSequence.substr(g_letterSequence.length() - 2);
                         }
 
                         // Clear sub-column if user is changing cell selection

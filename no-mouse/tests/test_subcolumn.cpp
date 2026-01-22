@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-// Sub-cell refinement class to test the 3-letter logic with 3x6 grid
+// Sub-cell refinement class to test the 3-letter logic with 3x6 grid (NEW BEHAVIOR: no auto-exit)
 class SubColumnState {
 private:
     static constexpr int SUB_GRID_ROWS = 3; // 3x6 sub-grid (18 positions, A-R)
@@ -11,10 +11,18 @@ private:
     bool hasSubColumn;
     int subColumn; // 0-17 for A-R
     std::string letterSequence;
+    bool overlayActive;
+    int mouseRow;
+    int mouseCol;
 
 public:
     SubColumnState() : hasPending(false), row(-1), col(-1),
-        hasSubColumn(false), subColumn(-1), letterSequence("") {}
+        hasSubColumn(false), subColumn(-1), letterSequence(""),
+        overlayActive(false), mouseRow(-1), mouseCol(-1) {}
+
+    void activateOverlay() {
+        overlayActive = true;
+    }
 
     // Add a letter
     void addLetter(char letter) {
@@ -31,8 +39,20 @@ public:
                 if (subIndex >= 0 && subIndex < SUB_GRID_ROWS * SUB_GRID_COLS) {
                     hasSubColumn = true;
                     subColumn = subIndex;
-                    // Execute immediately when 3rd letter is typed (no SPACE needed)
-                    clear();
+
+                    // NEW BEHAVIOR: Move to sub-cell immediately but DON'T exit overlay
+                    mouseRow = row;
+                    mouseCol = col;
+                    // (in real implementation, sub-cell coordinates would be calculated here)
+
+                    // Clear selection state so user can select another cell
+                    hasPending = false;
+                    row = -1;
+                    col = -1;
+                    hasSubColumn = false;
+                    subColumn = -1;
+                    letterSequence.clear();
+                    // NOTE: overlayActive stays true!
                 }
                 // If S-Z is typed, ignore it (only A-R supported)
             } else {
@@ -48,28 +68,34 @@ public:
                 hasSubColumn = false;
                 subColumn = -1;
 
-                // If we have 2 letters, set pending cell
+                // If we have 2 letters, set pending cell AND move mouse immediately
                 if (letterSequence.length() == 2) {
                     hasPending = true;
                     row = letterSequence[0] - 'A';
                     col = letterSequence[1] - 'A';
+
+                    // NEW BEHAVIOR: Move mouse immediately
+                    mouseRow = row;
+                    mouseCol = col;
                 }
             }
         }
     }
 
-    // Press SPACE to execute (only works with 2 letters, not 3)
+    // Press SPACE to exit overlay
     bool pressSpace() {
-        if (hasPending && !hasSubColumn) {
+        if (overlayActive) {
+            overlayActive = false;
             clear();
             return true;
         }
         return false;
     }
 
-    // Press RETURN to execute (only works with 2 letters, not 3)
+    // Press RETURN to exit overlay
     bool pressReturn() {
-        if (hasPending && !hasSubColumn) {
+        if (overlayActive) {
+            overlayActive = false;
             clear();
             return true;
         }
@@ -77,6 +103,7 @@ public:
     }
 
     void pressEsc() {
+        overlayActive = false;
         clear();
     }
 
@@ -87,6 +114,8 @@ public:
         hasSubColumn = false;
         subColumn = -1;
         letterSequence.clear();
+        mouseRow = -1;
+        mouseCol = -1;
     }
 
     bool hasPendingCell() const { return hasPending; }
@@ -95,6 +124,9 @@ public:
     bool hasSubCol() const { return hasSubColumn; }
     int getSubCol() const { return subColumn; }
     std::string getSequence() const { return letterSequence; }
+    bool isOverlayActive() const { return overlayActive; }
+    int getMouseRow() const { return mouseRow; }
+    int getMouseCol() const { return mouseCol; }
 };
 
 class SubColumnTest : public ::testing::Test {
@@ -103,31 +135,37 @@ protected:
 
     void SetUp() override {
         state.clear();
+        state.activateOverlay();
     }
 };
 
-// Test that 2 letters create pending cell without sub-column
-TEST_F(SubColumnTest, TwoLettersNoPending) {
+// Test that 2 letters create pending cell and move mouse
+TEST_F(SubColumnTest, TwoLettersCreatePendingAndMoveMouse) {
     state.addLetter('B');
     state.addLetter('M');
     EXPECT_TRUE(state.hasPendingCell());
     EXPECT_FALSE(state.hasSubCol());
     EXPECT_EQ(state.getRow(), 1);
     EXPECT_EQ(state.getCol(), 12);
+    // NEW: Mouse moves immediately
+    EXPECT_EQ(state.getMouseRow(), 1);
+    EXPECT_EQ(state.getMouseCol(), 12);
 }
 
-// Test that 3rd letter auto-executes (clears state immediately)
-TEST_F(SubColumnTest, ThirdLetterAutoExecutes) {
+// Test that 3rd letter moves to sub-cell but does NOT auto-exit overlay
+TEST_F(SubColumnTest, ThirdLetterMovesButStaysInOverlay) {
     state.addLetter('B');
     state.addLetter('M');
     EXPECT_TRUE(state.hasPendingCell());
     EXPECT_FALSE(state.hasSubCol());
 
-    state.addLetter('K');  // 3rd letter - should auto-execute and clear state
+    state.addLetter('K');  // 3rd letter - moves to sub-cell but doesn't exit
 
-    // State should be cleared after auto-execution
+    // NEW BEHAVIOR: State is cleared for next selection but overlay stays active
     EXPECT_FALSE(state.hasPendingCell());
     EXPECT_FALSE(state.hasSubCol());
+    EXPECT_TRUE(state.isOverlayActive());  // Overlay still active!
+    EXPECT_EQ(state.getSequence(), "");     // Sequence cleared for next cell
 }
 
 // Test that typing 4th letter starts new sequence
@@ -157,19 +195,21 @@ TEST_F(SubColumnTest, SpaceAfterTwoLetters) {
     EXPECT_FALSE(state.hasPendingCell());
 }
 
-// Test SPACE after 3 letters (should do nothing - already auto-executed)
+// Test SPACE after 3 letters (should exit overlay)
 TEST_F(SubColumnTest, SpaceAfterThreeLetters) {
     state.addLetter('C');
     state.addLetter('D');
-    state.addLetter('E'); // 3rd letter auto-executes and clears
+    state.addLetter('E'); // 3rd letter moves to sub-cell but doesn't exit
 
-    // State already cleared by auto-execution
+    // NEW BEHAVIOR: State cleared but overlay still active
     EXPECT_FALSE(state.hasPendingCell());
     EXPECT_FALSE(state.hasSubCol());
+    EXPECT_TRUE(state.isOverlayActive());  // Overlay still active
 
-    // SPACE should do nothing (no pending cell)
-    bool executed = state.pressSpace();
-    EXPECT_FALSE(executed);
+    // SPACE should exit overlay
+    bool exited = state.pressSpace();
+    EXPECT_TRUE(exited);
+    EXPECT_FALSE(state.isOverlayActive());
 }
 
 // Test RETURN after 2 letters (no sub-column)
@@ -183,19 +223,21 @@ TEST_F(SubColumnTest, ReturnAfterTwoLetters) {
     EXPECT_FALSE(state.hasPendingCell());
 }
 
-// Test RETURN after 3 letters (should do nothing - already auto-executed)
+// Test RETURN after 3 letters (should exit overlay)
 TEST_F(SubColumnTest, ReturnAfterThreeLetters) {
     state.addLetter('C');
     state.addLetter('D');
-    state.addLetter('E'); // 3rd letter auto-executes and clears
+    state.addLetter('E'); // 3rd letter moves to sub-cell but doesn't exit
 
-    // State already cleared by auto-execution
+    // NEW BEHAVIOR: State cleared but overlay still active
     EXPECT_FALSE(state.hasPendingCell());
     EXPECT_FALSE(state.hasSubCol());
+    EXPECT_TRUE(state.isOverlayActive());  // Overlay still active
 
-    // RETURN should do nothing (no pending cell)
-    bool executed = state.pressReturn();
-    EXPECT_FALSE(executed);
+    // RETURN should exit overlay
+    bool exited = state.pressReturn();
+    EXPECT_TRUE(exited);
+    EXPECT_FALSE(state.isOverlayActive());
 }
 
 // Test ESC clears pending cell (before 3rd letter)

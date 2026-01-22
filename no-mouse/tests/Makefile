@@ -1,6 +1,6 @@
 TEST_TARGET = no-mouse-tests
 
-TEST_SOURCES = test_main.cpp test_keycode.cpp test_coordinates.cpp test_sequence.cpp test_config.cpp test_pending_cell.cpp test_subcolumn.cpp test_mouse_focus.cpp test_texture_cache.cpp
+TEST_SOURCES = test_main.cpp test_keycode.cpp test_coordinates.cpp test_sequence.cpp test_config.cpp test_pending_cell.cpp test_subcolumn.cpp test_mouse_focus.cpp test_texture_cache.cpp test_select_mode.cpp
 PLUGIN_SOURCES =
 
 COMPILE_FLAGS = -std=c++23 -Wall -Wextra -Wno-unused-parameter -Wno-unused-value -Wno-missing-field-initializers -Wno-narrowing -Wno-pointer-arith
