@@ -7,6 +7,9 @@
 // Declare external PHANDLE from main.cpp
 extern HANDLE PHANDLE;
 
+// Declare external letter sequence state from main.cpp
+extern std::string g_letterSequence;
+
 // Declare external pending cell state from main.cpp
 extern bool g_hasPendingCell;
 extern int g_pendingRow;

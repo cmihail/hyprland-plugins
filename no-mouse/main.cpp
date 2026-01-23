@@ -32,7 +32,7 @@ static bool g_pluginShuttingDown = false;
 static PHLWORKSPACE g_activeWorkspace = nullptr;
 
 // Letter sequence tracking
-static std::string g_letterSequence = "";
+std::string g_letterSequence = "";
 static constexpr int GRID_SIZE = 26;
 static constexpr int SUB_GRID_ROWS = 3; // 3x6 sub-grid (18 positions, A-R)
 static constexpr int SUB_GRID_COLS = 6;
@@ -222,7 +222,10 @@ static void simulateMouseButtonRelease() {
 
 // Function to process letter sequence and set pending cell
 static void processLetterSequence() {
-    if (g_letterSequence.length() == 2) {
+    if (g_letterSequence.length() == 1) {
+        // First letter: just trigger redraw to show row filter
+        damageAllMonitors();
+    } else if (g_letterSequence.length() == 2) {
         // Convert letters to grid coordinates
         char firstLetter = g_letterSequence[0];
         char secondLetter = g_letterSequence[1];
@@ -497,6 +500,35 @@ static void setupKeyboardHook() {
                     return;
                 }
 
+                // Check for BACKSPACE key press (KEY_BACKSPACE = 14)
+                if (e.keycode == KEY_BACKSPACE) {
+                    if (!g_letterSequence.empty()) {
+                        // Remove last letter
+                        g_letterSequence.pop_back();
+
+                        debugLog("BACKSPACE: seq=" + g_letterSequence +
+                                 ", hasPending=" + std::to_string(g_hasPendingCell));
+
+                        // If we had a pending cell (2 letters) and now have 1 letter,
+                        // clear the pending cell state
+                        if (g_hasPendingCell && g_letterSequence.length() == 1) {
+                            g_hasPendingCell = false;
+                            g_pendingRow = -1;
+                            g_pendingCol = -1;
+                        }
+
+                        // Clear sub-column state
+                        g_hasSubColumn = false;
+                        g_subColumn = -1;
+
+                        // Trigger redraw
+                        damageAllMonitors();
+                    }
+
+                    info.cancelled = true;
+                    return;
+                }
+
                 // Check for SPACE or RETURN key press (KEY_SPACE = 57, KEY_ENTER = 28)
                 if (e.keycode == KEY_SPACE || e.keycode == KEY_ENTER) {
                     // SPACE/RETURN now just exits the overlay
@@ -526,21 +558,13 @@ static void setupKeyboardHook() {
                                      std::to_string(g_hasSubColumn) +
                                      ", subColumn=" + std::to_string(g_subColumn) +
                                      " (letter " + std::string(1, letter) +
-                                     ") - moving to sub-cell");
+                                     ") - moving to sub-cell and closing overlay");
 
-                            // Move to sub-cell immediately but stay in overlay
+                            // Move to sub-cell and close overlay automatically
                             moveMouseToCell(g_pendingRow, g_pendingCol, g_subColumn);
 
-                            // Clear all state after moving so user can select another cell
-                            g_hasSubColumn = false;
-                            g_subColumn = -1;
-                            g_hasPendingCell = false;
-                            g_pendingRow = -1;
-                            g_pendingCol = -1;
-                            g_letterSequence.clear();
-
-                            // Trigger redraw to hide sub-grid
-                            damageAllMonitors();
+                            // Close overlay after 3-letter selection
+                            disableOverlay();
 
                             info.cancelled = true;
                             return;

@@ -56,6 +56,12 @@ public:
         sequence.clear();
     }
 
+    void backspace() {
+        if (!sequence.empty()) {
+            sequence.pop_back();
+        }
+    }
+
     std::string get() const {
         return sequence;
     }

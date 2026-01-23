@@ -141,52 +141,93 @@ void CNoMouseOverlay::draw(const CRegion& damage) {
     const CHyprColor gridLineColor = CHyprColor(1.0f, 1.0f, 1.0f, gridOpacity);
     const float lineThickness = 1.0f;
 
-    // Draw vertical grid lines
-    for (int i = 1; i < GRID_SIZE; i++) {
-        const float x = i * cellWidth;
-        CBox line = {x, 0, lineThickness, monitorSize.y};
-        g_pHyprOpenGL->renderRect(line, gridLineColor, {});
+    // Calculate selected row from letter sequence (if any)
+    int selectedRow = -1;
+    if (!g_letterSequence.empty() && g_letterSequence[0] >= 'A' &&
+        g_letterSequence[0] <= 'Z') {
+        selectedRow = g_letterSequence[0] - 'A';
     }
 
-    // Draw horizontal grid lines
-    for (int i = 1; i < GRID_SIZE; i++) {
-        const float y = i * cellHeight;
-        CBox line = {0, y, monitorSize.x, lineThickness};
-        g_pHyprOpenGL->renderRect(line, gridLineColor, {});
+    // Determine what to draw based on sequence length
+    if (selectedRow >= 0 && g_letterSequence.length() == 1) {
+        // Show only the selected row (horizontal strip)
+        const float rowY = selectedRow * cellHeight;
+
+        // Draw top border of row
+        CBox topLine = {0, rowY, monitorSize.x, lineThickness};
+        g_pHyprOpenGL->renderRect(topLine, gridLineColor, {});
+
+        // Draw bottom border of row
+        CBox bottomLine = {0, rowY + cellHeight, monitorSize.x, lineThickness};
+        g_pHyprOpenGL->renderRect(bottomLine, gridLineColor, {});
+
+        // Draw vertical lines within the row
+        for (int i = 1; i < GRID_SIZE; i++) {
+            const float x = i * cellWidth;
+            CBox line = {x, rowY, lineThickness, cellHeight};
+            g_pHyprOpenGL->renderRect(line, gridLineColor, {});
+        }
+    } else if (g_hasPendingCell) {
+        // Show only the selected cell (when 2 letters are typed)
+        const float cellX = g_pendingCol * cellWidth;
+        const float cellY = g_pendingRow * cellHeight;
+
+        // Draw cell border
+        // Top border
+        CBox topLine = {cellX, cellY, cellWidth, lineThickness};
+        g_pHyprOpenGL->renderRect(topLine, gridLineColor, {});
+
+        // Bottom border
+        CBox bottomLine = {cellX, cellY + cellHeight, cellWidth, lineThickness};
+        g_pHyprOpenGL->renderRect(bottomLine, gridLineColor, {});
+
+        // Left border
+        CBox leftLine = {cellX, cellY, lineThickness, cellHeight};
+        g_pHyprOpenGL->renderRect(leftLine, gridLineColor, {});
+
+        // Right border
+        CBox rightLine = {cellX + cellWidth, cellY, lineThickness, cellHeight};
+        g_pHyprOpenGL->renderRect(rightLine, gridLineColor, {});
+    } else {
+        // Show full grid (initial state)
+        // Draw vertical grid lines
+        for (int i = 1; i < GRID_SIZE; i++) {
+            const float x = i * cellWidth;
+            CBox line = {x, 0, lineThickness, monitorSize.y};
+            g_pHyprOpenGL->renderRect(line, gridLineColor, {});
+        }
+
+        // Draw horizontal grid lines
+        for (int i = 1; i < GRID_SIZE; i++) {
+            const float y = i * cellHeight;
+            CBox line = {0, y, monitorSize.x, lineThickness};
+            g_pHyprOpenGL->renderRect(line, gridLineColor, {});
+        }
     }
 
     // Draw labels for each cell (A-Z for columns, A-Z for rows)
-    // We'll draw labels at the top-left corner of each cell
-    for (int row = 0; row < GRID_SIZE; row++) {
+    // Filter based on letter sequence state
+    if (selectedRow >= 0 && g_letterSequence.length() == 1) {
+        // Show only labels for the selected row
         for (int col = 0; col < GRID_SIZE; col++) {
-            // Skip drawing label for pending cell (sub-cells will be shown instead)
-            if (g_hasPendingCell && row == g_pendingRow && col == g_pendingCol) {
-                continue;
-            }
-
-            // Create label: first char is row (A-Z), three spaces, second char is column (A-Z)
             char label[6];
-            label[0] = 'A' + row;
+            label[0] = 'A' + selectedRow;
             label[1] = ' ';
             label[2] = ' ';
             label[3] = ' ';
             label[4] = 'A' + col;
             label[5] = '\0';
 
-            // Calculate cell top-left corner with small padding
-            const float cellX = col * cellWidth + 5.0f; // 5px padding from left
-            const float cellY = row * cellHeight + 5.0f; // 5px padding from top
+            const float cellX = col * cellWidth + 5.0f;
+            const float cellY = selectedRow * cellHeight + 5.0f;
 
-            // Check cache first to avoid recreating textures every frame
-            std::string cacheKey = std::to_string(row) + "," + std::to_string(col);
+            std::string cacheKey = std::to_string(selectedRow) + "," + std::to_string(col);
             SP<CTexture> textTexture;
 
             auto it = g_labelTextureCache.find(cacheKey);
             if (it != g_labelTextureCache.end()) {
-                // Use cached texture
                 textTexture = it->second;
             } else {
-                // Render and cache new texture
                 textTexture = renderTextToTexture(
                     std::string(label), 11, 1.0f, 1.0f, 1.0f, labelOpacity
                 );
@@ -196,12 +237,49 @@ void CNoMouseOverlay::draw(const CRegion& damage) {
             }
 
             if (textTexture) {
-                // Position the text at the top-left corner
                 CBox textBox = {cellX, cellY, 60.0f, 40.0f};
                 g_pHyprOpenGL->renderTexture(textTexture, textBox, {});
             }
         }
+    } else if (!g_hasPendingCell) {
+        // Show full grid labels (initial state)
+        for (int row = 0; row < GRID_SIZE; row++) {
+            for (int col = 0; col < GRID_SIZE; col++) {
+                char label[6];
+                label[0] = 'A' + row;
+                label[1] = ' ';
+                label[2] = ' ';
+                label[3] = ' ';
+                label[4] = 'A' + col;
+                label[5] = '\0';
+
+                const float cellX = col * cellWidth + 5.0f;
+                const float cellY = row * cellHeight + 5.0f;
+
+                std::string cacheKey = std::to_string(row) + "," + std::to_string(col);
+                SP<CTexture> textTexture;
+
+                auto it = g_labelTextureCache.find(cacheKey);
+                if (it != g_labelTextureCache.end()) {
+                    textTexture = it->second;
+                } else {
+                    textTexture = renderTextToTexture(
+                        std::string(label), 11, 1.0f, 1.0f, 1.0f, labelOpacity
+                    );
+                    if (textTexture) {
+                        g_labelTextureCache[cacheKey] = textTexture;
+                    }
+                }
+
+                if (textTexture) {
+                    CBox textBox = {cellX, cellY, 60.0f, 40.0f};
+                    g_pHyprOpenGL->renderTexture(textTexture, textBox, {});
+                }
+            }
+        }
     }
+    // If g_hasPendingCell is true (2 letters), no main grid labels are drawn
+    // (sub-cell labels will be drawn below)
 
     // Highlight pending cell if user has typed 2 letters (waiting for SPACE)
     if (g_hasPendingCell && g_pendingRow >= 0 && g_pendingRow < GRID_SIZE &&
@@ -215,49 +293,7 @@ void CNoMouseOverlay::draw(const CRegion& damage) {
         const float cellX = g_pendingCol * cellWidth;
         const float cellY = g_pendingRow * cellHeight;
 
-        // Read border color config
-        static auto* const PBORDER_COLOR = (Hyprlang::INT* const*)
-            HyprlandAPI::getConfigValue(
-                PHANDLE, "plugin:no_mouse:border_color"
-            )->getDataStaticPtr();
-        static auto* const PBORDER_OPACITY = (Hyprlang::FLOAT* const*)
-            HyprlandAPI::getConfigValue(
-                PHANDLE, "plugin:no_mouse:border_opacity"
-            )->getDataStaticPtr();
-
-        const int64_t borderColorHex = (PBORDER_COLOR && *PBORDER_COLOR) ?
-            **PBORDER_COLOR : 0x4C7FA6;
-        const float borderOpacity = (PBORDER_OPACITY && *PBORDER_OPACITY) ?
-            **PBORDER_OPACITY : 0.8f;
-
-        // Convert hex color (0xRRGGBB) to RGB floats
-        const float borderR = ((borderColorHex >> 16) & 0xFF) / 255.0f;
-        const float borderG = ((borderColorHex >> 8) & 0xFF) / 255.0f;
-        const float borderB = (borderColorHex & 0xFF) / 255.0f;
-
-        // Draw a border around the cell (configurable color)
-        const CHyprColor borderColor = CHyprColor(borderR, borderG, borderB, borderOpacity);
-        const float borderThickness = 3.0f;
-
-        // Top border
-        CBox topBorder = {cellX, cellY, cellWidth, borderThickness};
-        g_pHyprOpenGL->renderRect(topBorder, borderColor, {});
-
-        // Bottom border
-        CBox bottomBorder = {cellX, cellY + cellHeight - borderThickness,
-            cellWidth, borderThickness};
-        g_pHyprOpenGL->renderRect(bottomBorder, borderColor, {});
-
-        // Left border
-        CBox leftBorder = {cellX, cellY, borderThickness, cellHeight};
-        g_pHyprOpenGL->renderRect(leftBorder, borderColor, {});
-
-        // Right border
-        CBox rightBorder = {cellX + cellWidth - borderThickness, cellY,
-            borderThickness, cellHeight};
-        g_pHyprOpenGL->renderRect(rightBorder, borderColor, {});
-
-        // Always show sub-cell labels when a cell is selected (immediately after 2 letters)
+        // Show sub-cell labels when a cell is selected (immediately after 2 letters)
         const float subCellWidth = cellWidth / (float)SUB_GRID_COLS;
         const float subCellHeight = cellHeight / (float)SUB_GRID_ROWS;
 
