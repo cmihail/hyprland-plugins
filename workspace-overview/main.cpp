@@ -3,7 +3,7 @@
 #include <unistd.h>
 
 #include <hyprland/src/Compositor.hpp>
-#include <hyprland/src/desktop/Window.hpp>
+#include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/config/ConfigManager.hpp>
 #include <hyprland/src/desktop/DesktopTypes.hpp>
 #include <hyprland/src/render/Renderer.hpp>
@@ -66,11 +66,11 @@ static void hkAddDamageB(void* thisptr, const pixman_region32_t* rg) {
 }
 
 static SDispatchResult workspaceOverviewDispatch(std::string arg) {
-    Debug::log(LOG, "[workspace-overview] Overview dispatch called with arg: {}", arg);
+    Log::logger->log(Log::INFO, "[workspace-overview] Overview dispatch called with arg: {}", arg);
 
-    const auto PMONITOR = g_pCompositor->m_lastMonitor.lock();
+    const auto PMONITOR = g_pCompositor->getMonitorFromCursor();
     if (!PMONITOR) {
-        Debug::log(ERR, "[workspace-overview] No monitor found");
+        Log::logger->log(Log::ERR, "[workspace-overview] No monitor found");
         return {};
     }
 
@@ -94,14 +94,10 @@ static SDispatchResult workspaceOverviewDispatch(std::string arg) {
             for (auto& monitor : g_pCompositor->m_monitors) {
                 if (!monitor || !monitor->m_activeWorkspace)
                     continue;
-                // Set the last monitor so the overview constructor uses the correct monitor
-                g_pCompositor->m_lastMonitor = monitor;
                 renderingOverview = true;
-                g_pOverviews[monitor] = std::make_unique<COverview>(monitor->m_activeWorkspace);
+                g_pOverviews[monitor] = std::make_unique<COverview>(monitor->m_activeWorkspace, monitor);
                 renderingOverview = false;
             }
-            // Restore the last monitor to the focused one
-            g_pCompositor->m_lastMonitor = PMONITOR;
         }
         return {};
     }
@@ -128,19 +124,15 @@ static SDispatchResult workspaceOverviewDispatch(std::string arg) {
     for (auto& monitor : g_pCompositor->m_monitors) {
         if (!monitor || !monitor->m_activeWorkspace)
             continue;
-        // Set the last monitor so the overview constructor uses the correct monitor
-        g_pCompositor->m_lastMonitor = monitor;
         renderingOverview = true;
-        g_pOverviews[monitor] = std::make_unique<COverview>(monitor->m_activeWorkspace);
+        g_pOverviews[monitor] = std::make_unique<COverview>(monitor->m_activeWorkspace, monitor);
         renderingOverview = false;
     }
-    // Restore the last monitor to the focused one
-    g_pCompositor->m_lastMonitor = PMONITOR;
     return {};
 }
 
 static void failNotif(const std::string& reason) {
-    Debug::log(ERR, "[workspace-overview] Failure in initialization: {}", reason);
+    Log::logger->log(Log::ERR, "[workspace-overview] Failure in initialization: {}", reason);
 }
 
 APICALL EXPORT std::string PLUGIN_API_VERSION() {
@@ -151,8 +143,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     PHANDLE = handle;
 
     const std::string HASH = __hyprland_api_get_hash();
+    const std::string CLIENT_HASH = __hyprland_api_get_client_hash();
 
-    if (HASH != GIT_COMMIT_HASH) {
+    if (HASH != CLIENT_HASH) {
         failNotif("Version mismatch (headers ver is not equal to running hyprland ver)");
         throw std::runtime_error("[workspace-overview] Version mismatch");
     }
@@ -240,7 +233,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                     std::string pathStr = std::any_cast<Hyprlang::STRING>(pathValue);
                     loadBackgroundImage(pathStr);
                 } catch (const std::bad_any_cast& e) {
-                    Debug::log(ERR,
+                    Log::logger->log(Log::ERR,
                                "[workspace-overview] Failed to read background_path: {}",
                                e.what());
                 }
@@ -256,7 +249,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                     int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
                     g_activeWorkspaceColor = CHyprColor{(uint32_t)colorInt};
                 } catch (const std::bad_any_cast& e) {
-                    Debug::log(ERR,
+                    Log::logger->log(Log::ERR,
                                "[workspace-overview] Failed to read active_workspace_color: {}",
                                e.what());
                 }
@@ -271,7 +264,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                     auto sizeValue = PBORDERSIZE->getValue();
                     g_activeBorderSize = std::any_cast<Hyprlang::FLOAT>(sizeValue);
                 } catch (const std::bad_any_cast& e) {
-                    Debug::log(ERR,
+                    Log::logger->log(Log::ERR,
                                "[workspace-overview] Failed to read border_size: {}",
                                e.what());
                 }
@@ -287,7 +280,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                     int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
                     g_placeholderPlusColor = CHyprColor{(uint32_t)colorInt};
                 } catch (const std::bad_any_cast& e) {
-                    Debug::log(ERR,
+                    Log::logger->log(Log::ERR,
                                "[workspace-overview] Failed to read placeholder_plus_color: {}",
                                e.what());
                 }
@@ -302,7 +295,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                     auto sizeValue = PPLACEHOLDERPLUSSIZE->getValue();
                     g_placeholderPlusSize = std::any_cast<Hyprlang::FLOAT>(sizeValue);
                 } catch (const std::bad_any_cast& e) {
-                    Debug::log(ERR,
+                    Log::logger->log(Log::ERR,
                                "[workspace-overview] Failed to read placeholder_plus_size: {}",
                                e.what());
                 }
@@ -318,7 +311,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                     int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
                     g_dropWindowColor = CHyprColor{(uint32_t)colorInt};
                 } catch (const std::bad_any_cast& e) {
-                    Debug::log(ERR,
+                    Log::logger->log(Log::ERR,
                                "[workspace-overview] Failed to read drop_window_color: {}",
                                e.what());
                 }
@@ -334,7 +327,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                     int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
                     g_dropWorkspaceColor = CHyprColor{(uint32_t)colorInt};
                 } catch (const std::bad_any_cast& e) {
-                    Debug::log(ERR,
+                    Log::logger->log(Log::ERR,
                                "[workspace-overview] Failed to read drop_workspace_color: {}",
                                e.what());
                 }
@@ -350,7 +343,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                     int64_t numInt = std::any_cast<Hyprlang::INT>(numValue);
                     g_placeholdersNum = (int)numInt;
                 } catch (const std::bad_any_cast& e) {
-                    Debug::log(ERR,
+                    Log::logger->log(Log::ERR,
                                "[workspace-overview] Failed to read placeholders_num: {}",
                                e.what());
                 }
@@ -365,7 +358,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                     auto thresholdValue = PDRAGTHRESHOLD->getValue();
                     g_dragThreshold = std::any_cast<Hyprlang::FLOAT>(thresholdValue);
                 } catch (const std::bad_any_cast& e) {
-                    Debug::log(ERR,
+                    Log::logger->log(Log::ERR,
                                "[workspace-overview] Failed to read drag_threshold: {}",
                                e.what());
                 }
@@ -381,7 +374,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                     int64_t buttonInt = std::any_cast<Hyprlang::INT>(buttonValue);
                     g_dragWindowActionButton = (uint32_t)buttonInt;
                 } catch (const std::bad_any_cast& e) {
-                    Debug::log(ERR,
+                    Log::logger->log(Log::ERR,
                                "[workspace-overview] Failed to read drag_window_action_button: {}",
                                e.what());
                 }
@@ -397,7 +390,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                     int64_t buttonInt = std::any_cast<Hyprlang::INT>(buttonValue);
                     g_dragWorkspaceActionButton = (uint32_t)buttonInt;
                 } catch (const std::bad_any_cast& e) {
-                    Debug::log(ERR,
+                    Log::logger->log(Log::ERR,
                                "[workspace-overview] Failed to read drag_workspace_action_button: {}",
                                e.what());
                 }
@@ -413,7 +406,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                     int64_t buttonInt = std::any_cast<Hyprlang::INT>(buttonValue);
                     g_selectWorkspaceActionButton = (uint32_t)buttonInt;
                 } catch (const std::bad_any_cast& e) {
-                    Debug::log(ERR,
+                    Log::logger->log(Log::ERR,
                                "[workspace-overview] Failed to read select_workspace_action_button: {}",
                                e.what());
                 }
@@ -433,7 +426,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                         g_killWindowActionButton = (uint32_t)buttonInt;
                     }
                 } catch (const std::bad_any_cast& e) {
-                    Debug::log(ERR,
+                    Log::logger->log(Log::ERR,
                                "[workspace-overview] Failed to read kill_window_action_button: {}",
                                e.what());
                 }
@@ -451,7 +444,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                 loadBackgroundImage(pathStr);
             }
         } catch (const std::bad_any_cast& e) {
-            Debug::log(ERR, "[workspace-overview] Failed to read background_path: {}",
+            Log::logger->log(Log::ERR, "[workspace-overview] Failed to read background_path: {}",
                        e.what());
         }
     }
@@ -464,7 +457,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
             g_activeWorkspaceColor = CHyprColor{(uint32_t)colorInt};
         } catch (const std::bad_any_cast& e) {
-            Debug::log(ERR, "[workspace-overview] Failed to read active_workspace_color: {}",
+            Log::logger->log(Log::ERR, "[workspace-overview] Failed to read active_workspace_color: {}",
                        e.what());
         }
     }
@@ -476,7 +469,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             auto sizeValue = PBORDERSIZE->getValue();
             g_activeBorderSize = std::any_cast<Hyprlang::FLOAT>(sizeValue);
         } catch (const std::bad_any_cast& e) {
-            Debug::log(ERR, "[workspace-overview] Failed to read border_size: {}",
+            Log::logger->log(Log::ERR, "[workspace-overview] Failed to read border_size: {}",
                        e.what());
         }
     }
@@ -489,7 +482,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
             g_placeholderPlusColor = CHyprColor{(uint32_t)colorInt};
         } catch (const std::bad_any_cast& e) {
-            Debug::log(ERR, "[workspace-overview] Failed to read placeholder_plus_color: {}",
+            Log::logger->log(Log::ERR, "[workspace-overview] Failed to read placeholder_plus_color: {}",
                        e.what());
         }
     }
@@ -501,7 +494,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             auto sizeValue = PPLACEHOLDERPLUSSIZE->getValue();
             g_placeholderPlusSize = std::any_cast<Hyprlang::FLOAT>(sizeValue);
         } catch (const std::bad_any_cast& e) {
-            Debug::log(ERR, "[workspace-overview] Failed to read placeholder_plus_size: {}",
+            Log::logger->log(Log::ERR, "[workspace-overview] Failed to read placeholder_plus_size: {}",
                        e.what());
         }
     }
@@ -514,7 +507,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
             g_dropWindowColor = CHyprColor{(uint32_t)colorInt};
         } catch (const std::bad_any_cast& e) {
-            Debug::log(ERR, "[workspace-overview] Failed to read drop_window_color: {}",
+            Log::logger->log(Log::ERR, "[workspace-overview] Failed to read drop_window_color: {}",
                        e.what());
         }
     }
@@ -527,7 +520,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
             g_dropWorkspaceColor = CHyprColor{(uint32_t)colorInt};
         } catch (const std::bad_any_cast& e) {
-            Debug::log(ERR, "[workspace-overview] Failed to read drop_workspace_color: {}",
+            Log::logger->log(Log::ERR, "[workspace-overview] Failed to read drop_workspace_color: {}",
                        e.what());
         }
     }
@@ -540,7 +533,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             int64_t numInt = std::any_cast<Hyprlang::INT>(numValue);
             g_placeholdersNum = (int)numInt;
         } catch (const std::bad_any_cast& e) {
-            Debug::log(ERR, "[workspace-overview] Failed to read placeholders_num: {}",
+            Log::logger->log(Log::ERR, "[workspace-overview] Failed to read placeholders_num: {}",
                        e.what());
         }
     }
@@ -552,7 +545,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             auto thresholdValue = PDRAGTHRESHOLD->getValue();
             g_dragThreshold = std::any_cast<Hyprlang::FLOAT>(thresholdValue);
         } catch (const std::bad_any_cast& e) {
-            Debug::log(ERR, "[workspace-overview] Failed to read drag_threshold: {}",
+            Log::logger->log(Log::ERR, "[workspace-overview] Failed to read drag_threshold: {}",
                        e.what());
         }
     }
@@ -565,7 +558,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             int64_t buttonInt = std::any_cast<Hyprlang::INT>(buttonValue);
             g_dragWindowActionButton = (uint32_t)buttonInt;
         } catch (const std::bad_any_cast& e) {
-            Debug::log(ERR, "[workspace-overview] Failed to read drag_window_action_button: {}",
+            Log::logger->log(Log::ERR, "[workspace-overview] Failed to read drag_window_action_button: {}",
                        e.what());
         }
     }
@@ -578,7 +571,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             int64_t buttonInt = std::any_cast<Hyprlang::INT>(buttonValue);
             g_dragWorkspaceActionButton = (uint32_t)buttonInt;
         } catch (const std::bad_any_cast& e) {
-            Debug::log(ERR, "[workspace-overview] Failed to read drag_workspace_action_button: {}",
+            Log::logger->log(Log::ERR, "[workspace-overview] Failed to read drag_workspace_action_button: {}",
                        e.what());
         }
     }
@@ -591,7 +584,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             int64_t buttonInt = std::any_cast<Hyprlang::INT>(buttonValue);
             g_selectWorkspaceActionButton = (uint32_t)buttonInt;
         } catch (const std::bad_any_cast& e) {
-            Debug::log(ERR, "[workspace-overview] Failed to read select_workspace_action_button: {}",
+            Log::logger->log(Log::ERR, "[workspace-overview] Failed to read select_workspace_action_button: {}",
                        e.what());
         }
     }
@@ -608,18 +601,18 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                 g_killWindowActionButton = (uint32_t)buttonInt;
             }
         } catch (const std::bad_any_cast& e) {
-            Debug::log(ERR, "[workspace-overview] Failed to read kill_window_action_button: {}",
+            Log::logger->log(Log::ERR, "[workspace-overview] Failed to read kill_window_action_button: {}",
                        e.what());
         }
     }
 
-    Debug::log(LOG, "[workspace-overview] Plugin initialized successfully");
+    Log::logger->log(Log::INFO, "[workspace-overview] Plugin initialized successfully");
 
     return {"workspace-overview", "Workspace overview plugin for Hyprland", "cmihail", "1.0"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
-    Debug::log(LOG, "[workspace-overview] Plugin exiting");
+    Log::logger->log(Log::INFO, "[workspace-overview] Plugin exiting");
     g_pHyprRenderer->m_renderPass.removeAllOfType("COverviewPassElement");
     g_pBackgroundTexture.reset();
 }

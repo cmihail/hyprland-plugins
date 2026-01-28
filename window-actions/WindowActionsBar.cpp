@@ -1,7 +1,7 @@
 #include "WindowActionsBar.hpp"
 
 #include <hyprland/src/Compositor.hpp>
-#include <hyprland/src/desktop/Window.hpp>
+#include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/helpers/MiscFunctions.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
@@ -103,16 +103,22 @@ std::string CWindowActionsBar::getDisplayName() {
 }
 
 bool CWindowActionsBar::inputIsValid() {
-    if (!m_pWindow->m_workspace || !m_pWindow->m_workspace->isVisible() || !g_pInputManager->m_exclusiveLSes.empty() ||
-        (g_pSeatManager->m_seatGrab && !g_pSeatManager->m_seatGrab->accepts(m_pWindow->m_wlSurface->resource())))
+    if (!m_pWindow->m_workspace || !m_pWindow->m_workspace->isVisible() ||
+        !g_pInputManager->m_exclusiveLSes.empty())
         return false;
 
-    const auto WINDOWATCURSOR = g_pCompositor->vectorToWindowUnified(g_pInputManager->getMouseCoordsInternal(), RESERVED_EXTENTS | INPUT_EXTENTS | ALLOW_FLOATING);
+    const auto WINDOWATCURSOR = g_pCompositor->vectorToWindowUnified(
+        g_pInputManager->getMouseCoordsInternal(),
+        Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS |
+        Desktop::View::ALLOW_FLOATING);
 
-    if (WINDOWATCURSOR != m_pWindow && m_pWindow != g_pCompositor->m_lastWindow)
+    if (WINDOWATCURSOR != m_pWindow)
         return false;
 
-    auto     PMONITOR     = g_pCompositor->m_lastMonitor.lock();
+    auto     PMONITOR     = g_pCompositor->getMonitorFromCursor();
+    if (!PMONITOR)
+        return false;
+
     PHLLS    foundSurface = nullptr;
     Vector2D surfaceCoords;
 
@@ -173,7 +179,7 @@ void CWindowActionsBar::onTouchDown(SCallbackInfo& info, ITouch::SDownEvent e) {
         return;
 
     auto PMONITOR = g_pCompositor->getMonitorFromName(!e.device->m_boundOutput.empty() ? e.device->m_boundOutput : "");
-    PMONITOR      = PMONITOR ? PMONITOR : g_pCompositor->m_lastMonitor.lock();
+    PMONITOR      = PMONITOR ? PMONITOR : g_pCompositor->getMonitorFromCursor();
     g_pCompositor->warpCursorTo({PMONITOR->m_position.x + e.pos.x * PMONITOR->m_size.x, PMONITOR->m_position.y + e.pos.y * PMONITOR->m_size.y}, true);
 
     handleDownEvent(info, e);
@@ -221,7 +227,12 @@ void CWindowActionsBar::handleDownEvent(SCallbackInfo& info, std::optional<ITouc
 }
 
 void CWindowActionsBar::handleUpEvent(SCallbackInfo& info) {
-    if (m_pWindow.lock() != g_pCompositor->m_lastWindow.lock())
+    // Simplified check - if window is not the one under cursor, return
+    const auto WINDOWATCURSOR = g_pCompositor->vectorToWindowUnified(
+        g_pInputManager->getMouseCoordsInternal(),
+        Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS |
+        Desktop::View::ALLOW_FLOATING);
+    if (m_pWindow.lock() != WINDOWATCURSOR)
         return;
 
     if (m_bDraggingThis) {
@@ -241,7 +252,7 @@ void CWindowActionsBar::handleMovement() {
     g_pKeybindManager->m_dispatchers["mouse"]("1movewindow");
     m_bDraggingThis = true;
     damageEntire(); // Trigger redraw to show active icon and full opacity
-    Debug::log(LOG, "[window-actions] Dragging initiated");
+    Log::logger->log(Log::INFO, "[window-actions] Dragging initiated");
 }
 
 int CWindowActionsBar::getButtonIndex(Vector2D coords) {
@@ -262,11 +273,11 @@ void CWindowActionsBar::executeCommand(const std::string& command) {
     if (command.empty())
         return;
 
-    Debug::log(LOG, "[window-actions] Executing command: {}", command);
+    Log::logger->log(Log::INFO, "[window-actions] Executing command: {}", command);
 
     // Check for special movewindow command
     if (command == "__movewindow__") {
-        Debug::log(LOG, "[window-actions] Initiating window move");
+        Log::logger->log(Log::INFO, "[window-actions] Initiating window move");
         m_bDragPending = true;
         return;
     }
@@ -274,14 +285,14 @@ void CWindowActionsBar::executeCommand(const std::string& command) {
     // Focus the window before executing any command to ensure it targets the correct window
     const auto PWINDOW = m_pWindow.lock();
     if (PWINDOW) {
-        g_pCompositor->focusWindow(PWINDOW);
+        g_pInputManager->refocus();
     }
 
     // Use the exec dispatcher to execute the command
     if (g_pKeybindManager && g_pKeybindManager->m_dispatchers.contains("exec")) {
         g_pKeybindManager->m_dispatchers["exec"](command);
     } else {
-        Debug::log(ERR, "[window-actions] exec dispatcher not found");
+        Log::logger->log(Log::ERR, "[window-actions] exec dispatcher not found");
     }
 }
 
@@ -302,7 +313,11 @@ bool CWindowActionsBar::getWindowState(const std::string& condition) {
     } else if (condition == "maximized") {
         return PWINDOW->m_fullscreenState.internal == FSMODE_MAXIMIZED;
     } else if (condition == "focused") {
-        return g_pCompositor->m_lastWindow.lock() == PWINDOW;
+        const auto WINDOWATCURSOR = g_pCompositor->vectorToWindowUnified(
+            g_pInputManager->getMouseCoordsInternal(),
+            Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS |
+            Desktop::View::ALLOW_FLOATING);
+        return WINDOWATCURSOR == PWINDOW;
     } else if (condition == "pinned") {
         return PWINDOW->m_pinned;
     }
@@ -398,8 +413,16 @@ void CWindowActionsBar::draw(PHLMONITOR pMonitor, const float& a) {
 
     const auto PWINDOW = m_pWindow.lock();
 
-    if (!PWINDOW->m_windowData.decorate.valueOrDefault())
+    if (!PWINDOW->m_ruleApplicator)
         return;
+
+    // Check if window should be decorated using valueOrDefault which handles the default case
+    try {
+        if (!PWINDOW->m_ruleApplicator->decorate().valueOrDefault())
+            return;
+    } catch (...) {
+        // If decorate value isn't available, assume true (decorated) by default
+    }
 
     auto data = CWindowActionsPassElement::SWindowActionsData{this, a};
     g_pHyprRenderer->m_renderPass.add(makeUnique<CWindowActionsPassElement>(data));

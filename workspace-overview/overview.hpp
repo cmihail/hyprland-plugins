@@ -45,7 +45,7 @@ inline GlobalDragState g_dragState;
 
 class COverview {
   public:
-    COverview(PHLWORKSPACE startedOn_, bool skipAnimation_ = false);
+    COverview(PHLWORKSPACE startedOn_, PHLMONITOR monitor, bool skipAnimation_ = false);
     ~COverview();
 
     void render();

@@ -46,8 +46,8 @@ COverview::~COverview() {
     g_pHyprOpenGL->markBlurDirtyForMonitor(pMonitor.lock());
 }
 
-COverview::COverview(PHLWORKSPACE startedOn_, bool skipAnimation) : startedOn(startedOn_) {
-    const auto PMONITOR = g_pCompositor->m_lastMonitor.lock();
+COverview::COverview(PHLWORKSPACE startedOn_, PHLMONITOR monitor, bool skipAnimation) : startedOn(startedOn_) {
+    const auto PMONITOR = monitor;
     pMonitor            = PMONITOR;
 
     // Initialize animated scrollOffset early so it can be used throughout construction
@@ -611,7 +611,7 @@ void COverview::setupMouseAxisHook() {
             }
 
         } catch (const std::exception& e) {
-            Debug::log(ERR, "[Overview] Exception in scroll handler: {}", e.what());
+            Log::logger->log(Log::ERR, "[Overview] Exception in scroll handler: {}", e.what());
         }
 
         // Consume the scroll event to prevent it from propagating
@@ -693,7 +693,7 @@ void COverview::setupWorkspaceChangeHook() {
         }
 
         g_pOverviews.erase(monitor);
-        auto newOverview = std::make_unique<COverview>(newWorkspace, false);
+        auto newOverview = std::make_unique<COverview>(newWorkspace, monitor, false);
 
         if (newWorkspaceIndexInCurrent < leftWorkspaceCount) {
             newOverview->scrollOffset->setValue(animationStartOffset);
@@ -2457,15 +2457,6 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
         return;
     }
 
-    PHLWINDOW originalFocus = g_pCompositor->m_lastWindow.lock();
-    bool didFocus = false;
-
-    // Only attempt tiling operations for non-floating windows
-    if (!window->m_isFloating && dropDirection != DIRECTION_DEFAULT && targetWindow) {
-        g_pCompositor->focusWindow(targetWindow);
-        didFocus = true;
-    }
-
     // Always use moveWindowToWorkspaceSafe first to properly update all window state
     // (workspace, monitor, rendering layers, etc.) especially for cross-monitor moves
     g_pCompositor->moveWindowToWorkspaceSafe(window, targetImage.pWorkspace);
@@ -2481,9 +2472,8 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
         }
     }
 
-    if (didFocus && originalFocus) {
-        g_pCompositor->focusWindow(originalFocus);
-    }
+    // Refocus to update input state after window operations
+    g_pInputManager->refocus();
 
     // Schedule repeating redraws for affected non-active workspaces
     // We need to refresh both source and target if they're not the active workspace
@@ -2559,7 +2549,7 @@ bool createTextureFromPixelData(const std::vector<uint8_t>& pixelData,
                                                      true);
         return true;
     } catch (const std::exception& e) {
-        Debug::log(ERR, "[workspace-overview] Failed to create texture: {}", e.what());
+        Log::logger->log(Log::ERR, "[workspace-overview] Failed to create texture: {}", e.what());
         g_pBackgroundTexture.reset();
         return false;
     }
@@ -3251,7 +3241,7 @@ void loadBackgroundImage(const std::string& path) {
     GdkPixbuf* pixbuf = gdk_pixbuf_new_from_file(path.c_str(), &error);
 
     if (!pixbuf) {
-        Debug::log(ERR, "[workspace-overview] Failed to load background image: {}",
+        Log::logger->log(Log::ERR, "[workspace-overview] Failed to load background image: {}",
                    error ? error->message : "unknown error");
         if (error)
             g_error_free(error);
@@ -3264,7 +3254,7 @@ void loadBackgroundImage(const std::string& path) {
     const int channels = gdk_pixbuf_get_n_channels(pixbuf);
 
     if (channels != 3 && channels != 4) {
-        Debug::log(ERR, "[workspace-overview] Unsupported image channel count: {}",
+        Log::logger->log(Log::ERR, "[workspace-overview] Unsupported image channel count: {}",
                    channels);
         g_object_unref(pixbuf);
         g_pBackgroundTexture.reset();
@@ -3278,7 +3268,7 @@ void loadBackgroundImage(const std::string& path) {
     g_object_unref(pixbuf);
 
     if (createTextureFromPixelData(pixelData, width, height)) {
-        Debug::log(LOG, "[workspace-overview] Loaded background image: {} ({}x{})",
+        Log::logger->log(Log::INFO, "[workspace-overview] Loaded background image: {} ({}x{})",
                    path, width, height);
     }
 }

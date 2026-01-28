@@ -196,17 +196,17 @@ static void reindexGestureAnimations(size_t removedIndex) {
     std::unordered_map<size_t, PHLANIMVAR<float>> newAlphaAnims;
     std::unordered_set<size_t> newPendingRemoval;
 
-    for (const auto& [idx, anim] : g_gestureScaleAnims) {
+    for (auto& [idx, anim] : g_gestureScaleAnims) {
         if (idx > removedIndex)
-            newScaleAnims[idx - 1] = anim;
+            newScaleAnims[idx - 1] = std::move(anim);
         else if (idx < removedIndex)
-            newScaleAnims[idx] = anim;
+            newScaleAnims[idx] = std::move(anim);
     }
-    for (const auto& [idx, anim] : g_gestureAlphaAnims) {
+    for (auto& [idx, anim] : g_gestureAlphaAnims) {
         if (idx > removedIndex)
-            newAlphaAnims[idx - 1] = anim;
+            newAlphaAnims[idx - 1] = std::move(anim);
         else if (idx < removedIndex)
-            newAlphaAnims[idx] = anim;
+            newAlphaAnims[idx] = std::move(anim);
     }
     for (size_t idx : g_gesturesPendingRemoval) {
         if (idx > removedIndex)
@@ -1999,8 +1999,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
 
     const std::string HASH = __hyprland_api_get_hash();
+    const std::string CLIENT_HASH = __hyprland_api_get_client_hash();
 
-    if (HASH != GIT_COMMIT_HASH) {
+    if (HASH != CLIENT_HASH) {
         throw std::runtime_error("[mouse-gestures] Version mismatch");
     }
 

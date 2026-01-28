@@ -3,11 +3,11 @@ PLUGIN_NAME = window-actions
 SOURCE_FILES = main.cpp WindowActionsBar.cpp WindowActionsPassElement.cpp
 
 COMPILE_FLAGS = -shared -fPIC --no-gnu-unique -g -std=c++23 -Wall -Wextra -Wno-unused-parameter -Wno-unused-value -Wno-missing-field-initializers -Wno-narrowing -Wno-pointer-arith
-COMPILE_FLAGS += -I "/usr/include/pixman-1" -I "/usr/include/libdrm" -I "$(HYPRLAND_HEADERS)" -I "$(HYPRLAND_HEADERS)/protocols"
+COMPILE_FLAGS += -I "/usr/include/pixman-1" -I "/usr/include/libdrm" -I "$(HYPRLAND_HEADERS)" -I "$(HYPRLAND_HEADERS)/hyprland/protocols"
 COMPILE_FLAGS += $(shell pkg-config --cflags pango pangocairo)
 LINK_FLAGS = $(shell pkg-config --libs pango pangocairo)
 
-HYPRLAND_HEADERS ?= /usr/include/hyprland
+HYPRLAND_HEADERS ?= $(HOME)/.local/include
 
 all: check_env $(PLUGIN_NAME).so
 

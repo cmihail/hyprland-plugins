@@ -4,7 +4,7 @@
 
 #include <any>
 #include <hyprland/src/Compositor.hpp>
-#include <hyprland/src/desktop/Window.hpp>
+#include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/config/ConfigManager.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/helpers/MiscFunctions.hpp>
@@ -72,14 +72,18 @@ static Hyprlang::CParseResult onNewButton(const char* COMMAND, const char* VALUE
     g_pGlobalState->buttons.push_back(button);
 
     // Print parsed values for debugging
-    Debug::log(LOG, "[window-actions] Added button: text_color={}, bg_color={}, inactive={}, active={}, cmd={}, condition={}",
-               textColorStr, bgColorStr, button.icon_inactive, button.icon_active, button.command, button.condition);
+    Log::logger->log(Log::INFO,
+        "[window-actions] Added button: text_color={}, bg_color={}, "
+        "inactive={}, active={}, cmd={}, condition={}",
+        textColorStr, bgColorStr, button.icon_inactive, button.icon_active,
+        button.command, button.condition);
 
     return Hyprlang::CParseResult{};
 }
 
 static void onPreConfigReload() {
-    Debug::log(LOG, "[window-actions] Clearing {} button configs", g_pGlobalState->buttons.size());
+    Log::logger->log(Log::INFO, "[window-actions] Clearing {} button configs",
+                     g_pGlobalState->buttons.size());
     g_pGlobalState->buttons.clear();
 }
 
@@ -116,8 +120,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     PHANDLE = handle;
 
     const std::string HASH = __hyprland_api_get_hash();
+    const std::string CLIENT_HASH = __hyprland_api_get_client_hash();
 
-    if (HASH != GIT_COMMIT_HASH) {
+    if (HASH != CLIENT_HASH) {
         HyprlandAPI::addNotification(PHANDLE, "[window-actions] Failure in initialization: Version mismatch (headers ver is not equal to running hyprland ver)",
                                      CHyprColor{1.0, 0.2, 0.2, 1.0}, 5000);
         throw std::runtime_error("[window-actions] Version mismatch");

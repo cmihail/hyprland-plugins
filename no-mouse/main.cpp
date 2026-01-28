@@ -122,11 +122,10 @@ static void damageAllMonitors() {
 // Function to move mouse to specific cell (optionally with sub-column refinement)
 static void moveMouseToCell(int row, int col, int subColumn = -1) {
     try {
-        if (!g_pCompositor || !g_pCompositor->m_lastMonitor) {
+        auto monitor = g_pCompositor->getMonitorFromCursor();
+        if (!monitor) {
             return;
         }
-
-        auto monitor = g_pCompositor->m_lastMonitor;
         const auto monitorSize = monitor->m_size;
 
         // Calculate cell dimensions
@@ -169,18 +168,20 @@ static void moveMouseToCell(int row, int col, int subColumn = -1) {
         // Focus the window under the cursor
         try {
             const auto windowUnderCursor = g_pCompositor->vectorToWindowUnified(
-                absolutePos, RESERVED_EXTENTS | INPUT_EXTENTS | ALLOW_FLOATING);
+                absolutePos,
+                Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS |
+                Desktop::View::ALLOW_FLOATING);
             if (windowUnderCursor) {
-                g_pCompositor->focusWindow(windowUnderCursor);
+                g_pInputManager->refocus();
             }
         } catch (...) {
             // Silently catch focus errors
         }
 
     } catch (const std::exception& e) {
-        Debug::log(ERR, "[no-mouse] Error moving mouse: {}", e.what());
+        Log::logger->log(Log::ERR, "[no-mouse] Error moving mouse: {}", e.what());
     } catch (...) {
-        Debug::log(ERR, "[no-mouse] Unknown error moving mouse");
+        Log::logger->log(Log::ERR, "[no-mouse] Unknown error moving mouse");
     }
 }
 
@@ -196,9 +197,9 @@ static void simulateMouseButtonPress() {
         g_pSeatManager->sendPointerFrame();
 
     } catch (const std::exception& e) {
-        Debug::log(ERR, "[no-mouse] Error pressing mouse button: {}", e.what());
+        Log::logger->log(Log::ERR, "[no-mouse] Error pressing mouse button: {}", e.what());
     } catch (...) {
-        Debug::log(ERR, "[no-mouse] Unknown error pressing mouse button");
+        Log::logger->log(Log::ERR, "[no-mouse] Unknown error pressing mouse button");
     }
 }
 
@@ -214,9 +215,9 @@ static void simulateMouseButtonRelease() {
         g_pSeatManager->sendPointerFrame();
 
     } catch (const std::exception& e) {
-        Debug::log(ERR, "[no-mouse] Error releasing mouse button: {}", e.what());
+        Log::logger->log(Log::ERR, "[no-mouse] Error releasing mouse button: {}", e.what());
     } catch (...) {
-        Debug::log(ERR, "[no-mouse] Unknown error releasing mouse button");
+        Log::logger->log(Log::ERR, "[no-mouse] Unknown error releasing mouse button");
     }
 }
 
@@ -305,11 +306,11 @@ static void registerLetterKeybinds() {
         }
 
         g_keybindsRegistered = true;
-        Debug::log(LOG, "[no-mouse] Registered letter keybinds");
+        Log::logger->log(Log::INFO, "[no-mouse] Registered letter keybinds");
     } catch (const std::exception& e) {
-        Debug::log(ERR, "[no-mouse] Error registering keybinds: {}", e.what());
+        Log::logger->log(Log::ERR, "[no-mouse] Error registering keybinds: {}", e.what());
     } catch (...) {
-        Debug::log(ERR, "[no-mouse] Unknown error registering keybinds");
+        Log::logger->log(Log::ERR, "[no-mouse] Unknown error registering keybinds");
     }
 }
 
@@ -329,11 +330,11 @@ static void unregisterLetterKeybinds() {
         }
 
         g_keybindsRegistered = false;
-        Debug::log(LOG, "[no-mouse] Unregistered letter keybinds");
+        Log::logger->log(Log::INFO, "[no-mouse] Unregistered letter keybinds");
     } catch (const std::exception& e) {
-        Debug::log(ERR, "[no-mouse] Error unregistering keybinds: {}", e.what());
+        Log::logger->log(Log::ERR, "[no-mouse] Error unregistering keybinds: {}", e.what());
     } catch (...) {
-        Debug::log(ERR, "[no-mouse] Unknown error unregistering keybinds");
+        Log::logger->log(Log::ERR, "[no-mouse] Unknown error unregistering keybinds");
     }
 }
 
@@ -381,8 +382,9 @@ static SDispatchResult noMouseDispatch(std::string arg) {
                 g_selectMode = enteringSelectMode;
 
                 // Capture the active workspace when turning on
-                if (g_pCompositor && g_pCompositor->m_lastMonitor) {
-                    g_activeWorkspace = g_pCompositor->m_lastMonitor->m_activeWorkspace;
+                auto monitor = g_pCompositor->getMonitorFromCursor();
+                if (monitor) {
+                    g_activeWorkspace = monitor->m_activeWorkspace;
                 }
                 // Clear letter sequence when turning on
                 g_letterSequence.clear();
@@ -617,8 +619,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     PHANDLE = handle;
 
     const std::string HASH = __hyprland_api_get_hash();
+    const std::string CLIENT_HASH = __hyprland_api_get_client_hash();
 
-    if (HASH != GIT_COMMIT_HASH) {
+    if (HASH != CLIENT_HASH) {
         HyprlandAPI::addNotification(
             PHANDLE,
             "[no-mouse] Failure in initialization: Version mismatch "
