@@ -237,16 +237,22 @@ static void processLetterSequence() {
             int row = firstLetter - 'A';
             int col = secondLetter - 'A';
 
-            // Store as pending cell (for showing sub-grid)
-            g_hasPendingCell = true;
-            g_pendingRow = row;
-            g_pendingCol = col;
-
             // Move mouse immediately to the cell center
             moveMouseToCell(row, col);
 
-            // Trigger redraw to show highlight and sub-grid
-            damageAllMonitors();
+            // In normal mode, close overlay immediately after jumping
+            if (!g_selectMode) {
+                disableOverlay();
+            } else {
+                // In select mode, show sub-grid for precise selection
+                // Store as pending cell (for showing sub-grid)
+                g_hasPendingCell = true;
+                g_pendingRow = row;
+                g_pendingCol = col;
+
+                // Trigger redraw to show highlight and sub-grid
+                damageAllMonitors();
+            }
         }
     }
 }
