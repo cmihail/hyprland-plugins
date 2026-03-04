@@ -66,10 +66,10 @@ class CWindowActionsBar : public IHyprWindowDecoration {
     bool                      getWindowState(const std::string& condition);
     void                      executeCommand(const std::string& command);
 
-    SP<HOOK_CALLBACK_FN>      m_pMouseButtonCallback;
-    SP<HOOK_CALLBACK_FN>      m_pMouseMoveCallback;
-    SP<HOOK_CALLBACK_FN>      m_pTouchDownCallback;
-    SP<HOOK_CALLBACK_FN>      m_pTouchUpCallback;
+    CHyprSignalListener       m_pMouseButtonCallback;
+    CHyprSignalListener       m_pMouseMoveCallback;
+    CHyprSignalListener       m_pTouchDownCallback;
+    CHyprSignalListener       m_pTouchUpCallback;
 
     bool                      m_bTouchEv = false;
     bool                      m_bCancelledDown = false;

@@ -7,7 +7,7 @@
 #include <linux/input-event-codes.h>
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/Compositor.hpp>
-#include <hyprland/src/managers/HookSystemManager.hpp>
+#include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/managers/KeybindManager.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
@@ -48,8 +48,8 @@ bool g_hasSubColumn = false;
 int g_subColumn = -1; // 0-17 (A-R)
 
 // Hook handles
-static SP<HOOK_CALLBACK_FN> g_renderHook;
-static SP<HOOK_CALLBACK_FN> g_keyboardHook;
+static CHyprSignalListener g_renderHook;
+static CHyprSignalListener g_keyboardHook;
 
 // Forward declarations
 static void damageAllMonitors();
@@ -430,8 +430,11 @@ static SDispatchResult noMouseDispatch(std::string arg) {
 // Setup render hook to display overlay
 static void setupRenderHook() {
     try {
-        auto onRender = [](void* self, SCallbackInfo& info, std::any param) {
+        g_renderHook = Event::bus()->m_events.render.stage.listen([](eRenderStage stage) {
             try {
+                if (stage != eRenderStage::RENDER_POST_WINDOWS)
+                    return;
+
                 // Don't render if plugin is shutting down or toggle is off
                 if (g_pluginShuttingDown || !g_toggleState) {
                     return;
@@ -472,9 +475,7 @@ static void setupRenderHook() {
             } catch (...) {
                 // Silently catch to prevent compositor crash
             }
-        };
-
-        g_renderHook = g_pHookSystem->hookDynamic("render", onRender);
+        });
 
     } catch (...) {
         // Failed to set up render hook
@@ -484,16 +485,12 @@ static void setupRenderHook() {
 // Setup keyboard hook to detect ESC key and show notifications for all key presses
 static void setupKeyboardHook() {
     try {
-        auto onKeyPress = [](void* self, SCallbackInfo& info, std::any param) {
+        g_keyboardHook = Event::bus()->m_events.input.keyboard.key.listen([](IKeyboard::SKeyEvent e, Event::SCallbackInfo& info) {
             try {
                 // Only process if overlay is active
                 if (!g_toggleState) {
                     return;
                 }
-
-                // Extract the keyboard event from the map
-                auto eventMap = std::any_cast<std::unordered_map<std::string, std::any>>(param);
-                auto e = std::any_cast<IKeyboard::SKeyEvent>(eventMap["event"]);
 
                 // Only process key press events
                 if (e.state != WL_KEYBOARD_KEY_STATE_PRESSED) {
@@ -608,9 +605,7 @@ static void setupKeyboardHook() {
             } catch (...) {
                 // Silently catch errors
             }
-        };
-
-        g_keyboardHook = g_pHookSystem->hookDynamic("keyPress", onKeyPress);
+        });
 
     } catch (...) {
         // Failed to set up keyboard hook

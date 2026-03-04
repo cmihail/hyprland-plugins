@@ -139,13 +139,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigKeyword(PHANDLE, "window_actions_button", onNewButton, Hyprlang::SHandlerOptions{});
 
     // Register preConfigReload handler
-    static auto P3 = HyprlandAPI::registerCallbackDynamic(PHANDLE, "preConfigReload", [&](void* self, SCallbackInfo& info, std::any data) { onPreConfigReload(); });
+    static auto P3 = Event::bus()->m_events.config.preReload.listen([]() { onPreConfigReload(); });
 
     // Reload config to apply registered values
     HyprlandAPI::reloadConfig();
 
-    static auto P1 = HyprlandAPI::registerCallbackDynamic(PHANDLE, "openWindow", [&](void* self, SCallbackInfo& info, std::any data) { onNewWindow(self, data); });
-    static auto P2 = HyprlandAPI::registerCallbackDynamic(PHANDLE, "closeWindow", [&](void* self, SCallbackInfo& info, std::any data) { onCloseWindow(self, data); });
+    static auto P1 = Event::bus()->m_events.window.open.listen([](PHLWINDOW window) { onNewWindow(nullptr, std::any(window)); });
+    static auto P2 = Event::bus()->m_events.window.destroy.listen([](PHLWINDOW window) { onCloseWindow(nullptr, std::any(window)); });
 
     for (auto& w : g_pCompositor->m_windows) {
         if (w->isHidden() || !w->m_isMapped)

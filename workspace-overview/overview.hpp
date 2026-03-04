@@ -7,7 +7,7 @@
 #include <hyprland/src/render/Framebuffer.hpp>
 #include <hyprland/src/render/Texture.hpp>
 #include <hyprland/src/helpers/AnimatedVariable.hpp>
-#include <hyprland/src/managers/HookSystemManager.hpp>
+#include <hyprland/src/event/EventBus.hpp>
 #include <vector>
 #include <unordered_map>
 #include <gdk-pixbuf/gdk-pixbuf.h>
@@ -208,15 +208,15 @@ class COverview {
     static constexpr float DRAG_PREVIEW_SCALE = 0.10f;  // Scale factor for drag preview
 
     // Event hooks
-    SP<HOOK_CALLBACK_FN> mouseButtonHook;
-    SP<HOOK_CALLBACK_FN> mouseMoveHook;
-    SP<HOOK_CALLBACK_FN> mouseAxisHook;
-    SP<HOOK_CALLBACK_FN> monitorAddedHook;
-    SP<HOOK_CALLBACK_FN> monitorRemovedHook;
-    SP<HOOK_CALLBACK_FN> workspaceChangeHook;
-    SP<HOOK_CALLBACK_FN> openWindowHook;
-    SP<HOOK_CALLBACK_FN> closeWindowHook;
-    SP<HOOK_CALLBACK_FN> moveWindowHook;
+    CHyprSignalListener mouseButtonHook;
+    CHyprSignalListener mouseMoveHook;
+    CHyprSignalListener mouseAxisHook;
+    CHyprSignalListener monitorAddedHook;
+    CHyprSignalListener monitorRemovedHook;
+    CHyprSignalListener workspaceChangeHook;
+    CHyprSignalListener openWindowHook;
+    CHyprSignalListener closeWindowHook;
+    CHyprSignalListener moveWindowHook;
 
     friend class COverviewPassElement;
     friend void removeOverview(WP<Hyprutils::Animation::CBaseAnimatedVariable>, PHLMONITOR);

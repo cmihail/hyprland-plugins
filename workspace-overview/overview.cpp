@@ -12,9 +12,7 @@
 #include <hyprland/src/managers/animation/DesktopAnimationManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/managers/KeybindManager.hpp>
-#include <hyprland/src/managers/LayoutManager.hpp>
-#include <hyprland/src/layout/IHyprLayout.hpp>
-#include <hyprland/src/layout/DwindleLayout.hpp>
+#include <hyprland/src/layout/LayoutManager.hpp>
 #include <hyprland/src/devices/IPointer.hpp>
 #include <hyprland/src/helpers/time/Time.hpp>
 #undef private
@@ -299,7 +297,7 @@ void COverview::setupEventHooks() {
 }
 
 void COverview::setupMouseMoveHook() {
-    auto onMouseMove = [this](void* self, SCallbackInfo& info, std::any param) {
+    mouseMoveHook = Event::bus()->m_events.input.mouse.move.listen([this](Vector2D pos, Event::SCallbackInfo& info) {
         if (closing)
             return;
 
@@ -335,20 +333,17 @@ void COverview::setupMouseMoveHook() {
                 }
             }
         }
-    };
-    mouseMoveHook = g_pHookSystem->hookDynamic("mouseMove", onMouseMove);
+    });
 }
 
 void COverview::setupMouseButtonHook() {
-    auto onMouseButton = [this](void* self, SCallbackInfo& info, std::any param) {
+    mouseButtonHook = Event::bus()->m_events.input.mouse.button.listen([this](IPointer::SButtonEvent e, Event::SCallbackInfo& info) {
         if (closing)
             return;
 
         // Check if click is on a different monitor than the overview
         const Vector2D mousePos = g_pInputManager->getMouseCoordsInternal();
         const auto clickedMonitor = g_pCompositor->getMonitorFromVector(mousePos);
-
-        auto e = std::any_cast<IPointer::SButtonEvent>(param);
 
         // IMPORTANT: Always reset mouseButtonPressed on button release for ALL overviews
         // This must happen before any early returns to avoid stuck drag states
@@ -526,9 +521,7 @@ void COverview::setupMouseButtonHook() {
             }
             return;
         }
-    };
-
-    mouseButtonHook = g_pHookSystem->hookDynamic("mouseButton", onMouseButton);
+    });
 }
 
 void COverview::handleSelectWorkspaceButton(
@@ -550,18 +543,12 @@ void COverview::handleSelectWorkspaceButton(
 }
 
 void COverview::setupMouseAxisHook() {
-    auto onMouseAxis = [this](void* self, SCallbackInfo& info, std::any param) {
+    mouseAxisHook = Event::bus()->m_events.input.mouse.axis.listen([this](IPointer::SAxisEvent e, Event::SCallbackInfo& info) {
         if (closing) {
             return;
         }
 
         try {
-            // Extract event from map
-            auto eventMap = std::any_cast<
-                std::unordered_map<std::string, std::any>
-            >(param);
-            auto e = std::any_cast<IPointer::SAxisEvent>(eventMap["event"]);
-
             // Check if mouse is on this monitor
             const Vector2D globalMousePos = g_pInputManager->getMouseCoordsInternal();
             const auto currentMonitor = g_pCompositor->getMonitorFromVector(globalMousePos);
@@ -616,9 +603,7 @@ void COverview::setupMouseAxisHook() {
 
         // Consume the scroll event to prevent it from propagating
         info.cancelled = true;
-    };
-
-    mouseAxisHook = g_pHookSystem->hookDynamic("mouseAxis", onMouseAxis);
+    });
 }
 
 void COverview::closeAllOverviews() {
@@ -634,27 +619,22 @@ void COverview::closeAllOverviews() {
 }
 
 void COverview::setupMonitorHooks() {
-    auto onMonitorAdded = [](void* self, SCallbackInfo& info, std::any param) {
+    monitorAddedHook = Event::bus()->m_events.monitor.added.listen([](PHLMONITOR mon) {
         closeAllOverviews();
-    };
+    });
 
-    auto onMonitorRemoved = [](void* self, SCallbackInfo& info, std::any param) {
+    monitorRemovedHook = Event::bus()->m_events.monitor.preRemoved.listen([](PHLMONITOR mon) {
         closeAllOverviews();
-    };
-
-    monitorAddedHook = g_pHookSystem->hookDynamic("monitorAdded", onMonitorAdded);
-    monitorRemovedHook = g_pHookSystem->hookDynamic("monitorRemoved", onMonitorRemoved);
+    });
 }
 
 void COverview::setupWorkspaceChangeHook() {
-    auto onWorkspaceChange = [this](void* self, SCallbackInfo& info, std::any param) {
+    workspaceChangeHook = Event::bus()->m_events.workspace.active.listen([this](PHLWORKSPACE newWorkspace) {
         if (closing)
             return;
 
         if (g_dragState.isDragging)
             return;
-
-        auto newWorkspace = std::any_cast<PHLWORKSPACE>(param);
 
         auto workspaceMonitor = newWorkspace ? newWorkspace->m_monitor.lock() : nullptr;
         if (!newWorkspace || !workspaceMonitor)
@@ -700,9 +680,7 @@ void COverview::setupWorkspaceChangeHook() {
         }
 
         g_pOverviews[monitor] = std::move(newOverview);
-    };
-
-    workspaceChangeHook = g_pHookSystem->hookDynamic("workspace", onWorkspaceChange);
+    });
 }
 
 void COverview::setupWindowEventHooks() {
@@ -732,9 +710,7 @@ void COverview::setupWindowEventHooks() {
         setupSourceWorkspaceRefreshTimer(this, workspacesToRefresh, 1000);
     };
 
-    auto onOpenWindow = [this, scheduleWorkspaceRefresh](
-        void* self, SCallbackInfo& info, std::any param
-    ) {
+    openWindowHook = Event::bus()->m_events.window.open.listen([this, scheduleWorkspaceRefresh](PHLWINDOW window) {
         if (closing)
             return;
 
@@ -742,13 +718,10 @@ void COverview::setupWindowEventHooks() {
         if (g_dragState.isDragging)
             return;
 
-        auto window = std::any_cast<PHLWINDOW>(param);
         scheduleWorkspaceRefresh(window);
-    };
+    });
 
-    auto onCloseWindow = [this, scheduleWorkspaceRefresh](
-        void* self, SCallbackInfo& info, std::any param
-    ) {
+    closeWindowHook = Event::bus()->m_events.window.destroy.listen([this, scheduleWorkspaceRefresh](PHLWINDOW window) {
         if (closing)
             return;
 
@@ -756,13 +729,10 @@ void COverview::setupWindowEventHooks() {
         if (g_dragState.isDragging)
             return;
 
-        auto window = std::any_cast<PHLWINDOW>(param);
         scheduleWorkspaceRefresh(window);
-    };
+    });
 
-    auto onMoveWindow = [this, scheduleWorkspaceRefresh](
-        void* self, SCallbackInfo& info, std::any param
-    ) {
+    moveWindowHook = Event::bus()->m_events.window.moveToWorkspace.listen([this, scheduleWorkspaceRefresh](PHLWINDOW window, PHLWORKSPACE ws) {
         if (closing)
             return;
 
@@ -770,16 +740,8 @@ void COverview::setupWindowEventHooks() {
         if (g_dragState.isDragging)
             return;
 
-        auto data = std::any_cast<std::vector<std::any>>(param);
-        if (data.size() >= 2) {
-            auto window = std::any_cast<PHLWINDOW>(data[0]);
-            scheduleWorkspaceRefresh(window);
-        }
-    };
-
-    openWindowHook = g_pHookSystem->hookDynamic("openWindow", onOpenWindow);
-    closeWindowHook = g_pHookSystem->hookDynamic("closeWindow", onCloseWindow);
-    moveWindowHook = g_pHookSystem->hookDynamic("moveWindow", onMoveWindow);
+        scheduleWorkspaceRefresh(window);
+    });
 }
 
 void COverview::setInitialScrollPosition(float availableHeight) {
@@ -2300,17 +2262,17 @@ PHLWINDOW COverview::findWindowAtPosition(const Vector2D& pos, int workspaceInde
 // Helper function to convert direction enum to string for layout API
 const char* getDirectionString(int direction) {
     switch (direction) {
-        case DIRECTION_UP: return "u";
-        case DIRECTION_DOWN: return "d";
-        case DIRECTION_LEFT: return "l";
-        case DIRECTION_RIGHT: return "r";
+        case Math::DIRECTION_UP: return "u";
+        case Math::DIRECTION_DOWN: return "d";
+        case Math::DIRECTION_LEFT: return "l";
+        case Math::DIRECTION_RIGHT: return "r";
         default: return nullptr;
     }
 }
 
 int COverview::calculateDropDirection(PHLWINDOW targetWindow, const Vector2D& cursorPos) {
     if (!targetWindow)
-        return DIRECTION_DEFAULT;
+        return Math::DIRECTION_DEFAULT;
 
     // Get window's real position and size
     const Vector2D wPos = targetWindow->m_realPosition->value();
@@ -2323,9 +2285,9 @@ int COverview::calculateDropDirection(PHLWINDOW targetWindow, const Vector2D& cu
 
     int direction;
     if (isLandscape) {
-        direction = (relativePos.x < 0) ? DIRECTION_LEFT : DIRECTION_RIGHT;
+        direction = (relativePos.x < 0) ? Math::DIRECTION_LEFT : Math::DIRECTION_RIGHT;
     } else {
-        direction = (relativePos.y < 0) ? DIRECTION_UP : DIRECTION_DOWN;
+        direction = (relativePos.y < 0) ? Math::DIRECTION_UP : Math::DIRECTION_DOWN;
     }
 
     return direction;
@@ -2437,7 +2399,7 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
     }
 
     PHLWINDOW targetWindow = findWindowAtPosition(cursorPos, targetWorkspaceIndex);
-    int dropDirection = DIRECTION_DEFAULT;
+    int dropDirection = Math::DIRECTION_DEFAULT;
 
     Vector2D workspaceCursorPos = convertPreviewToWorkspaceCoords(cursorPos, targetWorkspaceIndex);
 
@@ -2453,7 +2415,7 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
 
     // If already in target workspace and no valid tiling target, don't move
     if (window->m_workspace == targetImage.pWorkspace &&
-        (dropDirection == DIRECTION_DEFAULT || !targetWindow)) {
+        (dropDirection == Math::DIRECTION_DEFAULT || !targetWindow)) {
         return;
     }
 
@@ -2462,13 +2424,10 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
     g_pCompositor->moveWindowToWorkspaceSafe(window, targetImage.pWorkspace);
 
     // If smart tiling is desired, reposition the window using layout manager
-    if (!window->m_isFloating && dropDirection != DIRECTION_DEFAULT && targetWindow) {
-        auto layout = g_pLayoutManager->getCurrentLayout();
-        if (layout) {
-            // Remove window from its current position in the layout
-            layout->onWindowRemovedTiling(window);
-            // Re-add it with the specified direction to position it relative to target
-            layout->onWindowCreatedTiling(window, static_cast<eDirection>(dropDirection));
+    if (!window->m_isFloating && dropDirection != Math::DIRECTION_DEFAULT && targetWindow) {
+        const char* dirStr = getDirectionString(dropDirection);
+        if (dirStr && g_layoutManager) {
+            g_layoutManager->moveInDirection(window->layoutTarget(), dirStr);
         }
     }
 

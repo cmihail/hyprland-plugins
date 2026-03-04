@@ -21,7 +21,7 @@
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #define private public
 #include <hyprland/src/Compositor.hpp>
-#include <hyprland/src/managers/HookSystemManager.hpp>
+#include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
 #include <hyprland/src/devices/IPointer.hpp>
@@ -110,10 +110,10 @@ std::vector<std::string> g_pendingGestureDeletions;
 std::vector<std::string> g_pendingGestureAdditions;
 
 // Hook handles
-SP<HOOK_CALLBACK_FN> g_mouseButtonHook;
-SP<HOOK_CALLBACK_FN> g_mouseMoveHook;
-SP<HOOK_CALLBACK_FN> g_mouseAxisHook;
-SP<HOOK_CALLBACK_FN> g_renderHook;
+CHyprSignalListener g_mouseButtonHook;
+CHyprSignalListener g_mouseMoveHook;
+CHyprSignalListener g_mouseAxisHook;
+CHyprSignalListener g_renderHook;
 
 // Helper function to check if there are any visible trail points
 static bool hasVisibleTrailPoints() {
@@ -1462,8 +1462,11 @@ static void onPreConfigReload() {
 
 static void setupRenderHook() {
     try {
-        auto onRender = [](void* self, SCallbackInfo& info, std::any param) {
+        g_renderHook = Event::bus()->m_events.render.stage.listen([](eRenderStage stage) {
             try {
+                if (stage != eRenderStage::RENDER_POST_WINDOWS)
+                    return;
+
                 // Don't render if plugin is shutting down
                 if (g_pluginShuttingDown) {
                     return;
@@ -1526,9 +1529,7 @@ static void setupRenderHook() {
             } catch (...) {
                 // Catch any other unexpected errors
             }
-        };
-
-        g_renderHook = g_pHookSystem->hookDynamic("render", onRender);
+        });
 
     } catch (const std::exception& e) {
         // Failed to set up render hook - not critical, just skip the feature
@@ -1641,9 +1642,8 @@ static SDispatchResult mouseGesturesDispatch(std::string arg) {
 }
 
 static void setupMouseButtonHook() {
-    auto onMouseButton = [](void* self, SCallbackInfo& info, std::any param) {
+    g_mouseButtonHook = Event::bus()->m_events.input.mouse.button.listen([](IPointer::SButtonEvent e, Event::SCallbackInfo& info) {
         try {
-            auto e = std::any_cast<IPointer::SButtonEvent>(param);
 
             // Get configured drag button (default: BTN_RIGHT = 273)
             static auto* const PDRAGBUTTON = (Hyprlang::INT* const*)
@@ -1793,13 +1793,11 @@ static void setupMouseButtonHook() {
             g_gestureState.timestampedPath.clear();
             g_gestureState.reset();
         }
-    };
-
-    g_mouseButtonHook = g_pHookSystem->hookDynamic("mouseButton", onMouseButton);
+    });
 }
 
 static void setupMouseMoveHook() {
-    auto onMouseMove = [](void* self, SCallbackInfo& info, std::any param) {
+    g_mouseMoveHook = Event::bus()->m_events.input.mouse.move.listen([](Vector2D pos, Event::SCallbackInfo& info) {
         try {
             if (!g_pInputManager) {
                 return;
@@ -1841,13 +1839,11 @@ static void setupMouseMoveHook() {
         } catch (const std::exception&) {
             // Catch all exceptions to prevent crashing Hyprland
         }
-    };
-
-    g_mouseMoveHook = g_pHookSystem->hookDynamic("mouseMove", onMouseMove);
+    });
 }
 
 static void setupMouseAxisHook() {
-    auto onMouseAxis = [](void* self, SCallbackInfo& info, std::any param) {
+    g_mouseAxisHook = Event::bus()->m_events.input.mouse.axis.listen([](IPointer::SAxisEvent e, Event::SCallbackInfo& info) {
         try {
             // Only handle scrolling when in record mode
             if (!g_recordMode) {
@@ -1863,12 +1859,6 @@ static void setupMouseAxisHook() {
             if (!monitor) {
                 return;
             }
-
-            // Extract event from map (same as workspace-overview)
-            auto eventMap = std::any_cast<
-                std::unordered_map<std::string, std::any>
-            >(param);
-            auto e = std::any_cast<IPointer::SAxisEvent>(eventMap["event"]);
 
             // Handle vertical scrolling
             if (e.axis == WL_POINTER_AXIS_VERTICAL_SCROLL) {
@@ -1901,9 +1891,7 @@ static void setupMouseAxisHook() {
         } catch (const std::exception&) {
             // Catch all exceptions to prevent crashing Hyprland
         }
-    };
-
-    g_mouseAxisHook = g_pHookSystem->hookDynamic("mouseAxis", onMouseAxis);
+    });
 }
 
 // Helper function to convert pixel data to RGBA format
@@ -2076,17 +2064,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     );
 
     // Register preConfigReload handler
-    static auto preConfigReloadHook = HyprlandAPI::registerCallbackDynamic(
-        PHANDLE,
-        "preConfigReload",
-        [&](void* self, SCallbackInfo& info, std::any data) { onPreConfigReload(); }
+    static auto preConfigReloadHook = Event::bus()->m_events.config.preReload.listen(
+        []() { onPreConfigReload(); }
     );
 
     // Register configReloaded handler
-    static auto configReloadedHook = HyprlandAPI::registerCallbackDynamic(
-        PHANDLE,
-        "configReloaded",
-        [&](void* self, SCallbackInfo& info, std::any data) {
+    static auto configReloadedHook = Event::bus()->m_events.config.reloaded.listen(
+        []() {
             // Detect which config file is being used
             detectConfigFilePath();
 

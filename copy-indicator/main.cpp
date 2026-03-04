@@ -11,7 +11,7 @@
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/render/pass/PassElement.hpp>
-#include <hyprland/src/managers/HookSystemManager.hpp>
+#include <hyprland/src/event/EventBus.hpp>
 #include <cairo/cairo.h>
 #include <pango/pangocairo.h>
 #include <hyprland/src/plugins/PluginAPI.hpp>
@@ -29,7 +29,7 @@ struct CopyIndicator {
 // Global state
 std::unordered_map<PHLMONITOR, CopyIndicator> g_indicators;
 SP<CTexture> g_cachedEmojiTexture;
-SP<HOOK_CALLBACK_FN> g_renderHook;
+CHyprSignalListener g_renderHook;
 bool g_pluginShuttingDown = false;
 
 // Forward declarations
@@ -220,29 +220,29 @@ void handleIndicatorRender(PHLMONITOR monitor, CopyIndicator& indicator) {
     }
 }
 
-// Render callback
-void onRenderCallback(void* self, SCallbackInfo& info, std::any param) {
-    try {
-        if (g_pluginShuttingDown || !g_pHyprOpenGL || !g_pHyprRenderer)
-            return;
-
-        auto monitor = g_pHyprOpenGL->m_renderData.pMonitor.lock();
-        if (!monitor)
-            return;
-
-        auto it = g_indicators.find(monitor);
-        if (it == g_indicators.end() || !it->second.active)
-            return;
-
-        handleIndicatorRender(monitor, it->second);
-    } catch (...) {
-    }
-}
-
 // Setup render hook
 void setupRenderHook() {
     try {
-        g_renderHook = g_pHookSystem->hookDynamic("render", onRenderCallback);
+        g_renderHook = Event::bus()->m_events.render.stage.listen([](eRenderStage stage) {
+            try {
+                if (stage != eRenderStage::RENDER_POST_WINDOWS)
+                    return;
+
+                if (g_pluginShuttingDown || !g_pHyprOpenGL || !g_pHyprRenderer)
+                    return;
+
+                auto monitor = g_pHyprOpenGL->m_renderData.pMonitor.lock();
+                if (!monitor)
+                    return;
+
+                auto it = g_indicators.find(monitor);
+                if (it == g_indicators.end() || !it->second.active)
+                    return;
+
+                handleIndicatorRender(monitor, it->second);
+            } catch (...) {
+            }
+        });
     } catch (...) {
     }
 }

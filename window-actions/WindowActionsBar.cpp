@@ -6,7 +6,7 @@
 #include <hyprland/src/managers/SeatManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/render/Renderer.hpp>
-#include <hyprland/src/managers/LayoutManager.hpp>
+#include <hyprland/src/layout/LayoutManager.hpp>
 #include <hyprland/src/config/ConfigManager.hpp>
 #include <hyprland/src/protocols/LayerShell.hpp>
 #include <hyprland/src/managers/KeybindManager.hpp>
@@ -22,14 +22,14 @@ CWindowActionsBar::CWindowActionsBar(PHLWINDOW pWindow) : IHyprWindowDecoration(
     const auto PMONITOR = pWindow->m_monitor.lock();
     PMONITOR->m_scheduledRecalc = true;
 
-    m_pMouseButtonCallback = HyprlandAPI::registerCallbackDynamic(
-        PHANDLE, "mouseButton", [&](void* self, SCallbackInfo& info, std::any param) { onMouseButton(info, std::any_cast<IPointer::SButtonEvent>(param)); });
-    m_pMouseMoveCallback = HyprlandAPI::registerCallbackDynamic(
-        PHANDLE, "mouseMove", [&](void* self, SCallbackInfo& info, std::any param) { onMouseMove(std::any_cast<Vector2D>(param)); });
-    m_pTouchDownCallback = HyprlandAPI::registerCallbackDynamic(
-        PHANDLE, "touchDown", [&](void* self, SCallbackInfo& info, std::any param) { onTouchDown(info, std::any_cast<ITouch::SDownEvent>(param)); });
-    m_pTouchUpCallback = HyprlandAPI::registerCallbackDynamic(
-        PHANDLE, "touchUp", [&](void* self, SCallbackInfo& info, std::any param) { handleUpEvent(info); });
+    m_pMouseButtonCallback = Event::bus()->m_events.input.mouse.button.listen(
+        [this](IPointer::SButtonEvent e, Event::SCallbackInfo& info) { onMouseButton(info, e); });
+    m_pMouseMoveCallback = Event::bus()->m_events.input.mouse.move.listen(
+        [this](Vector2D pos, Event::SCallbackInfo& info) { onMouseMove(pos); });
+    m_pTouchDownCallback = Event::bus()->m_events.input.touch.down.listen(
+        [this](ITouch::SDownEvent e, Event::SCallbackInfo& info) { onTouchDown(info, e); });
+    m_pTouchUpCallback = Event::bus()->m_events.input.touch.up.listen(
+        [this](ITouch::SUpEvent e, Event::SCallbackInfo& info) { handleUpEvent(info); });
 
     // Initialize button textures based on config
     size_t buttonCount = g_pGlobalState->buttons.size();
@@ -40,10 +40,10 @@ CWindowActionsBar::CWindowActionsBar(PHLWINDOW pWindow) : IHyprWindowDecoration(
 }
 
 CWindowActionsBar::~CWindowActionsBar() {
-    HyprlandAPI::unregisterCallback(PHANDLE, m_pMouseButtonCallback);
-    HyprlandAPI::unregisterCallback(PHANDLE, m_pMouseMoveCallback);
-    HyprlandAPI::unregisterCallback(PHANDLE, m_pTouchDownCallback);
-    HyprlandAPI::unregisterCallback(PHANDLE, m_pTouchUpCallback);
+    m_pMouseButtonCallback.reset();
+    m_pMouseMoveCallback.reset();
+    m_pTouchDownCallback.reset();
+    m_pTouchUpCallback.reset();
     std::erase(g_pGlobalState->bars, m_self);
 }
 
@@ -307,7 +307,7 @@ bool CWindowActionsBar::getWindowState(const std::string& condition) {
     if (condition == "fullscreen") {
         return PWINDOW->isFullscreen();
     } else if (condition == "grouped") {
-        return PWINDOW->m_groupData.pNextWindow != nullptr;
+        return PWINDOW->m_group != nullptr;
     } else if (condition == "floating") {
         return PWINDOW->m_isFloating;
     } else if (condition == "maximized") {
