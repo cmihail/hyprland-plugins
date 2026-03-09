@@ -3,7 +3,7 @@ PLUGIN_NAME = mouse-gestures
 SOURCE_FILES = main.cpp MouseGestureOverlay.cpp
 
 COMPILE_FLAGS = -shared -fPIC --no-gnu-unique -g -std=c++23 -Wall -Wextra -Wno-unused-parameter -Wno-unused-value -Wno-missing-field-initializers -Wno-narrowing -Wno-pointer-arith
-COMPILE_FLAGS += -I "/usr/include/pixman-1" -I "/usr/include/libdrm" -I "/usr/include" -I "$(HYPRLAND_HEADERS)" -I "$(HYPRLAND_HEADERS)/hyprland/protocols"
+COMPILE_FLAGS += -I "/usr/include/pixman-1" -I "/usr/include/libdrm" -I "/usr/include" -I "$(HYPRLAND_HEADERS)" -I "$(HYPRLAND_HEADERS)/hyprland/protocols" -I "$(HYPRLAND_HEADERS)/hyprland/src"
 COMPILE_FLAGS += $(shell pkg-config --cflags --libs gdk-pixbuf-2.0 pangocairo cairo)
 
 HYPRLAND_HEADERS ?= $(HOME)/.local/include
