@@ -881,3 +881,146 @@ TEST_F(StandaloneTest, AutoFocusWithMultipleCommands) {
         EXPECT_EQ(executor.getLastExecutedCommand(), testCase.command);
     }
 }
+
+// Mock input manager that tracks the m_forcedFocus -> refocus() sequence,
+// simulating how Hyprland's InputManager uses m_forcedFocus to override
+// cursor-position-based focus.
+class MockInputManager {
+public:
+    int  m_forcedFocus    = -1; // -1 means "not set" (like a null WP<CWindow>)
+    int  m_cursorWindow   = -1; // window currently under cursor
+    int  m_refocusResult  = -1; // which window refocus() ended up focusing
+
+    // Tracks the value of m_forcedFocus at the moment refocus() was called
+    int  m_forcedFocusAtRefocus = -1;
+    bool m_refocusCalled        = false;
+
+    void refocus() {
+        m_refocusCalled         = true;
+        m_forcedFocusAtRefocus  = m_forcedFocus;
+
+        // If m_forcedFocus is set, use it; otherwise fall back to cursor position.
+        // This mirrors Hyprland's real behaviour.
+        if (m_forcedFocus != -1) {
+            m_refocusResult = m_forcedFocus;
+            m_forcedFocus   = -1; // consumed after use
+        } else {
+            m_refocusResult = m_cursorWindow;
+        }
+    }
+
+    void reset() {
+        m_forcedFocus           = -1;
+        m_cursorWindow          = -1;
+        m_refocusResult         = -1;
+        m_forcedFocusAtRefocus  = -1;
+        m_refocusCalled         = false;
+    }
+};
+
+// Simulates executeCommand() as implemented in WindowActionsBar.cpp:
+// sets m_forcedFocus then calls refocus() before dispatching.
+static void simulateExecuteCommand(MockInputManager& inputMgr,
+                                   const std::string& command,
+                                   int barWindowId,
+                                   std::string& lastDispatchedCommand) {
+    if (command.empty())
+        return;
+    if (command == "__movewindow__")
+        return;
+
+    inputMgr.m_forcedFocus = barWindowId;
+    inputMgr.refocus();
+
+    lastDispatchedCommand = command;
+}
+
+TEST_F(StandaloneTest, ForcedFocusSetBeforeRefocus) {
+    MockInputManager inputMgr;
+    inputMgr.m_cursorWindow = 200; // cursor is over window 200
+    std::string dispatched;
+
+    // Bar belongs to window 100; cursor is drifted to window 200
+    simulateExecuteCommand(inputMgr, "hyprctl dispatch killactive", 100, dispatched);
+
+    EXPECT_TRUE(inputMgr.m_refocusCalled);
+    // m_forcedFocus must have been set to 100 before refocus() ran
+    EXPECT_EQ(inputMgr.m_forcedFocusAtRefocus, 100);
+    // refocus() should have focused window 100 (not the cursor window)
+    EXPECT_EQ(inputMgr.m_refocusResult, 100);
+    EXPECT_EQ(dispatched, "hyprctl dispatch killactive");
+}
+
+TEST_F(StandaloneTest, ForcedFocusOverridesCursorPosition) {
+    MockInputManager inputMgr;
+    std::string dispatched;
+
+    // Cursor is over window B (id=2); bar belongs to window A (id=1)
+    inputMgr.m_cursorWindow = 2;
+    simulateExecuteCommand(inputMgr, "hyprctl dispatch fullscreen 1", 1, dispatched);
+
+    // The command must act on window A, not on B
+    EXPECT_EQ(inputMgr.m_refocusResult, 1);
+    EXPECT_NE(inputMgr.m_refocusResult, inputMgr.m_cursorWindow);
+}
+
+TEST_F(StandaloneTest, ForcedFocusConsumedAfterRefocus) {
+    MockInputManager inputMgr;
+    inputMgr.m_cursorWindow = 99;
+    std::string dispatched;
+
+    simulateExecuteCommand(inputMgr, "hyprctl dispatch togglefloating", 42, dispatched);
+
+    // After refocus(), m_forcedFocus is cleared (consumed) so it doesn't
+    // accidentally affect the next unrelated refocus call.
+    EXPECT_EQ(inputMgr.m_forcedFocus, -1);
+}
+
+TEST_F(StandaloneTest, ForcedFocusNotUsedForMoveWindow) {
+    MockInputManager inputMgr;
+    inputMgr.m_cursorWindow = 5;
+    std::string dispatched;
+
+    // __movewindow__ exits early — refocus() must NOT be called
+    simulateExecuteCommand(inputMgr, "__movewindow__", 10, dispatched);
+
+    EXPECT_FALSE(inputMgr.m_refocusCalled);
+    EXPECT_EQ(inputMgr.m_forcedFocus, -1); // was never set
+}
+
+TEST_F(StandaloneTest, ForcedFocusNotUsedForEmptyCommand) {
+    MockInputManager inputMgr;
+    inputMgr.m_cursorWindow = 5;
+    std::string dispatched;
+
+    simulateExecuteCommand(inputMgr, "", 10, dispatched);
+
+    EXPECT_FALSE(inputMgr.m_refocusCalled);
+    EXPECT_TRUE(dispatched.empty());
+}
+
+TEST_F(StandaloneTest, ForcedFocusCorrectAcrossMultipleWindows) {
+    MockInputManager inputMgr;
+
+    struct TestCase { int barWindow; int cursorWindow; std::string command; };
+    std::vector<TestCase> cases = {
+        {1, 2, "hyprctl dispatch killactive"},
+        {3, 4, "hyprctl dispatch fullscreen 1"},
+        {5, 5, "hyprctl dispatch togglefloating"}, // cursor already on bar window
+        {7, 6, "hyprctl dispatch pin"},
+    };
+
+    for (const auto& tc : cases) {
+        inputMgr.reset();
+        inputMgr.m_cursorWindow = tc.cursorWindow;
+        std::string dispatched;
+
+        simulateExecuteCommand(inputMgr, tc.command, tc.barWindow, dispatched);
+
+        EXPECT_EQ(inputMgr.m_refocusResult, tc.barWindow)
+            << "Expected focus on bar window " << tc.barWindow
+            << " but got " << inputMgr.m_refocusResult
+            << " (cursor was on " << tc.cursorWindow << ")";
+        EXPECT_EQ(dispatched, tc.command);
+    }
+}

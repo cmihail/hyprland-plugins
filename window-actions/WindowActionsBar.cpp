@@ -285,6 +285,7 @@ void CWindowActionsBar::executeCommand(const std::string& command) {
     // Focus the window before executing any command to ensure it targets the correct window
     const auto PWINDOW = m_pWindow.lock();
     if (PWINDOW) {
+        g_pInputManager->m_forcedFocus = PWINDOW;
         g_pInputManager->refocus();
     }
 
