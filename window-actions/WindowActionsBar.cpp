@@ -103,7 +103,8 @@ std::string CWindowActionsBar::getDisplayName() {
 }
 
 bool CWindowActionsBar::inputIsValid() {
-    if (!m_pWindow->m_workspace || !m_pWindow->m_workspace->isVisible() ||
+    const auto PWINDOW = m_pWindow.lock();
+    if (!PWINDOW || !PWINDOW->m_workspace || !PWINDOW->m_workspace->isVisible() ||
         !g_pInputManager->m_exclusiveLSes.empty())
         return false;
 
@@ -112,7 +113,7 @@ bool CWindowActionsBar::inputIsValid() {
         Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS |
         Desktop::View::ALLOW_FLOATING);
 
-    if (WINDOWATCURSOR != m_pWindow)
+    if (WINDOWATCURSOR != PWINDOW)
         return false;
 
     auto     PMONITOR     = g_pCompositor->getMonitorFromCursor();
@@ -186,27 +187,43 @@ void CWindowActionsBar::onTouchDown(SCallbackInfo& info, ITouch::SDownEvent e) {
 }
 
 void CWindowActionsBar::onMouseMove(Vector2D coords) {
-    if (!inputIsValid()) return;
+    // Avoid calling vectorToWindowUnified() here: it walks every window's popup
+    // tree (CPopup::breadthfirst), which has crashed on a dangling popup. Do a
+    // cheap bar-rect containment check instead and only redraw on hover change.
+    const auto PWINDOW = m_pWindow.lock();
+    if (!PWINDOW || !PWINDOW->m_workspace || !PWINDOW->m_workspace->isVisible() ||
+        !g_pInputManager->m_exclusiveLSes.empty())
+        return;
 
-    // Handle drag movement if pending
-    if (m_bDragPending && !m_bTouchEv && validMapped(m_pWindow)) {
+    const auto CURSOR = g_pInputManager->getMouseCoordsInternal();
+    if (!assignedBoxGlobal().containsPoint(CURSOR)) {
+        if (m_iHoveredButton != -1) {
+            m_iHoveredButton = -1;
+            damageEntire();
+        }
+        return;
+    }
+
+    if (m_bDragPending && !m_bTouchEv && validMapped(PWINDOW)) {
         m_bDragPending = false;
         handleMovement();
         return;
     }
 
-    const auto COORDS = cursorRelativeToButton();
+    const auto COORDS = CURSOR - PWINDOW->m_realPosition->value();
     const int newHoveredButton = getButtonIndex(COORDS);
 
     if (newHoveredButton != m_iHoveredButton) {
         m_iHoveredButton = newHoveredButton;
-        damageEntire(); // Trigger redraw
+        damageEntire();
     }
 }
 
 Vector2D CWindowActionsBar::cursorRelativeToButton() {
-    const auto COORDS = g_pInputManager->getMouseCoordsInternal();
     const auto PWINDOW = m_pWindow.lock();
+    if (!PWINDOW)
+        return {-1, -1};
+    const auto COORDS = g_pInputManager->getMouseCoordsInternal();
     return COORDS - PWINDOW->m_realPosition->value();
 }
 
