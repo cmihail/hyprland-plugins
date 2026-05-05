@@ -304,6 +304,7 @@ void CWindowActionsBar::executeCommand(const std::string& command) {
     if (PWINDOW) {
         g_pInputManager->m_forcedFocus = PWINDOW;
         g_pInputManager->refocus();
+        g_pInputManager->m_forcedFocus.reset();
     }
 
     // Use the exec dispatcher to execute the command
