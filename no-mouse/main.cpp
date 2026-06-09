@@ -16,6 +16,8 @@
 
 #include "NoMouseOverlay.hpp"
 
+using Render::GL::g_pHyprOpenGL;
+
 // Debug logging
 static void debugLog(const std::string& msg) {
     std::ofstream logFile("/tmp/debug", std::ios::app);
@@ -446,7 +448,7 @@ static void setupRenderHook() {
                 }
 
                 // Get the current monitor being rendered
-                auto monitor = g_pHyprOpenGL->m_renderData.pMonitor.lock();
+                auto monitor = g_pHyprRenderer->m_renderData.pMonitor.lock();
                 if (!monitor) {
                     return;
                 }

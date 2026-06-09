@@ -6,6 +6,8 @@
 #include <hyprland/src/desktop/DesktopTypes.hpp>
 #include <hyprland/src/render/Framebuffer.hpp>
 #include <hyprland/src/render/Texture.hpp>
+#include <hyprland/src/render/gl/GLFramebuffer.hpp>
+#include <hyprland/src/render/gl/GLTexture.hpp>
 #include <hyprland/src/helpers/AnimatedVariable.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <vector>
@@ -24,7 +26,7 @@ struct GlobalDragState {
     PHLWINDOW draggedWindow = nullptr;
     int sourceWorkspaceIndex = -1;
     COverview* sourceOverview = nullptr;
-    CFramebuffer dragPreviewFB;
+    SP<Render::GL::CGLFramebuffer> dragPreviewFB = makeShared<Render::GL::CGLFramebuffer>();
     Vector2D mouseDownPos = Vector2D{};
 
     void reset() {
@@ -35,8 +37,8 @@ struct GlobalDragState {
         sourceWorkspaceIndex = -1;
         sourceOverview = nullptr;
         mouseDownPos = Vector2D{};
-        if (dragPreviewFB.m_size.x > 0) {
-            dragPreviewFB.release();
+        if (dragPreviewFB && dragPreviewFB->m_size.x > 0) {
+            dragPreviewFB->release();
         }
     }
 };
@@ -176,7 +178,7 @@ class COverview {
     bool damageDirty = false;
 
     struct SWorkspaceImage {
-        CFramebuffer fb;
+        SP<Render::GL::CGLFramebuffer> fb = makeShared<Render::GL::CGLFramebuffer>();
         int64_t      workspaceID = -1;
         PHLWORKSPACE pWorkspace;
         CBox         box;

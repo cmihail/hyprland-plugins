@@ -4,6 +4,8 @@
 
 #include <hyprland/src/render/decorations/IHyprWindowDecoration.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
+#include <hyprland/src/render/Texture.hpp>
+#include <hyprland/src/render/gl/GLTexture.hpp>
 #include <hyprland/src/devices/IPointer.hpp>
 #include <hyprland/src/devices/ITouch.hpp>
 #include <hyprland/src/desktop/rule/windowRule/WindowRule.hpp>
@@ -40,7 +42,7 @@ class CWindowActionsBar : public IHyprWindowDecoration {
     SBoxExtents               m_seExtents;
     PHLWINDOWREF              m_pWindow;
     CBox                      m_bAssignedBox;
-    std::vector<SP<CTexture>> m_pButtonTextures;
+    std::vector<SP<Render::ITexture>> m_pButtonTextures;
     bool                      m_bWindowSizeChanged = false;
     bool                      m_hidden             = false;
 
@@ -52,7 +54,7 @@ class CWindowActionsBar : public IHyprWindowDecoration {
 
     Vector2D                  cursorRelativeToButton();
     void                      renderButtonTexts(const Vector2D& bufferSize, const float scale);
-    void                      renderText(SP<CTexture> out, const std::string& text, const CHyprColor& color, const Vector2D& bufferSize, const float scale, const int fontSize);
+    void                      renderText(SP<Render::ITexture> out, const std::string& text, const CHyprColor& color, const Vector2D& bufferSize, const float scale, const int fontSize);
 
     bool                      inputIsValid();
     void                      onMouseButton(SCallbackInfo& info, IPointer::SButtonEvent e);

@@ -2,6 +2,7 @@
 #include <hyprland/src/render/pass/PassElement.hpp>
 #include <hyprland/src/helpers/Monitor.hpp>
 #include <hyprland/src/render/Texture.hpp>
+#include <hyprland/src/render/gl/GLTexture.hpp>
 #include "stroke.hpp"
 
 class CMouseGestureOverlay : public IPassElement {
@@ -9,12 +10,13 @@ class CMouseGestureOverlay : public IPassElement {
     CMouseGestureOverlay(PHLMONITOR monitor);
     virtual ~CMouseGestureOverlay();
 
-    virtual void                draw(const CRegion& damage);
-    virtual bool                needsLiveBlur();
-    virtual bool                needsPrecomputeBlur();
-    virtual std::optional<CBox> boundingBox();
+    virtual std::vector<UP<IPassElement>> draw() override;
+    virtual bool                          needsLiveBlur() override;
+    virtual bool                          needsPrecomputeBlur() override;
+    virtual ePassElementType              type() override { return EK_CUSTOM; }
+    virtual std::optional<CBox>           boundingBox() override;
 
-    virtual const char*         passName() {
+    virtual const char* passName() override {
         return "CMouseGestureOverlay";
     }
 
@@ -34,7 +36,7 @@ class CMouseGestureOverlay : public IPassElement {
     void renderGestureTrail(PHLMONITOR monitor, const Vector2D& monitorSize);
     void renderBoxBorders(float x, float y, float size, const CHyprColor& color,
                          float borderSize, const CRegion& damage);
-    void renderText(SP<CTexture> out, const std::string& text,
+    void renderText(SP<Render::ITexture> out, const std::string& text,
                    const CHyprColor& color, const Vector2D& bufferSize,
                    float scale, int fontSize);
 

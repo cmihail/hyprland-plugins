@@ -5,6 +5,10 @@
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/render/Renderer.hpp>
+#include <hyprland/src/render/Texture.hpp>
+#include <hyprland/src/render/gl/GLTexture.hpp>
+
+using Render::GL::g_pHyprOpenGL;
 #include <hyprland/src/helpers/Color.hpp>
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <cairo/cairo.h>
@@ -21,12 +25,12 @@ static void debugLog(const std::string& msg) {
 
 // Global cache for text textures (key: "row,col", value: texture)
 // Caching prevents recreating 676 Cairo surfaces every frame
-static std::unordered_map<std::string, SP<CTexture>> g_labelTextureCache;
+static std::unordered_map<std::string, SP<Render::ITexture>> g_labelTextureCache;
 
 CNoMouseOverlay::CNoMouseOverlay(PHLMONITOR monitor) : m_pMonitor(monitor) {}
 
 // Helper function to create a texture from Cairo surface
-static SP<CTexture> createTextureFromCairoSurface(cairo_surface_t* surface, int width, int height) {
+static SP<Render::ITexture> createTextureFromCairoSurface(cairo_surface_t* surface, int width, int height) {
     const auto DATA = cairo_image_surface_get_data(surface);
     const auto STRIDE = cairo_image_surface_get_stride(surface);
 
@@ -48,12 +52,12 @@ static SP<CTexture> createTextureFromCairoSurface(cairo_surface_t* surface, int 
     const uint32_t drmFormat = DRM_FORMAT_ABGR8888;
     const uint32_t textureStride = width * 4;
 
-    return makeShared<CTexture>(drmFormat, pixelData.data(), textureStride,
-                                Vector2D{(double)width, (double)height}, true);
+    return makeShared<Render::GL::CGLTexture>(drmFormat, pixelData.data(), textureStride,
+                                              Vector2D{(double)width, (double)height}, true);
 }
 
 // Helper function to render text to a texture
-static SP<CTexture> renderTextToTexture(const std::string& text, int fontSize,
+static SP<Render::ITexture> renderTextToTexture(const std::string& text, int fontSize,
                                         float r, float g, float b, float a) {
     // Create Cairo surface
     const int width = 60;
@@ -98,9 +102,9 @@ static SP<CTexture> renderTextToTexture(const std::string& text, int fontSize,
     return texture;
 }
 
-void CNoMouseOverlay::draw(const CRegion& damage) {
+std::vector<UP<IPassElement>> CNoMouseOverlay::draw() {
     if (!m_pMonitor || !g_pHyprOpenGL) {
-        return;
+        return {};
     }
 
     const auto monitorSize = m_pMonitor->m_size;
@@ -222,7 +226,7 @@ void CNoMouseOverlay::draw(const CRegion& damage) {
             const float cellY = selectedRow * cellHeight + 5.0f;
 
             std::string cacheKey = std::to_string(selectedRow) + "," + std::to_string(col);
-            SP<CTexture> textTexture;
+            SP<Render::ITexture> textTexture;
 
             auto it = g_labelTextureCache.find(cacheKey);
             if (it != g_labelTextureCache.end()) {
@@ -257,7 +261,7 @@ void CNoMouseOverlay::draw(const CRegion& damage) {
                 const float cellY = row * cellHeight + 5.0f;
 
                 std::string cacheKey = std::to_string(row) + "," + std::to_string(col);
-                SP<CTexture> textTexture;
+                SP<Render::ITexture> textTexture;
 
                 auto it = g_labelTextureCache.find(cacheKey);
                 if (it != g_labelTextureCache.end()) {
@@ -366,6 +370,7 @@ void CNoMouseOverlay::draw(const CRegion& damage) {
             }
         }
     }
+    return {};
 }
 
 bool CNoMouseOverlay::needsLiveBlur() {

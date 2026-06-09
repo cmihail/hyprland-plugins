@@ -10,11 +10,15 @@
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
+#include <hyprland/src/render/Texture.hpp>
+#include <hyprland/src/render/gl/GLTexture.hpp>
 #include <hyprland/src/render/pass/PassElement.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <cairo/cairo.h>
 #include <pango/pangocairo.h>
 #include <hyprland/src/plugins/PluginAPI.hpp>
+
+using Render::GL::g_pHyprOpenGL;
 
 inline HANDLE PHANDLE = nullptr;
 
@@ -28,7 +32,7 @@ struct CopyIndicator {
 
 // Global state
 std::unordered_map<PHLMONITOR, CopyIndicator> g_indicators;
-SP<CTexture> g_cachedEmojiTexture;
+SP<Render::ITexture> g_cachedEmojiTexture;
 CHyprSignalListener g_renderHook;
 bool g_pluginShuttingDown = false;
 
@@ -72,7 +76,7 @@ void renderTextToCairo(cairo_t* cr, const std::string& text,
 }
 
 // Create and cache the emoji texture once
-SP<CTexture> createEmojiTexture() {
+SP<Render::ITexture> createEmojiTexture() {
     const int ICON_SIZE = 100;
     const int ICON_HEIGHT = 50;
     const std::string TEXT = "📋";
@@ -102,7 +106,7 @@ SP<CTexture> createEmojiTexture() {
 
         const uint32_t drmFormat = DRM_FORMAT_ABGR8888;
         const uint32_t textureStride = ICON_SIZE * 4;
-        auto tex = makeShared<CTexture>(drmFormat, pixelData.data(),
+        auto tex = makeShared<Render::GL::CGLTexture>(drmFormat, pixelData.data(),
             textureStride, Vector2D{(double)ICON_SIZE, (double)ICON_HEIGHT}, true);
 
         cairo_destroy(cr);
@@ -120,30 +124,27 @@ class CCopyIndicatorPassElement : public IPassElement {
     CCopyIndicatorPassElement(PHLMONITOR monitor, const CopyIndicator& indicator)
         : m_monitor(monitor), m_indicator(indicator) {}
 
-    virtual void draw(const CRegion& damage) {
+    virtual std::vector<UP<IPassElement>> draw() override {
         try {
-            if (!m_indicator.active || m_indicator.opacity <= 0.01f) {
-                return;
-            }
+            if (!m_indicator.active || m_indicator.opacity <= 0.01f)
+                return {};
 
-            if (!g_cachedEmojiTexture) {
-                return;
-            }
+            if (!g_cachedEmojiTexture)
+                return {};
 
-            if (!g_pHyprOpenGL) {
-                return;
-            }
+            if (!g_pHyprOpenGL)
+                return {};
 
             const int ICON_WIDTH = 100;
             const int ICON_HEIGHT = 50;
 
             // Calculate position (centered on saved cursor position)
             // Convert from global coordinates to monitor-local coordinates
-            CBox box = {
+            CBox box = CBox{
                 m_indicator.position.x - m_monitor->m_position.x - ICON_WIDTH / 2.0,
                 m_indicator.position.y - m_monitor->m_position.y - ICON_HEIGHT / 2.0,
-                ICON_WIDTH,
-                ICON_HEIGHT
+                static_cast<double>(ICON_WIDTH),
+                static_cast<double>(ICON_HEIGHT)
             };
 
             // Render the texture with opacity
@@ -152,24 +153,20 @@ class CCopyIndicatorPassElement : public IPassElement {
         } catch (const std::exception& e) {
         } catch (...) {
         }
+        return {};
     }
 
-    virtual bool needsLiveBlur() {
-        return false;
-    }
-    virtual bool needsPrecomputeBlur() {
-        return false;
-    }
-    virtual std::optional<CBox> boundingBox() {
-        if (!m_monitor) {
+    virtual bool             needsLiveBlur() override { return false; }
+    virtual bool             needsPrecomputeBlur() override { return false; }
+    virtual ePassElementType type() override { return EK_CUSTOM; }
+
+    virtual std::optional<CBox> boundingBox() override {
+        if (!m_monitor)
             return CBox{0, 0, 0, 0};
-        }
         return CBox{0, 0, m_monitor->m_size.x, m_monitor->m_size.y};
     }
-    virtual CRegion opaqueRegion() {
-        return CRegion{};
-    }
-    virtual const char* passName() { return "CCopyIndicatorPassElement"; }
+    virtual CRegion     opaqueRegion() override { return CRegion{}; }
+    virtual const char* passName() override { return "CCopyIndicatorPassElement"; }
 
   private:
     PHLMONITOR m_monitor;
@@ -231,7 +228,7 @@ void setupRenderHook() {
                 if (g_pluginShuttingDown || !g_pHyprOpenGL || !g_pHyprRenderer)
                     return;
 
-                auto monitor = g_pHyprOpenGL->m_renderData.pMonitor.lock();
+                auto monitor = g_pHyprRenderer->m_renderData.pMonitor.lock();
                 if (!monitor)
                     return;
 

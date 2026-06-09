@@ -1,5 +1,7 @@
 #include "WindowActionsBar.hpp"
 
+#include <hyprland/src/render/Texture.hpp>
+#include <hyprland/src/render/gl/GLTexture.hpp>
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/helpers/MiscFunctions.hpp>
@@ -15,6 +17,8 @@
 
 #include "globals.hpp"
 #include "WindowActionsPassElement.hpp"
+
+using Render::GL::g_pHyprOpenGL;
 
 CWindowActionsBar::CWindowActionsBar(PHLWINDOW pWindow) : IHyprWindowDecoration(pWindow) {
     m_pWindow = pWindow;
@@ -35,7 +39,7 @@ CWindowActionsBar::CWindowActionsBar(PHLWINDOW pWindow) : IHyprWindowDecoration(
     size_t buttonCount = g_pGlobalState->buttons.size();
     m_pButtonTextures.resize(buttonCount);
     for (size_t i = 0; i < buttonCount; i++) {
-        m_pButtonTextures[i] = makeShared<CTexture>();
+        m_pButtonTextures[i] = makeShared<Render::GL::CGLTexture>();
     }
 }
 
@@ -253,7 +257,10 @@ void CWindowActionsBar::handleUpEvent(SCallbackInfo& info) {
         return;
 
     if (m_bDraggingThis) {
-        g_pKeybindManager->m_dispatchers["mouse"]("0movewindow");
+        // End the move drag. The legacy `mouse` dispatcher no longer derives
+        // press/release from the argument string (it strips the leading char and
+        // reads a separate global state), so call changeMouseBindMode directly.
+        CKeybindManager::changeMouseBindMode(MBIND_INVALID);
         m_bDraggingThis = false;
         damageEntire(); // Trigger redraw to restore inactive icon and normal opacity
     }
@@ -266,7 +273,8 @@ void CWindowActionsBar::handleUpEvent(SCallbackInfo& info) {
 }
 
 void CWindowActionsBar::handleMovement() {
-    g_pKeybindManager->m_dispatchers["mouse"]("1movewindow");
+    // Begin the move drag. See handleUpEvent for why we bypass the `mouse` dispatcher.
+    CKeybindManager::changeMouseBindMode(MBIND_MOVE);
     m_bDraggingThis = true;
     damageEntire(); // Trigger redraw to show active icon and full opacity
     Log::logger->log(Log::INFO, "[window-actions] Dragging initiated");
@@ -344,7 +352,7 @@ bool CWindowActionsBar::getWindowState(const std::string& condition) {
     return false;
 }
 
-void CWindowActionsBar::renderText(SP<CTexture> out, const std::string& text, const CHyprColor& color, const Vector2D& bufferSize, const float scale, const int fontSize) {
+void CWindowActionsBar::renderText(SP<Render::ITexture> out, const std::string& text, const CHyprColor& color, const Vector2D& bufferSize, const float scale, const int fontSize) {
     const auto CAIROSURFACE = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, bufferSize.x, bufferSize.y);
     const auto CAIRO        = cairo_create(CAIROSURFACE);
 
@@ -373,7 +381,7 @@ void CWindowActionsBar::renderText(SP<CTexture> out, const std::string& text, co
     pango_font_description_free(fontDesc);
 
     const auto DATA = cairo_image_surface_get_data(CAIROSURFACE);
-    out->allocate();
+    out->allocate(bufferSize, DRM_FORMAT_ARGB8888);
     glBindTexture(GL_TEXTURE_2D, out->m_texID);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -400,7 +408,7 @@ void CWindowActionsBar::renderButtonTexts(const Vector2D& bufferSize, const floa
         m_pButtonTextures.resize(g_pGlobalState->buttons.size());
         for (size_t i = 0; i < g_pGlobalState->buttons.size(); i++) {
             if (!m_pButtonTextures[i]) {
-                m_pButtonTextures[i] = makeShared<CTexture>();
+                m_pButtonTextures[i] = makeShared<Render::GL::CGLTexture>();
             }
         }
     }
@@ -421,7 +429,7 @@ void CWindowActionsBar::renderButtonTexts(const Vector2D& bufferSize, const floa
         }
 
         // Clear existing texture to force re-render (for state changes)
-        m_pButtonTextures[i]->destroyTexture();
+        m_pButtonTextures[i] = makeShared<Render::GL::CGLTexture>();
         renderText(m_pButtonTextures[i], icon, button.text_color, bufferSize, scale, getButtonSize() * 0.6);
     }
 }

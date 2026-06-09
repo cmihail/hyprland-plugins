@@ -6,8 +6,12 @@
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/config/ConfigManager.hpp>
+#include <hyprland/src/config/shared/parserUtils/ParserUtils.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/helpers/MiscFunctions.hpp>
+#include <hyprutils/string/VarList.hpp>
+
+using Hyprutils::String::CVarList;
 
 #include <algorithm>
 
@@ -32,7 +36,7 @@ static Hyprlang::CParseResult onNewButton(const char* COMMAND, const char* VALUE
     // Parse text color (first arg)
     std::string textColorStr = vars[0];
     if (!textColorStr.empty()) {
-        auto rgba_result = configStringToInt(textColorStr);
+        auto rgba_result = Config::ParserUtils::parseColor(textColorStr);
         if (!rgba_result.has_value()) {
             Hyprlang::CParseResult result;
             result.setError("Invalid text color in button config");
@@ -47,7 +51,7 @@ static Hyprlang::CParseResult onNewButton(const char* COMMAND, const char* VALUE
     // Parse background color (second arg)
     std::string bgColorStr = vars[1];
     if (!bgColorStr.empty()) {
-        auto rgba_result = configStringToInt(bgColorStr);
+        auto rgba_result = Config::ParserUtils::parseColor(bgColorStr);
         if (!rgba_result.has_value()) {
             Hyprlang::CParseResult result;
             result.setError("Invalid background color in button config");
