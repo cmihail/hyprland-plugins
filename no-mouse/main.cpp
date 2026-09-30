@@ -7,7 +7,7 @@
 #include <linux/input-event-codes.h>
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/Compositor.hpp>
-#include <hyprland/src/event/EventBus.hpp>
+#include <hyprland/src/SharedDefs.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/managers/KeybindManager.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
@@ -15,8 +15,6 @@
 #include <hyprland/src/render/OpenGL.hpp>
 
 #include "NoMouseOverlay.hpp"
-
-using Render::GL::g_pHyprOpenGL;
 
 // Debug logging
 static void debugLog(const std::string& msg) {
@@ -50,8 +48,8 @@ bool g_hasSubColumn = false;
 int g_subColumn = -1; // 0-17 (A-R)
 
 // Hook handles
-static CHyprSignalListener g_renderHook;
-static CHyprSignalListener g_keyboardHook;
+static SP<HOOK_CALLBACK_FN> g_renderHook;
+static SP<HOOK_CALLBACK_FN> g_keyboardHook;
 
 // Forward declarations
 static void damageAllMonitors();
@@ -432,9 +430,10 @@ static SDispatchResult noMouseDispatch(std::string arg) {
 // Setup render hook to display overlay
 static void setupRenderHook() {
     try {
-        g_renderHook = Event::bus()->m_events.render.stage.listen([](eRenderStage stage) {
+        g_renderHook = HyprlandAPI::registerCallbackDynamic(PHANDLE, "render", [](void*, SCallbackInfo&, std::any data) {
             try {
-                if (stage != eRenderStage::RENDER_POST_WINDOWS)
+                const auto PSTAGE = std::any_cast<eRenderStage>(&data);
+                if (!PSTAGE || *PSTAGE != eRenderStage::RENDER_POST_WINDOWS)
                     return;
 
                 // Don't render if plugin is shutting down or toggle is off
@@ -448,7 +447,7 @@ static void setupRenderHook() {
                 }
 
                 // Get the current monitor being rendered
-                auto monitor = g_pHyprRenderer->m_renderData.pMonitor.lock();
+                auto monitor = g_pHyprOpenGL->m_renderData.pMonitor.lock();
                 if (!monitor) {
                     return;
                 }
@@ -487,8 +486,12 @@ static void setupRenderHook() {
 // Setup keyboard hook to detect ESC key and show notifications for all key presses
 static void setupKeyboardHook() {
     try {
-        g_keyboardHook = Event::bus()->m_events.input.keyboard.key.listen([](IKeyboard::SKeyEvent e, Event::SCallbackInfo& info) {
+        g_keyboardHook = HyprlandAPI::registerCallbackDynamic(PHANDLE, "keyPress", [](void*, SCallbackInfo& info, std::any data) {
             try {
+                const auto PE = std::any_cast<IKeyboard::SKeyEvent>(&data);
+                if (!PE)
+                    return;
+                const auto& e = *PE;
                 // Only process if overlay is active
                 if (!g_toggleState) {
                     return;

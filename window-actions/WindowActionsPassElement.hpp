@@ -13,13 +13,12 @@ class CWindowActionsPassElement : public IPassElement {
     CWindowActionsPassElement(const SWindowActionsData& data_);
     virtual ~CWindowActionsPassElement() = default;
 
-    virtual std::vector<UP<IPassElement>> draw() override;
-    virtual bool                          needsLiveBlur() override;
-    virtual bool                          needsPrecomputeBlur() override;
-    virtual ePassElementType              type() override { return EK_CUSTOM; }
-    virtual std::optional<CBox>           boundingBox() override;
+    virtual void                draw(const CRegion& damage);
+    virtual bool                needsLiveBlur();
+    virtual bool                needsPrecomputeBlur();
+    virtual std::optional<CBox> boundingBox();
 
-    virtual const char* passName() override {
+    virtual const char*         passName() {
         return "CWindowActionsPassElement";
     }
 

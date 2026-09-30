@@ -6,10 +6,9 @@ COverviewPassElement::COverviewPassElement(COverview* overview) : pOverview(over
     ;
 }
 
-std::vector<UP<IPassElement>> COverviewPassElement::draw() {
+void COverviewPassElement::draw(const CRegion& damage) {
     if (pOverview)
         pOverview->fullRender();
-    return {};
 }
 
 bool COverviewPassElement::needsLiveBlur() {

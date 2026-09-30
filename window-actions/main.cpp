@@ -6,12 +6,8 @@
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/config/ConfigManager.hpp>
-#include <hyprland/src/config/shared/parserUtils/ParserUtils.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/helpers/MiscFunctions.hpp>
-#include <hyprutils/string/VarList.hpp>
-
-using Hyprutils::String::CVarList;
 
 #include <algorithm>
 
@@ -36,7 +32,7 @@ static Hyprlang::CParseResult onNewButton(const char* COMMAND, const char* VALUE
     // Parse text color (first arg)
     std::string textColorStr = vars[0];
     if (!textColorStr.empty()) {
-        auto rgba_result = Config::ParserUtils::parseColor(textColorStr);
+        auto rgba_result = configStringToInt(textColorStr);
         if (!rgba_result.has_value()) {
             Hyprlang::CParseResult result;
             result.setError("Invalid text color in button config");
@@ -51,7 +47,7 @@ static Hyprlang::CParseResult onNewButton(const char* COMMAND, const char* VALUE
     // Parse background color (second arg)
     std::string bgColorStr = vars[1];
     if (!bgColorStr.empty()) {
-        auto rgba_result = Config::ParserUtils::parseColor(bgColorStr);
+        auto rgba_result = configStringToInt(bgColorStr);
         if (!rgba_result.has_value()) {
             Hyprlang::CParseResult result;
             result.setError("Invalid background color in button config");
@@ -143,13 +139,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigKeyword(PHANDLE, "window_actions_button", onNewButton, Hyprlang::SHandlerOptions{});
 
     // Register preConfigReload handler
-    static auto P3 = Event::bus()->m_events.config.preReload.listen([]() { onPreConfigReload(); });
+    static auto P3 = HyprlandAPI::registerCallbackDynamic(PHANDLE, "preConfigReload", [](void*, SCallbackInfo&, std::any) { onPreConfigReload(); });
 
     // Reload config to apply registered values
     HyprlandAPI::reloadConfig();
 
-    static auto P1 = Event::bus()->m_events.window.open.listen([](PHLWINDOW window) { onNewWindow(nullptr, std::any(window)); });
-    static auto P2 = Event::bus()->m_events.window.destroy.listen([](PHLWINDOW window) { onCloseWindow(nullptr, std::any(window)); });
+    static auto P1 = HyprlandAPI::registerCallbackDynamic(PHANDLE, "openWindow", [](void* self, SCallbackInfo&, std::any data) { onNewWindow(self, data); });
+    static auto P2 = HyprlandAPI::registerCallbackDynamic(PHANDLE, "closeWindow", [](void* self, SCallbackInfo&, std::any data) { onCloseWindow(self, data); });
 
     for (auto& w : g_pCompositor->m_windows) {
         if (w->isHidden() || !w->m_isMapped)

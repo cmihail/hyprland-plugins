@@ -24,12 +24,11 @@ class CNoMouseOverlay : public IPassElement {
     CNoMouseOverlay(PHLMONITOR monitor);
     virtual ~CNoMouseOverlay() = default;
 
-    virtual std::vector<UP<IPassElement>> draw() override;
-    virtual bool                          needsLiveBlur() override;
-    virtual bool                          needsPrecomputeBlur() override;
-    virtual ePassElementType              type() override { return EK_CUSTOM; }
-    virtual std::string                   id();
-    virtual const char*                   passName() override;
+    virtual void draw(const CRegion& damage);
+    virtual bool needsLiveBlur();
+    virtual bool needsPrecomputeBlur();
+    virtual std::string id();
+    virtual const char* passName();
 
   private:
     PHLMONITOR m_pMonitor;

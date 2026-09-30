@@ -4,29 +4,20 @@
 #include <ctime>
 #include <wayland-server.h>
 #define private public
-#define protected public
 #include <hyprland/src/render/Renderer.hpp>
-#include <hyprland/src/render/OpenGL.hpp>
-#include <hyprland/src/render/Texture.hpp>
-#include <hyprland/src/render/Framebuffer.hpp>
-#include <hyprland/src/render/gl/GLTexture.hpp>
-#include <hyprland/src/render/gl/GLFramebuffer.hpp>
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/config/ConfigValue.hpp>
 #include <hyprland/src/config/ConfigManager.hpp>
 #include <hyprland/src/managers/animation/AnimationManager.hpp>
 #include <hyprland/src/managers/animation/DesktopAnimationManager.hpp>
-#include <hyprland/src/config/shared/animation/AnimationTree.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/managers/KeybindManager.hpp>
-#include <hyprland/src/layout/LayoutManager.hpp>
+#include <hyprland/src/managers/LayoutManager.hpp>
+#include <hyprland/src/layout/IHyprLayout.hpp>
 #include <hyprland/src/devices/IPointer.hpp>
 #include <hyprland/src/helpers/time/Time.hpp>
 #undef private
-#undef protected
 #include "OverviewPassElement.hpp"
-
-using Render::GL::g_pHyprOpenGL;
 
 void damageMonitor(WP<Hyprutils::Animation::CBaseAnimatedVariable> thisptr) {
     // Find the overview that owns this animation variable
@@ -49,9 +40,9 @@ void removeOverview(WP<Hyprutils::Animation::CBaseAnimatedVariable> thisptr, PHL
 }
 
 COverview::~COverview() {
-    g_pHyprOpenGL->makeEGLCurrent();
+    g_pHyprRenderer->makeEGLCurrent();
     images.clear(); // otherwise we get a vram leak
-    // markBlurDirtyForMonitor was removed in v0.55
+    g_pHyprOpenGL->markBlurDirtyForMonitor(pMonitor.lock());
 }
 
 COverview::COverview(PHLWORKSPACE startedOn_, PHLMONITOR monitor, bool skipAnimation) : startedOn(startedOn_) {
@@ -59,7 +50,7 @@ COverview::COverview(PHLWORKSPACE startedOn_, PHLMONITOR monitor, bool skipAnima
     pMonitor            = PMONITOR;
 
     // Initialize animated scrollOffset early so it can be used throughout construction
-    auto animConfig = Config::animationTree()->getAnimationPropertyConfig("windowsMove");
+    auto animConfig = g_pConfigManager->getAnimationPropertyConfig("windowsMove");
     g_pAnimationManager->createAnimation(0.0f, scrollOffset, animConfig,
                                          AVARDAMAGE_NONE);
 
@@ -117,7 +108,7 @@ COverview::COverview(PHLWORKSPACE startedOn_, PHLMONITOR monitor, bool skipAnima
     // and on the right side (for real-time updates). The right side will be rendered
     // from activeIndex, while the left side shows all workspaces including active.
 
-    g_pHyprOpenGL->makeEGLCurrent();
+    g_pHyprRenderer->makeEGLCurrent();
 
     // Calculate layout with equal margins on left, top, and bottom for left workspaces
     const Vector2D monitorSize = pMonitor->m_size;
@@ -186,16 +177,16 @@ COverview::COverview(PHLWORKSPACE startedOn_, PHLMONITOR monitor, bool skipAnima
     // Render all workspaces to framebuffers
     for (size_t i = 0; i < images.size(); ++i) {
         auto& image = images[i];
-        image.fb->alloc(monbox.w, monbox.h, PMONITOR->m_output->state->state().drmFormat);
+        image.fb.alloc(monbox.w, monbox.h, PMONITOR->m_output->state->state().drmFormat);
 
         CRegion fakeDamage{0, 0, INT16_MAX, INT16_MAX};
-        g_pHyprRenderer->beginRender(PMONITOR, fakeDamage, Render::RENDER_MODE_FULL_FAKE,
-                                      nullptr, image.fb);
+        g_pHyprRenderer->beginRender(PMONITOR, fakeDamage, RENDER_MODE_FULL_FAKE,
+                                      nullptr, &image.fb);
 
         const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(image.workspaceID);
 
         if (PWORKSPACE) {
-            do { glClearColor(0.0f, 0.0f, 0.0f, 1.0f); glClear(GL_COLOR_BUFFER_BIT); } while(0);
+            g_pHyprOpenGL->clear(CHyprColor{0, 0, 0, 1.0});
 
             image.pWorkspace            = PWORKSPACE;
             PMONITOR->m_activeWorkspace = PWORKSPACE;
@@ -233,7 +224,7 @@ COverview::COverview(PHLWORKSPACE startedOn_, PHLMONITOR monitor, bool skipAnima
             image.box = {PADDING, yPos, leftWorkspaceWidth, this->leftPreviewHeight};
         }
 
-        g_pHyprRenderer->m_renderData.blockScreenShader = true;
+        g_pHyprOpenGL->m_renderData.blockScreenShader = true;
         g_pHyprRenderer->endRender();
     }
 
@@ -246,7 +237,7 @@ COverview::COverview(PHLWORKSPACE startedOn_, PHLMONITOR monitor, bool skipAnima
         startedOn, CDesktopAnimationManager::ANIMATION_TYPE_IN, true, true);
 
     // Setup animations for zoom effect
-    animConfig = Config::animationTree()->getAnimationPropertyConfig("windowsMove");
+    animConfig = g_pConfigManager->getAnimationPropertyConfig("windowsMove");
     g_pAnimationManager->createAnimation(pMonitor->m_size, size, animConfig,
                                          AVARDAMAGE_NONE);
     g_pAnimationManager->createAnimation(Vector2D{0, 0}, pos, animConfig,
@@ -307,7 +298,7 @@ void COverview::setupEventHooks() {
 }
 
 void COverview::setupMouseMoveHook() {
-    mouseMoveHook = Event::bus()->m_events.input.mouse.move.listen([this](Vector2D pos, Event::SCallbackInfo& info) {
+    mouseMoveHook = HyprlandAPI::registerCallbackDynamic(PHANDLE, "mouseMove", [this](void*, SCallbackInfo& info, std::any data) {
         if (closing)
             return;
 
@@ -347,7 +338,11 @@ void COverview::setupMouseMoveHook() {
 }
 
 void COverview::setupMouseButtonHook() {
-    mouseButtonHook = Event::bus()->m_events.input.mouse.button.listen([this](IPointer::SButtonEvent e, Event::SCallbackInfo& info) {
+    mouseButtonHook = HyprlandAPI::registerCallbackDynamic(PHANDLE, "mouseButton", [this](void*, SCallbackInfo& info, std::any data) {
+        const auto PE = std::any_cast<IPointer::SButtonEvent>(&data);
+        if (!PE)
+            return;
+        const auto& e = *PE;
         if (closing)
             return;
 
@@ -499,7 +494,7 @@ void COverview::setupMouseButtonHook() {
                 const bool wasDrag = (distanceX > g_dragThreshold || distanceY > g_dragThreshold);
 
                 if (pendingWindowToKill && !wasDrag) {
-                    pendingWindowToKill->sendClose();
+                    g_pCompositor->closeWindow(pendingWindowToKill);
 
                     // Determine which workspace indices to refresh
                     std::vector<int> workspacesToRefresh;
@@ -553,7 +548,11 @@ void COverview::handleSelectWorkspaceButton(
 }
 
 void COverview::setupMouseAxisHook() {
-    mouseAxisHook = Event::bus()->m_events.input.mouse.axis.listen([this](IPointer::SAxisEvent e, Event::SCallbackInfo& info) {
+    mouseAxisHook = HyprlandAPI::registerCallbackDynamic(PHANDLE, "mouseAxis", [this](void*, SCallbackInfo& info, std::any data) {
+        const auto PE = std::any_cast<IPointer::SAxisEvent>(&data);
+        if (!PE)
+            return;
+        const auto& e = *PE;
         if (closing) {
             return;
         }
@@ -629,17 +628,19 @@ void COverview::closeAllOverviews() {
 }
 
 void COverview::setupMonitorHooks() {
-    monitorAddedHook = Event::bus()->m_events.monitor.added.listen([](PHLMONITOR mon) {
+    monitorAddedHook = HyprlandAPI::registerCallbackDynamic(PHANDLE, "monitorAdded", [](void*, SCallbackInfo&, std::any) {
         closeAllOverviews();
     });
 
-    monitorRemovedHook = Event::bus()->m_events.monitor.preRemoved.listen([](PHLMONITOR mon) {
+    monitorRemovedHook = HyprlandAPI::registerCallbackDynamic(PHANDLE, "monitorRemoved", [](void*, SCallbackInfo&, std::any) {
         closeAllOverviews();
     });
 }
 
 void COverview::setupWorkspaceChangeHook() {
-    workspaceChangeHook = Event::bus()->m_events.workspace.active.listen([this](PHLWORKSPACE newWorkspace) {
+    workspaceChangeHook = HyprlandAPI::registerCallbackDynamic(PHANDLE, "workspace", [this](void*, SCallbackInfo&, std::any data) {
+        const auto PWS = std::any_cast<PHLWORKSPACE>(&data);
+        const auto newWorkspace = PWS ? *PWS : nullptr;
         if (closing)
             return;
 
@@ -720,7 +721,11 @@ void COverview::setupWindowEventHooks() {
         setupSourceWorkspaceRefreshTimer(this, workspacesToRefresh, 1000);
     };
 
-    openWindowHook = Event::bus()->m_events.window.open.listen([this, scheduleWorkspaceRefresh](PHLWINDOW window) {
+    openWindowHook = HyprlandAPI::registerCallbackDynamic(PHANDLE, "openWindow", [this, scheduleWorkspaceRefresh](void*, SCallbackInfo&, std::any data) {
+        const auto PW = std::any_cast<PHLWINDOW>(&data);
+        if (!PW)
+            return;
+        const auto window = *PW;
         if (closing)
             return;
 
@@ -731,7 +736,11 @@ void COverview::setupWindowEventHooks() {
         scheduleWorkspaceRefresh(window);
     });
 
-    closeWindowHook = Event::bus()->m_events.window.destroy.listen([this, scheduleWorkspaceRefresh](PHLWINDOW window) {
+    closeWindowHook = HyprlandAPI::registerCallbackDynamic(PHANDLE, "closeWindow", [this, scheduleWorkspaceRefresh](void*, SCallbackInfo&, std::any data) {
+        const auto PW = std::any_cast<PHLWINDOW>(&data);
+        if (!PW)
+            return;
+        const auto window = *PW;
         if (closing)
             return;
 
@@ -742,7 +751,11 @@ void COverview::setupWindowEventHooks() {
         scheduleWorkspaceRefresh(window);
     });
 
-    moveWindowHook = Event::bus()->m_events.window.moveToWorkspace.listen([this, scheduleWorkspaceRefresh](PHLWINDOW window, PHLWORKSPACE ws) {
+    moveWindowHook = HyprlandAPI::registerCallbackDynamic(PHANDLE, "moveWindow", [this, scheduleWorkspaceRefresh](void*, SCallbackInfo&, std::any data) {
+        const auto PW = std::any_cast<PHLWINDOW>(&data);
+        if (!PW)
+            return;
+        const auto window = *PW;
         if (closing)
             return;
 
@@ -785,12 +798,12 @@ void COverview::setInitialScrollPosition(float availableHeight) {
 void COverview::renderBackgroundForLeftPanel(const CBox& monbox, float leftPreviewHeight) {
     if (!g_pBackgroundTexture || g_pBackgroundTexture->m_texID == 0) {
         // No background image loaded, just clear to black
-        do { glClearColor(0.0f, 0.0f, 0.0f, 1.0f); glClear(GL_COLOR_BUFFER_BIT); } while(0);
+        g_pHyprOpenGL->clear(CHyprColor{0, 0, 0, 1.0});
         return;
     }
 
     // Clear first
-    do { glClearColor(0.0f, 0.0f, 0.0f, 1.0f); glClear(GL_COLOR_BUFFER_BIT); } while(0);
+    g_pHyprOpenGL->clear(CHyprColor{0, 0, 0, 1.0});
 
     const Vector2D texSize = g_pBackgroundTexture->m_size;
 
@@ -881,7 +894,7 @@ void COverview::adjustScrollForEqualPartialVisibility(float availableHeight) {
 void COverview::redrawID(int id, bool forcelowres) {
     blockOverviewRendering = true;
 
-    g_pHyprOpenGL->makeEGLCurrent();
+    g_pHyprRenderer->makeEGLCurrent();
 
     id = std::clamp(id, 0, (int)images.size() - 1);
 
@@ -892,14 +905,14 @@ void COverview::redrawID(int id, bool forcelowres) {
 
     auto& image = images[id];
 
-    if (image.fb->m_size != monbox.size()) {
-        image.fb->release();
-        image.fb->alloc(monbox.w, monbox.h, pMonitor->m_output->state->state().drmFormat);
+    if (image.fb.m_size != monbox.size()) {
+        image.fb.release();
+        image.fb.alloc(monbox.w, monbox.h, pMonitor->m_output->state->state().drmFormat);
     }
 
     CRegion fakeDamage{0, 0, INT16_MAX, INT16_MAX};
     g_pHyprRenderer->beginRender(pMonitor.lock(), fakeDamage,
-                                  Render::RENDER_MODE_FULL_FAKE, nullptr, image.fb);
+                                  RENDER_MODE_FULL_FAKE, nullptr, &image.fb);
 
     const auto   PWORKSPACE  = image.pWorkspace;
     PHLWORKSPACE openSpecial = pMonitor->m_activeSpecialWorkspace;
@@ -910,7 +923,7 @@ void COverview::redrawID(int id, bool forcelowres) {
     startedOn->m_visible = false;
 
     if (PWORKSPACE) {
-        do { glClearColor(0.0f, 0.0f, 0.0f, 1.0f); glClear(GL_COLOR_BUFFER_BIT); } while(0);
+        g_pHyprOpenGL->clear(CHyprColor{0, 0, 0, 1.0});
 
         pMonitor->m_activeWorkspace = PWORKSPACE;
         g_pDesktopAnimationManager->startAnimation(
@@ -934,7 +947,7 @@ void COverview::redrawID(int id, bool forcelowres) {
         renderBackgroundForLeftPanel(monbox, this->leftPreviewHeight);
     }
 
-    g_pHyprRenderer->m_renderData.blockScreenShader = true;
+    g_pHyprOpenGL->m_renderData.blockScreenShader = true;
     g_pHyprRenderer->endRender();
 
     pMonitor->m_activeSpecialWorkspace = openSpecial;
@@ -1049,9 +1062,9 @@ void COverview::close() {
             const auto OLDWS = pMonitor->m_activeWorkspace;
 
             if (!NEWIDWS)
-                g_pKeybindManager->m_dispatchers["workspace"](std::to_string(targetWorkspaceID));
+                g_pKeybindManager->changeworkspace(std::to_string(targetWorkspaceID));
             else
-                g_pKeybindManager->m_dispatchers["workspace"](NEWIDWS->getConfigName());
+                g_pKeybindManager->changeworkspace(NEWIDWS->getConfigName());
 
             // Start animations for workspace transition (like hyprexpo)
             g_pDesktopAnimationManager->startAnimation(
@@ -1261,7 +1274,7 @@ void COverview::renderWorkspaceIndicator(const CBox& scaledBox, size_t i,
         }
 
         std::string numberText = std::to_string(workspaceNum);
-        auto textTexture = g_pHyprRenderer->renderText(
+        auto textTexture = g_pHyprOpenGL->renderText(
             numberText, CHyprColor{1.0, 1.0, 1.0, 1.0}, 16, false);
 
         if (textTexture) {
@@ -1310,11 +1323,11 @@ void COverview::renderWorkspace(size_t i, const Vector2D& monitorSize,
         texbox = {PADDING, yPos, leftWorkspaceWidth, this->leftPreviewHeight};
     }
 
-    auto fbToRender = image.fb.get();
+    auto* fbToRender = &image.fb;
 
     if (closing && selectedIndex >= 0 && selectedIndex != activeIndex) {
         if (i == (size_t)activeIndex) {
-            fbToRender = images[selectedIndex].fb.get();
+            fbToRender = &images[selectedIndex].fb;
         } else if (i == (size_t)selectedIndex) {
             return;
         }
@@ -1438,13 +1451,13 @@ void COverview::renderDropZoneIndicator(int dropZoneAbove, int dropZoneBelow) {
 
 void COverview::renderDragPreviewAtCursor(float monScale) {
     bool shouldRenderDragPreview = (g_dragState.isDragging &&
-                                    g_dragState.dragPreviewFB->m_size.x > 0 &&
+                                    g_dragState.dragPreviewFB.m_size.x > 0 &&
                                     (g_dragState.draggedWindow ||
                                      g_dragState.isWorkspaceDrag));
     if (!shouldRenderDragPreview)
         return;
 
-    const Vector2D fullSize = g_dragState.dragPreviewFB->m_size;
+    const Vector2D fullSize = g_dragState.dragPreviewFB.m_size;
     const Vector2D previewSize = fullSize * DRAG_PREVIEW_SCALE;
 
     CBox previewBox = {lastMousePosLocal.x - previewSize.x / 2.0f,
@@ -1455,13 +1468,13 @@ void COverview::renderDragPreviewAtCursor(float monScale) {
     previewBox.round();
 
     CRegion damage{0, 0, INT16_MAX, INT16_MAX};
-    g_pHyprOpenGL->renderTextureInternal(g_dragState.dragPreviewFB->getTexture(),
+    g_pHyprOpenGL->renderTextureInternal(g_dragState.dragPreviewFB.getTexture(),
                                          previewBox,
                                          {.damage = &damage, .a = 0.9f});
 }
 
 void COverview::fullRender() {
-    do { const auto C = BG_COLOR.stripA(); glClearColor(C.r, C.g, C.b, 1.0f); glClear(GL_COLOR_BUFFER_BIT); } while(0);
+    g_pHyprOpenGL->clear(BG_COLOR.stripA());
 
     const Vector2D monitorSize = pMonitor->m_size;
     const float    monScale    = pMonitor->m_scale;
@@ -1974,39 +1987,39 @@ void COverview::renderDragPreview() {
     // Handle workspace drag - render entire workspace
     if (g_dragState.isWorkspaceDrag) {
         // Use entire workspace framebuffer as preview
-        Vector2D previewSize = sourceImage.fb->m_size;
+        Vector2D previewSize = sourceImage.fb.m_size;
 
-        if (g_dragState.dragPreviewFB->m_size != previewSize) {
-            g_dragState.dragPreviewFB->release();
-            g_dragState.dragPreviewFB->alloc(
+        if (g_dragState.dragPreviewFB.m_size != previewSize) {
+            g_dragState.dragPreviewFB.release();
+            g_dragState.dragPreviewFB.alloc(
                 previewSize.x, previewSize.y,
                 pMonitor->m_output->state->state().drmFormat
             );
         }
 
-        g_pHyprOpenGL->makeEGLCurrent();
+        g_pHyprRenderer->makeEGLCurrent();
 
         CRegion fakeDamage{0, 0, INT16_MAX, INT16_MAX};
         auto& fb = g_dragState.dragPreviewFB;
         g_pHyprRenderer->beginRender(
-            pMonitor.lock(), fakeDamage, Render::RENDER_MODE_FULL_FAKE, nullptr, fb
+            pMonitor.lock(), fakeDamage, RENDER_MODE_FULL_FAKE, nullptr, &fb
         );
 
-        do { glClearColor(0.0f, 0.0f, 0.0f, 0.0f); glClear(GL_COLOR_BUFFER_BIT); } while(0);
+        g_pHyprOpenGL->clear(CHyprColor{0, 0, 0, 0});
 
         // Render entire workspace texture
         CBox destBox = {
             0,
             0,
-            (double)sourceImage.fb->m_size.x,
-            (double)sourceImage.fb->m_size.y
+            (double)sourceImage.fb.m_size.x,
+            (double)sourceImage.fb.m_size.y
         };
 
         g_pHyprOpenGL->renderTexturePrimitive(
-            sourceImage.fb->getTexture(), destBox
+            sourceImage.fb.getTexture(), destBox
         );
 
-        g_pHyprRenderer->m_renderData.blockScreenShader = true;
+        g_pHyprOpenGL->m_renderData.blockScreenShader = true;
         g_pHyprRenderer->endRender();
         return;
     }
@@ -2026,55 +2039,55 @@ void COverview::renderDragPreview() {
 
     // Convert to framebuffer pixel coordinates
     CBox sourceRegion = {
-        relX * sourceImage.fb->m_size.x,
-        relY * sourceImage.fb->m_size.y,
-        relW * sourceImage.fb->m_size.x,
-        relH * sourceImage.fb->m_size.y
+        relX * sourceImage.fb.m_size.x,
+        relY * sourceImage.fb.m_size.y,
+        relW * sourceImage.fb.m_size.x,
+        relH * sourceImage.fb.m_size.y
     };
 
     // Clamp to FB bounds
     sourceRegion.x = std::max(0.0, sourceRegion.x);
     sourceRegion.y = std::max(0.0, sourceRegion.y);
     sourceRegion.w = std::min(
-        sourceRegion.w, sourceImage.fb->m_size.x - sourceRegion.x
+        sourceRegion.w, sourceImage.fb.m_size.x - sourceRegion.x
     );
     sourceRegion.h = std::min(
-        sourceRegion.h, sourceImage.fb->m_size.y - sourceRegion.y
+        sourceRegion.h, sourceImage.fb.m_size.y - sourceRegion.y
     );
 
     // Allocate FB at the exact size of window in workspace preview
     Vector2D previewSize = {sourceRegion.w, sourceRegion.h};
-    if (g_dragState.dragPreviewFB->m_size != previewSize) {
-        g_dragState.dragPreviewFB->release();
-        g_dragState.dragPreviewFB->alloc(
+    if (g_dragState.dragPreviewFB.m_size != previewSize) {
+        g_dragState.dragPreviewFB.release();
+        g_dragState.dragPreviewFB.alloc(
             previewSize.x, previewSize.y,
             pMonitor->m_output->state->state().drmFormat
         );
     }
 
-    g_pHyprOpenGL->makeEGLCurrent();
+    g_pHyprRenderer->makeEGLCurrent();
 
     CRegion fakeDamage{0, 0, INT16_MAX, INT16_MAX};
     auto& fb = g_dragState.dragPreviewFB;
     g_pHyprRenderer->beginRender(
-        pMonitor.lock(), fakeDamage, Render::RENDER_MODE_FULL_FAKE, nullptr, fb
+        pMonitor.lock(), fakeDamage, RENDER_MODE_FULL_FAKE, nullptr, &fb
     );
 
-    do { glClearColor(0.0f, 0.0f, 0.0f, 0.0f); glClear(GL_COLOR_BUFFER_BIT); } while(0);
+    g_pHyprOpenGL->clear(CHyprColor{0, 0, 0, 0});
 
     // Render workspace texture with offset to show only window region
     CBox destBox = {
         -sourceRegion.x,
         -sourceRegion.y,
-        (double)sourceImage.fb->m_size.x,
-        (double)sourceImage.fb->m_size.y
+        (double)sourceImage.fb.m_size.x,
+        (double)sourceImage.fb.m_size.y
     };
 
     g_pHyprOpenGL->renderTexturePrimitive(
-        sourceImage.fb->getTexture(), destBox
+        sourceImage.fb.getTexture(), destBox
     );
 
-    g_pHyprRenderer->m_renderData.blockScreenShader = true;
+    g_pHyprOpenGL->m_renderData.blockScreenShader = true;
     g_pHyprRenderer->endRender();
 }
 
@@ -2272,17 +2285,17 @@ PHLWINDOW COverview::findWindowAtPosition(const Vector2D& pos, int workspaceInde
 // Helper function to convert direction enum to string for layout API
 const char* getDirectionString(int direction) {
     switch (direction) {
-        case Math::DIRECTION_UP: return "u";
-        case Math::DIRECTION_DOWN: return "d";
-        case Math::DIRECTION_LEFT: return "l";
-        case Math::DIRECTION_RIGHT: return "r";
+        case DIRECTION_UP: return "u";
+        case DIRECTION_DOWN: return "d";
+        case DIRECTION_LEFT: return "l";
+        case DIRECTION_RIGHT: return "r";
         default: return nullptr;
     }
 }
 
 int COverview::calculateDropDirection(PHLWINDOW targetWindow, const Vector2D& cursorPos) {
     if (!targetWindow)
-        return Math::DIRECTION_DEFAULT;
+        return DIRECTION_DEFAULT;
 
     // Get window's real position and size
     const Vector2D wPos = targetWindow->m_realPosition->value();
@@ -2295,9 +2308,9 @@ int COverview::calculateDropDirection(PHLWINDOW targetWindow, const Vector2D& cu
 
     int direction;
     if (isLandscape) {
-        direction = (relativePos.x < 0) ? Math::DIRECTION_LEFT : Math::DIRECTION_RIGHT;
+        direction = (relativePos.x < 0) ? DIRECTION_LEFT : DIRECTION_RIGHT;
     } else {
-        direction = (relativePos.y < 0) ? Math::DIRECTION_UP : Math::DIRECTION_DOWN;
+        direction = (relativePos.y < 0) ? DIRECTION_UP : DIRECTION_DOWN;
     }
 
     return direction;
@@ -2409,7 +2422,7 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
     }
 
     PHLWINDOW targetWindow = findWindowAtPosition(cursorPos, targetWorkspaceIndex);
-    int dropDirection = Math::DIRECTION_DEFAULT;
+    int dropDirection = DIRECTION_DEFAULT;
 
     Vector2D workspaceCursorPos = convertPreviewToWorkspaceCoords(cursorPos, targetWorkspaceIndex);
 
@@ -2425,7 +2438,7 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
 
     // If already in target workspace and no valid tiling target, don't move
     if (window->m_workspace == targetImage.pWorkspace &&
-        (dropDirection == Math::DIRECTION_DEFAULT || !targetWindow)) {
+        (dropDirection == DIRECTION_DEFAULT || !targetWindow)) {
         return;
     }
 
@@ -2434,10 +2447,11 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
     g_pCompositor->moveWindowToWorkspaceSafe(window, targetImage.pWorkspace);
 
     // If smart tiling is desired, reposition the window using layout manager
-    if (!window->m_isFloating && dropDirection != Math::DIRECTION_DEFAULT && targetWindow) {
+    if (!window->m_isFloating && dropDirection != DIRECTION_DEFAULT && targetWindow) {
         const char* dirStr = getDirectionString(dropDirection);
-        if (dirStr && g_layoutManager) {
-            g_layoutManager->moveInDirection(window->layoutTarget(), dirStr);
+        if (dirStr && g_pLayoutManager) {
+            if (const auto PLAYOUT = g_pLayoutManager->getCurrentLayout())
+                PLAYOUT->moveWindowTo(window, dirStr);
         }
     }
 
@@ -2513,9 +2527,9 @@ bool createTextureFromPixelData(const std::vector<uint8_t>& pixelData,
 
     try {
         auto* pixels = const_cast<uint8_t*>(pixelData.data());
-        g_pBackgroundTexture = makeShared<Render::GL::CGLTexture>(drmFormat, pixels, textureStride,
-                                                                  Vector2D{(double)width, (double)height},
-                                                                  true);
+        g_pBackgroundTexture = makeShared<CTexture>(drmFormat, pixels, textureStride,
+                                                     Vector2D{(double)width, (double)height},
+                                                     true);
         return true;
     } catch (const std::exception& e) {
         Log::logger->log(Log::ERR, "[workspace-overview] Failed to create texture: {}", e.what());

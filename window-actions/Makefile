@@ -7,7 +7,7 @@ COMPILE_FLAGS += -I "/usr/include/pixman-1" -I "/usr/include/libdrm" -I "$(HYPRL
 COMPILE_FLAGS += $(shell pkg-config --cflags pango pangocairo)
 LINK_FLAGS = $(shell pkg-config --libs pango pangocairo)
 
-HYPRLAND_HEADERS ?= $(HOME)/.local/include
+HYPRLAND_HEADERS ?= /usr/include
 
 all: check_env $(PLUGIN_NAME).so
 

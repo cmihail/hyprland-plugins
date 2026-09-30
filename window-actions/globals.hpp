@@ -2,8 +2,7 @@
 
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/render/Texture.hpp>
-#include <hyprland/src/event/EventBus.hpp>
-using Event::SCallbackInfo;
+#include <hyprland/src/SharedDefs.hpp>
 
 inline HANDLE PHANDLE = nullptr;
 

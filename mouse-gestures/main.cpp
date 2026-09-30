@@ -21,18 +21,15 @@
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #define private public
 #include <hyprland/src/Compositor.hpp>
-#include <hyprland/src/event/EventBus.hpp>
+#include <hyprland/src/SharedDefs.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
 #include <hyprland/src/devices/IPointer.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
-#include <hyprland/src/render/Texture.hpp>
-#include <hyprland/src/render/gl/GLTexture.hpp>
 #include <hyprland/src/render/pass/PassElement.hpp>
 #include <hyprland/src/helpers/AnimatedVariable.hpp>
 #include <hyprland/src/config/ConfigManager.hpp>
-#include <hyprland/src/config/shared/animation/AnimationTree.hpp>
 #include <hyprland/src/managers/animation/AnimationManager.hpp>
 #undef private
 
@@ -40,12 +37,10 @@
 #include "ascii_gesture.hpp"
 #include "MouseGestureOverlay.hpp"
 
-using Render::GL::g_pHyprOpenGL;
-
 inline HANDLE PHANDLE = nullptr;
 
 // Global background texture shared across all monitors
-inline SP<Render::ITexture> g_pBackgroundTexture;
+inline SP<CTexture> g_pBackgroundTexture;
 
 // Gesture action configuration
 struct GestureAction {
@@ -115,10 +110,10 @@ std::vector<std::string> g_pendingGestureDeletions;
 std::vector<std::string> g_pendingGestureAdditions;
 
 // Hook handles
-CHyprSignalListener g_mouseButtonHook;
-CHyprSignalListener g_mouseMoveHook;
-CHyprSignalListener g_mouseAxisHook;
-CHyprSignalListener g_renderHook;
+SP<HOOK_CALLBACK_FN> g_mouseButtonHook;
+SP<HOOK_CALLBACK_FN> g_mouseMoveHook;
+SP<HOOK_CALLBACK_FN> g_mouseAxisHook;
+SP<HOOK_CALLBACK_FN> g_renderHook;
 
 // Helper function to check if there are any visible trail points
 static bool hasVisibleTrailPoints() {
@@ -264,8 +259,8 @@ static void startGestureRemovalAnimation(size_t gestureIndex) {
         // Capture stroke data for the removal callback
         std::string strokeData = g_gestureActions[gestureIndex].pattern.serialize();
 
-        if (g_pAnimationManager) {
-            auto animConfig = Config::animationTree()->getAnimationPropertyConfig("windowsMove");
+        if (g_pAnimationManager && g_pConfigManager) {
+            auto animConfig = g_pConfigManager->getAnimationPropertyConfig("windowsMove");
 
             // Create/get scale animation and reverse it (1.0 -> 0.0)
             auto& scaleVar = g_gestureScaleAnims[gestureIndex];
@@ -313,8 +308,8 @@ static void startRecordModeCloseAnimation() {
         return;
 
     // Initialize close animations for all monitors
-    if (g_pCompositor && g_pAnimationManager) {
-        auto animConfig = Config::animationTree()->getAnimationPropertyConfig("windowsMove");
+    if (g_pCompositor && g_pConfigManager && g_pAnimationManager) {
+        auto animConfig = g_pConfigManager->getAnimationPropertyConfig("windowsMove");
 
         for (auto& monitor : g_pCompositor->m_monitors) {
             if (!monitor)
@@ -1257,8 +1252,8 @@ static void handleGestureDetected() {
                 // Initialize scale and fade-in animation for the new gesture
                 size_t newGestureIndex = g_gestureActions.size() - 1;
                 try {
-                    if (g_pAnimationManager) {
-                        auto animConfig = Config::animationTree()->
+                    if (g_pAnimationManager && g_pConfigManager) {
+                        auto animConfig = g_pConfigManager->
                             getAnimationPropertyConfig("windowsMove");
 
                         // Create scale animation (0.0 -> 1.0)
@@ -1467,9 +1462,10 @@ static void onPreConfigReload() {
 
 static void setupRenderHook() {
     try {
-        g_renderHook = Event::bus()->m_events.render.stage.listen([](eRenderStage stage) {
+        g_renderHook = HyprlandAPI::registerCallbackDynamic(PHANDLE, "render", [](void*, SCallbackInfo&, std::any data) {
             try {
-                if (stage != eRenderStage::RENDER_POST_WINDOWS)
+                const auto PSTAGE = std::any_cast<eRenderStage>(&data);
+                if (!PSTAGE || *PSTAGE != eRenderStage::RENDER_POST_WINDOWS)
                     return;
 
                 // Don't render if plugin is shutting down
@@ -1499,7 +1495,7 @@ static void setupRenderHook() {
                 }
 
                 // Get the current monitor being rendered
-                auto monitor = g_pHyprRenderer->m_renderData.pMonitor.lock();
+                auto monitor = g_pHyprOpenGL->m_renderData.pMonitor.lock();
                 if (!monitor) {
                     return;
                 }
@@ -1572,8 +1568,8 @@ static SDispatchResult mouseGesturesDispatch(std::string arg) {
                 g_recordModeClosing.clear();
 
                 // Initialize animations for all monitors
-                if (g_pCompositor && g_pAnimationManager) {
-                    auto animConfig = Config::animationTree()->getAnimationPropertyConfig("windowsMove");
+                if (g_pCompositor && g_pConfigManager && g_pAnimationManager) {
+                    auto animConfig = g_pConfigManager->getAnimationPropertyConfig("windowsMove");
 
                     for (auto& monitor : g_pCompositor->m_monitors) {
                         if (!monitor)
@@ -1647,8 +1643,12 @@ static SDispatchResult mouseGesturesDispatch(std::string arg) {
 }
 
 static void setupMouseButtonHook() {
-    g_mouseButtonHook = Event::bus()->m_events.input.mouse.button.listen([](IPointer::SButtonEvent e, Event::SCallbackInfo& info) {
+    g_mouseButtonHook = HyprlandAPI::registerCallbackDynamic(PHANDLE, "mouseButton", [](void*, SCallbackInfo& info, std::any data) {
         try {
+            const auto PE = std::any_cast<IPointer::SButtonEvent>(&data);
+            if (!PE)
+                return;
+            const auto& e = *PE;
 
             // Get configured drag button (default: BTN_RIGHT = 273)
             static auto* const PDRAGBUTTON = (Hyprlang::INT* const*)
@@ -1802,7 +1802,7 @@ static void setupMouseButtonHook() {
 }
 
 static void setupMouseMoveHook() {
-    g_mouseMoveHook = Event::bus()->m_events.input.mouse.move.listen([](Vector2D pos, Event::SCallbackInfo& info) {
+    g_mouseMoveHook = HyprlandAPI::registerCallbackDynamic(PHANDLE, "mouseMove", [](void*, SCallbackInfo& info, std::any) {
         try {
             if (!g_pInputManager) {
                 return;
@@ -1848,8 +1848,12 @@ static void setupMouseMoveHook() {
 }
 
 static void setupMouseAxisHook() {
-    g_mouseAxisHook = Event::bus()->m_events.input.mouse.axis.listen([](IPointer::SAxisEvent e, Event::SCallbackInfo& info) {
+    g_mouseAxisHook = HyprlandAPI::registerCallbackDynamic(PHANDLE, "mouseAxis", [](void*, SCallbackInfo& info, std::any data) {
         try {
+            const auto PE = std::any_cast<IPointer::SAxisEvent>(&data);
+            if (!PE)
+                return;
+            const auto& e = *PE;
             // Only handle scrolling when in record mode
             if (!g_recordMode) {
                 return;
@@ -1936,7 +1940,7 @@ static bool createTextureFromPixelData(const std::vector<uint8_t>& pixelData,
 
     try {
         auto* pixels = const_cast<uint8_t*>(pixelData.data());
-        g_pBackgroundTexture = makeShared<Render::GL::CGLTexture>(drmFormat, pixels, textureStride,
+        g_pBackgroundTexture = makeShared<CTexture>(drmFormat, pixels, textureStride,
                                                      Vector2D{(double)width, (double)height},
                                                      true);
         return true;
@@ -2069,13 +2073,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     );
 
     // Register preConfigReload handler
-    static auto preConfigReloadHook = Event::bus()->m_events.config.preReload.listen(
-        []() { onPreConfigReload(); }
+    static auto preConfigReloadHook = HyprlandAPI::registerCallbackDynamic(
+        PHANDLE, "preConfigReload", [](void*, SCallbackInfo&, std::any) { onPreConfigReload(); }
     );
 
     // Register configReloaded handler
-    static auto configReloadedHook = Event::bus()->m_events.config.reloaded.listen(
-        []() {
+    static auto configReloadedHook = HyprlandAPI::registerCallbackDynamic(
+        PHANDLE, "configReloaded", [](void*, SCallbackInfo&, std::any) {
             // Detect which config file is being used
             detectConfigFilePath();
 

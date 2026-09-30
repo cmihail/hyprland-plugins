@@ -7,7 +7,7 @@
 #include <hyprland/src/config/ConfigManager.hpp>
 #include <hyprland/src/desktop/DesktopTypes.hpp>
 #include <hyprland/src/render/Renderer.hpp>
-#include <hyprland/src/event/EventBus.hpp>
+#include <hyprland/src/SharedDefs.hpp>
 
 #include "globals.hpp"
 #include "overview.hpp"
@@ -184,7 +184,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         throw std::runtime_error("[workspace-overview] Failed initializing hooks");
     }
 
-    static auto P = Event::bus()->m_events.render.pre.listen([](PHLMONITOR pMonitor) {
+    static auto P = HyprlandAPI::registerCallbackDynamic(PHANDLE, "preRender", [](void*, SCallbackInfo&, std::any data) {
         for (auto& [monitor, overview] : g_pOverviews) {
             if (overview)
                 overview->onPreRender();
@@ -222,7 +222,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                                  Hyprlang::INT{0});
 
     // Register config change callback to reload all config values
-    static auto configCallback = Event::bus()->m_events.config.reloaded.listen([]() {
+    static auto configCallback = HyprlandAPI::registerCallbackDynamic(PHANDLE, "configReloaded", [](void*, SCallbackInfo&, std::any) {
             // Load background path
             auto* const PBACKGROUNDPATH =
                 HyprlandAPI::getConfigValue(PHANDLE,

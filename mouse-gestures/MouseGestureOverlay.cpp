@@ -1,13 +1,9 @@
 #include "MouseGestureOverlay.hpp"
 #include "stroke.hpp"
 #include <hyprland/src/render/OpenGL.hpp>
-#include <hyprland/src/render/Renderer.hpp>
-#include <hyprland/src/render/gl/GLTexture.hpp>
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/helpers/AnimatedVariable.hpp>
-
-using Render::GL::g_pHyprOpenGL;
 #include <chrono>
 #include <cmath>
 #include <unordered_map>
@@ -62,7 +58,7 @@ extern std::unordered_map<size_t, PHLANIMVAR<float>> g_gestureAlphaAnims;
 extern std::unordered_set<size_t> g_gesturesPendingRemoval;
 
 // Background texture
-extern SP<Render::ITexture> g_pBackgroundTexture;
+extern SP<CTexture> g_pBackgroundTexture;
 
 CMouseGestureOverlay::CMouseGestureOverlay(PHLMONITOR monitor) : pMonitor(monitor) {
     // Store the monitor this overlay is for
@@ -72,19 +68,19 @@ CMouseGestureOverlay::~CMouseGestureOverlay() {
     // Destructor
 }
 
-std::vector<UP<IPassElement>> CMouseGestureOverlay::draw() {
+void CMouseGestureOverlay::draw(const CRegion& damage) {
     try {
         // Safety checks
         if (g_pluginShuttingDown || !g_pHyprOpenGL)
-            return {};
+            return;
 
         auto monitor = pMonitor.lock();
         if (!monitor)
-            return {};
+            return;
 
-        auto currentMonitor = g_pHyprRenderer->m_renderData.pMonitor.lock();
+        auto currentMonitor = g_pHyprOpenGL->m_renderData.pMonitor.lock();
         if (!currentMonitor || currentMonitor != monitor)
-            return {};
+            return;
 
         const Vector2D monitorSize = monitor->m_size;
         const float monScale = monitor->m_scale;
@@ -103,7 +99,6 @@ std::vector<UP<IPassElement>> CMouseGestureOverlay::draw() {
     } catch (...) {
         // Catch any other unexpected errors
     }
-    return {};
 }
 
 bool CMouseGestureOverlay::needsLiveBlur() {
@@ -145,8 +140,7 @@ std::optional<CBox> CMouseGestureOverlay::boundingBox() {
 
 void CMouseGestureOverlay::renderBackground(PHLMONITOR monitor, float monScale) {
     // Clear to single background color (like workspace-overview)
-    CBox clearBox = {{0, 0}, monitor->m_size};
-    g_pHyprOpenGL->renderRect(clearBox, CHyprColor{0, 0, 0, 1.0}, {});
+    g_pHyprOpenGL->clear(CHyprColor{0, 0, 0, 1.0});
 
     // Render background image if loaded
     if (!g_pBackgroundTexture || g_pBackgroundTexture->m_texID == 0)
@@ -504,7 +498,7 @@ void CMouseGestureOverlay::renderGestureSquare(float x, float y, float size,
                 g_pHyprOpenGL->renderRect(rightBorder, borderColor, {.damage = &damage});
 
                 // Render text
-                SP<Render::ITexture> commandTexture = makeShared<Render::GL::CGLTexture>();
+                SP<CTexture> commandTexture = makeShared<CTexture>();
                 Vector2D lineBufferSize = {measuredTextWidth, lineHeight};
 
                 CHyprColor textColor{0.9, 0.9, 0.9, 1.0};
@@ -596,8 +590,8 @@ void CMouseGestureOverlay::renderRecordModeUI(PHLMONITOR monitor) {
     const float textY = PADDING;
     const float textWidth = recordSquareSize;
 
-    SP<Render::ITexture> headerLine1 = makeShared<Render::GL::CGLTexture>();
-    SP<Render::ITexture> headerLine2 = makeShared<Render::GL::CGLTexture>();
+    SP<CTexture> headerLine1 = makeShared<CTexture>();
+    SP<CTexture> headerLine2 = makeShared<CTexture>();
 
     const std::string line1Text = "Register a new gesture.";
     Vector2D line1BufferSize = {textWidth, TEXT_HEIGHT / 2.0f};
@@ -703,7 +697,7 @@ void CMouseGestureOverlay::renderGestureTrail(PHLMONITOR monitor,
     }
 }
 
-void CMouseGestureOverlay::renderText(SP<Render::ITexture> out,
+void CMouseGestureOverlay::renderText(SP<CTexture> out,
                                        const std::string& text,
                                        const CHyprColor& color,
                                        const Vector2D& bufferSize,
@@ -744,7 +738,7 @@ void CMouseGestureOverlay::renderText(SP<Render::ITexture> out,
     pango_font_description_free(fontDesc);
 
     const auto DATA = cairo_image_surface_get_data(CAIROSURFACE);
-    out->allocate(bufferSize, DRM_FORMAT_ARGB8888);
+    out->allocate();
     glBindTexture(GL_TEXTURE_2D, out->m_texID);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
