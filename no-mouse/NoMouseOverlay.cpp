@@ -9,15 +9,7 @@
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <cairo/cairo.h>
 #include <pango/pangocairo.h>
-#include <fstream>
 #include <unordered_map>
-
-// Debug logging
-static void debugLog(const std::string& msg) {
-    std::ofstream logFile("/tmp/debug", std::ios::app);
-    logFile << msg << std::endl;
-    logFile.close();
-}
 
 // Global cache for text textures (key: "row,col", value: texture)
 // Caching prevents recreating 676 Cairo surfaces every frame
@@ -285,11 +277,6 @@ void CNoMouseOverlay::draw(const CRegion& damage) {
     if (g_hasPendingCell && g_pendingRow >= 0 && g_pendingRow < GRID_SIZE &&
         g_pendingCol >= 0 && g_pendingCol < GRID_SIZE) {
 
-        debugLog("RENDER: hasPendingCell=true, row=" + std::to_string(g_pendingRow) +
-                 ", col=" + std::to_string(g_pendingCol) +
-                 ", hasSubColumn=" + std::to_string(g_hasSubColumn) +
-                 ", subColumn=" + std::to_string(g_subColumn));
-
         const float cellX = g_pendingCol * cellWidth;
         const float cellY = g_pendingRow * cellHeight;
 
@@ -299,9 +286,6 @@ void CNoMouseOverlay::draw(const CRegion& damage) {
 
         // Only draw highlight overlay if a sub-cell is selected (3rd letter typed)
         if (g_hasSubColumn && g_subColumn >= 0 && g_subColumn < SUB_GRID_ROWS * SUB_GRID_COLS) {
-            debugLog("RENDER SUB-GRID: Drawing highlight overlay for subColumn=" +
-                     std::to_string(g_subColumn));
-
             // Calculate sub-cell row and column from index (0-17 maps to 3x6 grid)
             const int subRow = g_subColumn / SUB_GRID_COLS; // 0-2
             const int subCol = g_subColumn % SUB_GRID_COLS; // 0-5
@@ -335,8 +319,6 @@ void CNoMouseOverlay::draw(const CRegion& damage) {
             CBox subCellBox = {subCellX, subCellY, subCellWidth, subCellHeight};
             g_pHyprOpenGL->renderRect(subCellBox, subHighlightColor, {});
         }
-
-        debugLog("RENDER SUB-GRID: Drawing 18 letter labels (A-R) in 3x6 grid");
 
         // Draw all 18 sub-cell letter labels (A-R) in 3x6 grid layout
         for (int row = 0; row < SUB_GRID_ROWS; row++) {

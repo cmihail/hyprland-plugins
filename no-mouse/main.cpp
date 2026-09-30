@@ -3,7 +3,6 @@
 #include <any>
 #include <string>
 #include <unordered_map>
-#include <fstream>
 #include <linux/input-event-codes.h>
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/Compositor.hpp>
@@ -15,13 +14,6 @@
 #include <hyprland/src/render/OpenGL.hpp>
 
 #include "NoMouseOverlay.hpp"
-
-// Debug logging
-static void debugLog(const std::string& msg) {
-    std::ofstream logFile("/tmp/debug", std::ios::app);
-    logFile << msg << std::endl;
-    logFile.close();
-}
 
 inline HANDLE PHANDLE = nullptr;
 
@@ -516,9 +508,6 @@ static void setupKeyboardHook() {
                         // Remove last letter
                         g_letterSequence.pop_back();
 
-                        debugLog("BACKSPACE: seq=" + g_letterSequence +
-                                 ", hasPending=" + std::to_string(g_hasPendingCell));
-
                         // If we had a pending cell (2 letters) and now have 1 letter,
                         // clear the pending cell state
                         if (g_hasPendingCell && g_letterSequence.length() == 1) {
@@ -550,11 +539,6 @@ static void setupKeyboardHook() {
                 // Check for letter keys (A-Z)
                 char letter = keycodeToLetter(e.keycode);
                 if (letter != '\0') {
-                    debugLog("Letter pressed: " + std::string(1, letter) +
-                             ", hasPending=" + std::to_string(g_hasPendingCell) +
-                             ", seqLen=" + std::to_string(g_letterSequence.length()) +
-                             ", seq=" + g_letterSequence);
-
                     // If we already have a pending cell, this letter selects a sub-cell in 3x6 grid
                     if (g_hasPendingCell && g_letterSequence.length() == 2) {
                         int subIndex = letter - 'A';
@@ -564,12 +548,6 @@ static void setupKeyboardHook() {
                             g_hasSubColumn = true;
                             g_subColumn = subIndex;
 
-                            debugLog("SUB-CELL MODE: hasSubColumn=" +
-                                     std::to_string(g_hasSubColumn) +
-                                     ", subColumn=" + std::to_string(g_subColumn) +
-                                     " (letter " + std::string(1, letter) +
-                                     ") - moving to sub-cell and closing overlay");
-
                             // Move to sub-cell and close overlay automatically
                             moveMouseToCell(g_pendingRow, g_pendingCol, g_subColumn);
 
@@ -578,9 +556,6 @@ static void setupKeyboardHook() {
 
                             info.cancelled = true;
                             return;
-                        } else {
-                            debugLog("SUB-CELL MODE: Ignoring letter " + std::string(1, letter) +
-                                     " (only A-R supported for 3x6 grid)");
                         }
                     } else {
                         // Otherwise, add to sequence for cell selection
@@ -595,8 +570,6 @@ static void setupKeyboardHook() {
                         // Clear sub-column if user is changing cell selection
                         g_hasSubColumn = false;
                         g_subColumn = -1;
-
-                        debugLog("CELL MODE: seq=" + g_letterSequence + ", cleared subColumn");
 
                         // Process sequence if we have 2 letters
                         processLetterSequence();
