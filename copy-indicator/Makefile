@@ -17,14 +17,18 @@ check_env:
 		exit 1; \
 	fi
 
-$(PLUGIN_NAME).so: $(SOURCE_FILES)
+$(PLUGIN_NAME).so: $(SOURCE_FILES) pixel_convert.hpp
 	g++ $(COMPILE_FLAGS) $(SOURCE_FILES) -o $(PLUGIN_NAME).so
 
 clean:
 	rm -f $(PLUGIN_NAME).so
+	$(MAKE) -C tests clean
 
 install: $(PLUGIN_NAME).so
 	mkdir -p ~/.local/share/hyprload/plugins/$(PLUGIN_NAME)
 	cp $(PLUGIN_NAME).so ~/.local/share/hyprload/plugins/$(PLUGIN_NAME)/
 
-.PHONY: all clean install check_env
+test:
+	$(MAKE) -C tests test
+
+.PHONY: all clean install check_env test

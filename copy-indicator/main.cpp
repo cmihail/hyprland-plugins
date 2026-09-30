@@ -14,6 +14,7 @@
 #include <hyprland/src/SharedDefs.hpp>
 #include <cairo/cairo.h>
 #include <pango/pangocairo.h>
+#include "pixel_convert.hpp"
 #include <hyprland/src/plugins/PluginAPI.hpp>
 
 inline HANDLE PHANDLE = nullptr;
@@ -34,23 +35,6 @@ bool g_pluginShuttingDown = false;
 
 // Forward declarations
 class CCopyIndicatorPassElement;
-
-// Helper: Convert BGRA to RGBA pixel data
-std::vector<uint8_t> convertBGRAtoRGBA(unsigned char* data, int stride,
-                                       int width, int height) {
-    std::vector<uint8_t> pixelData(width * height * 4);
-    for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x++) {
-            const auto SRC = data + y * stride + x * 4;
-            auto dst = pixelData.data() + (y * width + x) * 4;
-            dst[0] = SRC[2]; // R
-            dst[1] = SRC[1]; // G
-            dst[2] = SRC[0]; // B
-            dst[3] = SRC[3]; // A
-        }
-    }
-    return pixelData;
-}
 
 // Helper: Render text to cairo surface
 void renderTextToCairo(cairo_t* cr, const std::string& text,
