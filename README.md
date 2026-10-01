@@ -143,7 +143,7 @@ When updating Hyprland:
 - **Local Build Docs**: `/home/cmihail/configs/hypr/LOCAL_BUILD.md`
 - **Hyprland Headers**: `/home/cmihail/.local/include/hyprland/`
 
-## Notes for Future AI Sessions
+## Notes for hyprland version updates
 
 - All plugins built against Hyprland v0.53.3 local headers
 - window-actions had two critical crash bugs fixed (nullptr and bad_optional_access)
