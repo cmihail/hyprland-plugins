@@ -4,20 +4,34 @@
 #include <ctime>
 #include <wayland-server.h>
 #define private public
+#define protected public
 #include <hyprland/src/render/Renderer.hpp>
+#include <hyprland/src/render/OpenGL.hpp>
+#include <hyprland/src/render/Texture.hpp>
+#include <hyprland/src/render/Framebuffer.hpp>
+#include <hyprland/src/render/gl/GLTexture.hpp>
+#include <hyprland/src/render/gl/GLFramebuffer.hpp>
 #include <hyprland/src/Compositor.hpp>
+#include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
+#include <hyprland/src/state/MonitorState.hpp>
+#include <hyprland/src/state/WorkspaceState.hpp>
+#include <hyprland/src/desktop/state/WindowState.hpp>
+#include <hyprland/src/desktop/state/GlobalWindowController.hpp>
 #include <hyprland/src/config/ConfigValue.hpp>
 #include <hyprland/src/config/ConfigManager.hpp>
-#include <hyprland/src/managers/animation/AnimationManager.hpp>
-#include <hyprland/src/managers/animation/DesktopAnimationManager.hpp>
+#include <hyprland/src/animation/AnimationManager.hpp>
+#include <hyprland/src/animation/WorkspaceAnimationController.hpp>
+#include <hyprland/src/config/shared/animation/AnimationTree.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/managers/KeybindManager.hpp>
-#include <hyprland/src/managers/LayoutManager.hpp>
-#include <hyprland/src/layout/IHyprLayout.hpp>
+#include <hyprland/src/layout/LayoutManager.hpp>
 #include <hyprland/src/devices/IPointer.hpp>
 #include <hyprland/src/helpers/time/Time.hpp>
 #undef private
+#undef protected
 #include "OverviewPassElement.hpp"
+
+using Render::GL::g_pHyprOpenGL;
 
 void damageMonitor(WP<Hyprutils::Animation::CBaseAnimatedVariable> thisptr) {
     // Find the overview that owns this animation variable
@@ -40,9 +54,9 @@ void removeOverview(WP<Hyprutils::Animation::CBaseAnimatedVariable> thisptr, PHL
 }
 
 COverview::~COverview() {
-    g_pHyprRenderer->makeEGLCurrent();
+    g_pHyprOpenGL->makeEGLCurrent();
     images.clear(); // otherwise we get a vram leak
-    g_pHyprOpenGL->markBlurDirtyForMonitor(pMonitor.lock());
+    // markBlurDirtyForMonitor was removed in v0.55
 }
 
 COverview::COverview(PHLWORKSPACE startedOn_, PHLMONITOR monitor, bool skipAnimation) : startedOn(startedOn_) {
@@ -50,15 +64,15 @@ COverview::COverview(PHLWORKSPACE startedOn_, PHLMONITOR monitor, bool skipAnima
     pMonitor            = PMONITOR;
 
     // Initialize animated scrollOffset early so it can be used throughout construction
-    auto animConfig = g_pConfigManager->getAnimationPropertyConfig("windowsMove");
-    g_pAnimationManager->createAnimation(0.0f, scrollOffset, animConfig,
+    auto animConfig = Config::animationTree()->getAnimationPropertyConfig("windowsMove");
+    Animation::mgr()->createAnimation(0.0f, scrollOffset, animConfig,
                                          AVARDAMAGE_NONE);
 
     // Get current workspace ID
     int currentID = pMonitor->activeWorkspaceID();
 
     // Get all workspaces and filter by monitor
-    auto allWorkspaces = g_pCompositor->getWorkspacesCopy();
+    auto allWorkspaces = State::workspaceState()->workspacesCopy();
     std::vector<int64_t> monitorWorkspaceIDs;
 
     for (const auto& ws : allWorkspaces) {
@@ -108,7 +122,7 @@ COverview::COverview(PHLWORKSPACE startedOn_, PHLMONITOR monitor, bool skipAnima
     // and on the right side (for real-time updates). The right side will be rendered
     // from activeIndex, while the left side shows all workspaces including active.
 
-    g_pHyprRenderer->makeEGLCurrent();
+    g_pHyprOpenGL->makeEGLCurrent();
 
     // Calculate layout with equal margins on left, top, and bottom for left workspaces
     const Vector2D monitorSize = pMonitor->m_size;
@@ -177,21 +191,21 @@ COverview::COverview(PHLWORKSPACE startedOn_, PHLMONITOR monitor, bool skipAnima
     // Render all workspaces to framebuffers
     for (size_t i = 0; i < images.size(); ++i) {
         auto& image = images[i];
-        image.fb.alloc(monbox.w, monbox.h, PMONITOR->m_output->state->state().drmFormat);
+        image.fb->alloc(monbox.w, monbox.h, PMONITOR->m_output->state->state().drmFormat);
 
         CRegion fakeDamage{0, 0, INT16_MAX, INT16_MAX};
-        g_pHyprRenderer->beginRender(PMONITOR, fakeDamage, RENDER_MODE_FULL_FAKE,
-                                      nullptr, &image.fb);
+        g_pHyprRenderer->beginRender(PMONITOR, fakeDamage, Render::RENDER_MODE_FULL_FAKE,
+                                      nullptr, image.fb);
 
-        const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(image.workspaceID);
+        const auto PWORKSPACE = State::workspaceState()->query().id(image.workspaceID).run();
 
         if (PWORKSPACE) {
-            g_pHyprOpenGL->clear(CHyprColor{0, 0, 0, 1.0});
+            do { glClearColor(0.0f, 0.0f, 0.0f, 1.0f); glClear(GL_COLOR_BUFFER_BIT); } while(0);
 
             image.pWorkspace            = PWORKSPACE;
             PMONITOR->m_activeWorkspace = PWORKSPACE;
-            g_pDesktopAnimationManager->startAnimation(
-                PWORKSPACE, CDesktopAnimationManager::ANIMATION_TYPE_IN, true, true);
+            Animation::Workspace::startAnimation(
+                PWORKSPACE, Animation::Workspace::ANIMATION_TYPE_IN, true, true);
             PWORKSPACE->m_visible = true;
 
             if (PWORKSPACE == startedOn)
@@ -201,8 +215,8 @@ COverview::COverview(PHLWORKSPACE startedOn_, PHLMONITOR monitor, bool skipAnima
                                              Time::steadyNow(), monbox);
 
             PWORKSPACE->m_visible = false;
-            g_pDesktopAnimationManager->startAnimation(
-                PWORKSPACE, CDesktopAnimationManager::ANIMATION_TYPE_OUT, false, true);
+            Animation::Workspace::startAnimation(
+                PWORKSPACE, Animation::Workspace::ANIMATION_TYPE_OUT, false, true);
 
             if (PWORKSPACE == startedOn)
                 PMONITOR->m_activeSpecialWorkspace.reset();
@@ -224,7 +238,7 @@ COverview::COverview(PHLWORKSPACE startedOn_, PHLMONITOR monitor, bool skipAnima
             image.box = {PADDING, yPos, leftWorkspaceWidth, this->leftPreviewHeight};
         }
 
-        g_pHyprOpenGL->m_renderData.blockScreenShader = true;
+        g_pHyprRenderer->m_renderData.blockScreenShader = true;
         g_pHyprRenderer->endRender();
     }
 
@@ -233,14 +247,14 @@ COverview::COverview(PHLWORKSPACE startedOn_, PHLMONITOR monitor, bool skipAnima
     PMONITOR->m_activeSpecialWorkspace = openSpecial;
     PMONITOR->m_activeWorkspace        = startedOn;
     startedOn->m_visible               = true;
-    g_pDesktopAnimationManager->startAnimation(
-        startedOn, CDesktopAnimationManager::ANIMATION_TYPE_IN, true, true);
+    Animation::Workspace::startAnimation(
+        startedOn, Animation::Workspace::ANIMATION_TYPE_IN, true, true);
 
     // Setup animations for zoom effect
-    animConfig = g_pConfigManager->getAnimationPropertyConfig("windowsMove");
-    g_pAnimationManager->createAnimation(pMonitor->m_size, size, animConfig,
+    animConfig = Config::animationTree()->getAnimationPropertyConfig("windowsMove");
+    Animation::mgr()->createAnimation(pMonitor->m_size, size, animConfig,
                                          AVARDAMAGE_NONE);
-    g_pAnimationManager->createAnimation(Vector2D{0, 0}, pos, animConfig,
+    Animation::mgr()->createAnimation(Vector2D{0, 0}, pos, animConfig,
                                          AVARDAMAGE_NONE);
 
     size->setUpdateCallback(damageMonitor);
@@ -298,7 +312,8 @@ void COverview::setupEventHooks() {
 }
 
 void COverview::setupMouseMoveHook() {
-    mouseMoveHook = HyprlandAPI::registerCallbackDynamic(PHANDLE, "mouseMove", [this](void*, SCallbackInfo& info, std::any data) {
+    mouseMoveHook = Event::bus()->m_events.input.mouse.move.listen(
+        [this](Vector2D pos, Event::SCallbackInfo& info) {
         if (closing)
             return;
 
@@ -338,17 +353,14 @@ void COverview::setupMouseMoveHook() {
 }
 
 void COverview::setupMouseButtonHook() {
-    mouseButtonHook = HyprlandAPI::registerCallbackDynamic(PHANDLE, "mouseButton", [this](void*, SCallbackInfo& info, std::any data) {
-        const auto PE = std::any_cast<IPointer::SButtonEvent>(&data);
-        if (!PE)
-            return;
-        const auto& e = *PE;
+    mouseButtonHook = Event::bus()->m_events.input.mouse.button.listen(
+        [this](IPointer::SButtonEvent e, Event::SCallbackInfo& info) {
         if (closing)
             return;
 
         // Check if click is on a different monitor than the overview
         const Vector2D mousePos = g_pInputManager->getMouseCoordsInternal();
-        const auto clickedMonitor = g_pCompositor->getMonitorFromVector(mousePos);
+        const auto clickedMonitor = State::monitorState()->query().vec(mousePos).run();
 
         // IMPORTANT: Always reset mouseButtonPressed on button release for ALL overviews
         // This must happen before any early returns to avoid stuck drag states
@@ -494,7 +506,7 @@ void COverview::setupMouseButtonHook() {
                 const bool wasDrag = (distanceX > g_dragThreshold || distanceY > g_dragThreshold);
 
                 if (pendingWindowToKill && !wasDrag) {
-                    g_pCompositor->closeWindow(pendingWindowToKill);
+                    pendingWindowToKill->sendClose();
 
                     // Determine which workspace indices to refresh
                     std::vector<int> workspacesToRefresh;
@@ -531,7 +543,7 @@ void COverview::setupMouseButtonHook() {
 
 void COverview::handleSelectWorkspaceButton(
     uint32_t state,
-    const SP<CMonitor>& clickedMonitor
+    const PHLMONITOR& clickedMonitor
 ) {
     if (state == WL_POINTER_BUTTON_STATE_PRESSED) {
         // Button pressed - just wait for release
@@ -548,11 +560,8 @@ void COverview::handleSelectWorkspaceButton(
 }
 
 void COverview::setupMouseAxisHook() {
-    mouseAxisHook = HyprlandAPI::registerCallbackDynamic(PHANDLE, "mouseAxis", [this](void*, SCallbackInfo& info, std::any data) {
-        const auto PE = std::any_cast<IPointer::SAxisEvent>(&data);
-        if (!PE)
-            return;
-        const auto& e = *PE;
+    mouseAxisHook = Event::bus()->m_events.input.mouse.axis.listen(
+        [this](IPointer::SAxisEvent e, Event::SCallbackInfo& info) {
         if (closing) {
             return;
         }
@@ -560,7 +569,7 @@ void COverview::setupMouseAxisHook() {
         try {
             // Check if mouse is on this monitor
             const Vector2D globalMousePos = g_pInputManager->getMouseCoordsInternal();
-            const auto currentMonitor = g_pCompositor->getMonitorFromVector(globalMousePos);
+            const auto currentMonitor = State::monitorState()->query().vec(globalMousePos).run();
 
             // Only handle scroll if mouse is on this monitor
             if (!currentMonitor || currentMonitor != pMonitor.lock()) {
@@ -628,19 +637,18 @@ void COverview::closeAllOverviews() {
 }
 
 void COverview::setupMonitorHooks() {
-    monitorAddedHook = HyprlandAPI::registerCallbackDynamic(PHANDLE, "monitorAdded", [](void*, SCallbackInfo&, std::any) {
+    monitorAddedHook = Event::bus()->m_events.monitor.added.listen([](PHLMONITOR mon) {
         closeAllOverviews();
     });
 
-    monitorRemovedHook = HyprlandAPI::registerCallbackDynamic(PHANDLE, "monitorRemoved", [](void*, SCallbackInfo&, std::any) {
+    monitorRemovedHook = Event::bus()->m_events.monitor.preRemoved.listen([](PHLMONITOR mon) {
         closeAllOverviews();
     });
 }
 
 void COverview::setupWorkspaceChangeHook() {
-    workspaceChangeHook = HyprlandAPI::registerCallbackDynamic(PHANDLE, "workspace", [this](void*, SCallbackInfo&, std::any data) {
-        const auto PWS = std::any_cast<PHLWORKSPACE>(&data);
-        const auto newWorkspace = PWS ? *PWS : nullptr;
+    workspaceChangeHook = Event::bus()->m_events.workspace.active.listen(
+        [this](PHLWORKSPACE newWorkspace) {
         if (closing)
             return;
 
@@ -721,11 +729,8 @@ void COverview::setupWindowEventHooks() {
         setupSourceWorkspaceRefreshTimer(this, workspacesToRefresh, 1000);
     };
 
-    openWindowHook = HyprlandAPI::registerCallbackDynamic(PHANDLE, "openWindow", [this, scheduleWorkspaceRefresh](void*, SCallbackInfo&, std::any data) {
-        const auto PW = std::any_cast<PHLWINDOW>(&data);
-        if (!PW)
-            return;
-        const auto window = *PW;
+    openWindowHook = Event::bus()->m_events.window.open.listen(
+        [this, scheduleWorkspaceRefresh](PHLWINDOW window) {
         if (closing)
             return;
 
@@ -736,11 +741,8 @@ void COverview::setupWindowEventHooks() {
         scheduleWorkspaceRefresh(window);
     });
 
-    closeWindowHook = HyprlandAPI::registerCallbackDynamic(PHANDLE, "closeWindow", [this, scheduleWorkspaceRefresh](void*, SCallbackInfo&, std::any data) {
-        const auto PW = std::any_cast<PHLWINDOW>(&data);
-        if (!PW)
-            return;
-        const auto window = *PW;
+    closeWindowHook = Event::bus()->m_events.window.close.listen(
+        [this, scheduleWorkspaceRefresh](PHLWINDOW window) {
         if (closing)
             return;
 
@@ -751,11 +753,8 @@ void COverview::setupWindowEventHooks() {
         scheduleWorkspaceRefresh(window);
     });
 
-    moveWindowHook = HyprlandAPI::registerCallbackDynamic(PHANDLE, "moveWindow", [this, scheduleWorkspaceRefresh](void*, SCallbackInfo&, std::any data) {
-        const auto PW = std::any_cast<PHLWINDOW>(&data);
-        if (!PW)
-            return;
-        const auto window = *PW;
+    moveWindowHook = Event::bus()->m_events.window.moveToWorkspace.listen(
+        [this, scheduleWorkspaceRefresh](PHLWINDOW window, PHLWORKSPACE ws) {
         if (closing)
             return;
 
@@ -798,12 +797,12 @@ void COverview::setInitialScrollPosition(float availableHeight) {
 void COverview::renderBackgroundForLeftPanel(const CBox& monbox, float leftPreviewHeight) {
     if (!g_pBackgroundTexture || g_pBackgroundTexture->m_texID == 0) {
         // No background image loaded, just clear to black
-        g_pHyprOpenGL->clear(CHyprColor{0, 0, 0, 1.0});
+        do { glClearColor(0.0f, 0.0f, 0.0f, 1.0f); glClear(GL_COLOR_BUFFER_BIT); } while(0);
         return;
     }
 
     // Clear first
-    g_pHyprOpenGL->clear(CHyprColor{0, 0, 0, 1.0});
+    do { glClearColor(0.0f, 0.0f, 0.0f, 1.0f); glClear(GL_COLOR_BUFFER_BIT); } while(0);
 
     const Vector2D texSize = g_pBackgroundTexture->m_size;
 
@@ -894,7 +893,7 @@ void COverview::adjustScrollForEqualPartialVisibility(float availableHeight) {
 void COverview::redrawID(int id, bool forcelowres) {
     blockOverviewRendering = true;
 
-    g_pHyprRenderer->makeEGLCurrent();
+    g_pHyprOpenGL->makeEGLCurrent();
 
     id = std::clamp(id, 0, (int)images.size() - 1);
 
@@ -905,14 +904,14 @@ void COverview::redrawID(int id, bool forcelowres) {
 
     auto& image = images[id];
 
-    if (image.fb.m_size != monbox.size()) {
-        image.fb.release();
-        image.fb.alloc(monbox.w, monbox.h, pMonitor->m_output->state->state().drmFormat);
+    if (image.fb->m_size != monbox.size()) {
+        image.fb->release();
+        image.fb->alloc(monbox.w, monbox.h, pMonitor->m_output->state->state().drmFormat);
     }
 
     CRegion fakeDamage{0, 0, INT16_MAX, INT16_MAX};
     g_pHyprRenderer->beginRender(pMonitor.lock(), fakeDamage,
-                                  RENDER_MODE_FULL_FAKE, nullptr, &image.fb);
+                                  Render::RENDER_MODE_FULL_FAKE, nullptr, image.fb);
 
     const auto   PWORKSPACE  = image.pWorkspace;
     PHLWORKSPACE openSpecial = pMonitor->m_activeSpecialWorkspace;
@@ -923,11 +922,11 @@ void COverview::redrawID(int id, bool forcelowres) {
     startedOn->m_visible = false;
 
     if (PWORKSPACE) {
-        g_pHyprOpenGL->clear(CHyprColor{0, 0, 0, 1.0});
+        do { glClearColor(0.0f, 0.0f, 0.0f, 1.0f); glClear(GL_COLOR_BUFFER_BIT); } while(0);
 
         pMonitor->m_activeWorkspace = PWORKSPACE;
-        g_pDesktopAnimationManager->startAnimation(
-            PWORKSPACE, CDesktopAnimationManager::ANIMATION_TYPE_IN, true, true);
+        Animation::Workspace::startAnimation(
+            PWORKSPACE, Animation::Workspace::ANIMATION_TYPE_IN, true, true);
         PWORKSPACE->m_visible = true;
 
         if (PWORKSPACE == startedOn)
@@ -937,8 +936,8 @@ void COverview::redrawID(int id, bool forcelowres) {
                                          Time::steadyNow(), monbox);
 
         PWORKSPACE->m_visible = false;
-        g_pDesktopAnimationManager->startAnimation(
-            PWORKSPACE, CDesktopAnimationManager::ANIMATION_TYPE_OUT, false, true);
+        Animation::Workspace::startAnimation(
+            PWORKSPACE, Animation::Workspace::ANIMATION_TYPE_OUT, false, true);
 
         if (PWORKSPACE == startedOn)
             pMonitor->m_activeSpecialWorkspace.reset();
@@ -947,14 +946,14 @@ void COverview::redrawID(int id, bool forcelowres) {
         renderBackgroundForLeftPanel(monbox, this->leftPreviewHeight);
     }
 
-    g_pHyprOpenGL->m_renderData.blockScreenShader = true;
+    g_pHyprRenderer->m_renderData.blockScreenShader = true;
     g_pHyprRenderer->endRender();
 
     pMonitor->m_activeSpecialWorkspace = openSpecial;
     pMonitor->m_activeWorkspace        = startedOn;
     startedOn->m_visible               = true;
-    g_pDesktopAnimationManager->startAnimation(
-        startedOn, CDesktopAnimationManager::ANIMATION_TYPE_IN, true, true);
+    Animation::Workspace::startAnimation(
+        startedOn, Animation::Workspace::ANIMATION_TYPE_IN, true, true);
 
     blockOverviewRendering = false;
 }
@@ -974,7 +973,7 @@ void COverview::damage() {
 void COverview::onDamageReported() {
     damageDirty = true;
     damage();
-    g_pCompositor->scheduleFrameForMonitor(pMonitor.lock());
+    pMonitor.lock()->scheduleFrame();
 }
 
 void COverview::selectWorkspaceAtPosition(const Vector2D& pos) {
@@ -1058,20 +1057,20 @@ void COverview::close() {
             targetWorkspaceID != pMonitor->activeWorkspaceID()) {
             pMonitor->setSpecialWorkspace(nullptr);
 
-            const auto NEWIDWS = g_pCompositor->getWorkspaceByID(targetWorkspaceID);
+            const auto NEWIDWS = State::workspaceState()->query().id(targetWorkspaceID).run();
             const auto OLDWS = pMonitor->m_activeWorkspace;
 
             if (!NEWIDWS)
-                g_pKeybindManager->changeworkspace(std::to_string(targetWorkspaceID));
+                g_pKeybindManager->m_dispatchers["workspace"](std::to_string(targetWorkspaceID));
             else
-                g_pKeybindManager->changeworkspace(NEWIDWS->getConfigName());
+                g_pKeybindManager->m_dispatchers["workspace"](NEWIDWS->getConfigName());
 
             // Start animations for workspace transition (like hyprexpo)
-            g_pDesktopAnimationManager->startAnimation(
+            Animation::Workspace::startAnimation(
                 pMonitor->m_activeWorkspace,
-                CDesktopAnimationManager::ANIMATION_TYPE_IN, true, true);
-            g_pDesktopAnimationManager->startAnimation(
-                OLDWS, CDesktopAnimationManager::ANIMATION_TYPE_OUT, false, true);
+                Animation::Workspace::ANIMATION_TYPE_IN, true, true);
+            Animation::Workspace::startAnimation(
+                OLDWS, Animation::Workspace::ANIMATION_TYPE_OUT, false, true);
             startedOn = pMonitor->m_activeWorkspace;
         }
     }
@@ -1274,7 +1273,7 @@ void COverview::renderWorkspaceIndicator(const CBox& scaledBox, size_t i,
         }
 
         std::string numberText = std::to_string(workspaceNum);
-        auto textTexture = g_pHyprOpenGL->renderText(
+        auto textTexture = g_pHyprRenderer->renderText(
             numberText, CHyprColor{1.0, 1.0, 1.0, 1.0}, 16, false);
 
         if (textTexture) {
@@ -1323,11 +1322,11 @@ void COverview::renderWorkspace(size_t i, const Vector2D& monitorSize,
         texbox = {PADDING, yPos, leftWorkspaceWidth, this->leftPreviewHeight};
     }
 
-    auto* fbToRender = &image.fb;
+    auto fbToRender = image.fb.get();
 
     if (closing && selectedIndex >= 0 && selectedIndex != activeIndex) {
         if (i == (size_t)activeIndex) {
-            fbToRender = &images[selectedIndex].fb;
+            fbToRender = images[selectedIndex].fb.get();
         } else if (i == (size_t)selectedIndex) {
             return;
         }
@@ -1451,13 +1450,13 @@ void COverview::renderDropZoneIndicator(int dropZoneAbove, int dropZoneBelow) {
 
 void COverview::renderDragPreviewAtCursor(float monScale) {
     bool shouldRenderDragPreview = (g_dragState.isDragging &&
-                                    g_dragState.dragPreviewFB.m_size.x > 0 &&
+                                    g_dragState.dragPreviewFB->m_size.x > 0 &&
                                     (g_dragState.draggedWindow ||
                                      g_dragState.isWorkspaceDrag));
     if (!shouldRenderDragPreview)
         return;
 
-    const Vector2D fullSize = g_dragState.dragPreviewFB.m_size;
+    const Vector2D fullSize = g_dragState.dragPreviewFB->m_size;
     const Vector2D previewSize = fullSize * DRAG_PREVIEW_SCALE;
 
     CBox previewBox = {lastMousePosLocal.x - previewSize.x / 2.0f,
@@ -1468,13 +1467,17 @@ void COverview::renderDragPreviewAtCursor(float monScale) {
     previewBox.round();
 
     CRegion damage{0, 0, INT16_MAX, INT16_MAX};
-    g_pHyprOpenGL->renderTextureInternal(g_dragState.dragPreviewFB.getTexture(),
+    g_pHyprOpenGL->renderTextureInternal(g_dragState.dragPreviewFB->getTexture(),
                                          previewBox,
                                          {.damage = &damage, .a = 0.9f});
 }
 
 void COverview::fullRender() {
-    g_pHyprOpenGL->clear(BG_COLOR.stripA());
+    do {
+        const auto C = BG_COLOR.stripA();
+        glClearColor(C.r, C.g, C.b, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+    } while(0);
 
     const Vector2D monitorSize = pMonitor->m_size;
     const float    monScale    = pMonitor->m_scale;
@@ -1826,7 +1829,7 @@ std::pair<COverview*, int> COverview::findWorkspaceAtGlobalPosition(
     const Vector2D& globalPos
 ) {
     // Find which monitor the position is on
-    const auto monitor = g_pCompositor->getMonitorFromVector(globalPos);
+    const auto monitor = State::monitorState()->query().vec(globalPos).run();
     if (!monitor) {
         return {nullptr, -1};
     }
@@ -1987,48 +1990,48 @@ void COverview::renderDragPreview() {
     // Handle workspace drag - render entire workspace
     if (g_dragState.isWorkspaceDrag) {
         // Use entire workspace framebuffer as preview
-        Vector2D previewSize = sourceImage.fb.m_size;
+        Vector2D previewSize = sourceImage.fb->m_size;
 
-        if (g_dragState.dragPreviewFB.m_size != previewSize) {
-            g_dragState.dragPreviewFB.release();
-            g_dragState.dragPreviewFB.alloc(
+        if (g_dragState.dragPreviewFB->m_size != previewSize) {
+            g_dragState.dragPreviewFB->release();
+            g_dragState.dragPreviewFB->alloc(
                 previewSize.x, previewSize.y,
                 pMonitor->m_output->state->state().drmFormat
             );
         }
 
-        g_pHyprRenderer->makeEGLCurrent();
+        g_pHyprOpenGL->makeEGLCurrent();
 
         CRegion fakeDamage{0, 0, INT16_MAX, INT16_MAX};
         auto& fb = g_dragState.dragPreviewFB;
         g_pHyprRenderer->beginRender(
-            pMonitor.lock(), fakeDamage, RENDER_MODE_FULL_FAKE, nullptr, &fb
+            pMonitor.lock(), fakeDamage, Render::RENDER_MODE_FULL_FAKE, nullptr, fb
         );
 
-        g_pHyprOpenGL->clear(CHyprColor{0, 0, 0, 0});
+        do { glClearColor(0.0f, 0.0f, 0.0f, 0.0f); glClear(GL_COLOR_BUFFER_BIT); } while(0);
 
         // Render entire workspace texture
         CBox destBox = {
             0,
             0,
-            (double)sourceImage.fb.m_size.x,
-            (double)sourceImage.fb.m_size.y
+            (double)sourceImage.fb->m_size.x,
+            (double)sourceImage.fb->m_size.y
         };
 
         g_pHyprOpenGL->renderTexturePrimitive(
-            sourceImage.fb.getTexture(), destBox
+            sourceImage.fb->getTexture(), destBox
         );
 
-        g_pHyprOpenGL->m_renderData.blockScreenShader = true;
+        g_pHyprRenderer->m_renderData.blockScreenShader = true;
         g_pHyprRenderer->endRender();
         return;
     }
 
     // Handle window drag - render only window region
     const Vector2D winPos =
-        g_dragState.draggedWindow->m_realPosition->value();
+        g_dragState.draggedWindow->positionAnimation()->value();
     const Vector2D winSize =
-        g_dragState.draggedWindow->m_realSize->value();
+        g_dragState.draggedWindow->sizeAnimation()->value();
 
     // Calculate window position in workspace framebuffer coordinates
     auto srcMon = g_dragState.sourceOverview->pMonitor.lock();
@@ -2039,55 +2042,55 @@ void COverview::renderDragPreview() {
 
     // Convert to framebuffer pixel coordinates
     CBox sourceRegion = {
-        relX * sourceImage.fb.m_size.x,
-        relY * sourceImage.fb.m_size.y,
-        relW * sourceImage.fb.m_size.x,
-        relH * sourceImage.fb.m_size.y
+        relX * sourceImage.fb->m_size.x,
+        relY * sourceImage.fb->m_size.y,
+        relW * sourceImage.fb->m_size.x,
+        relH * sourceImage.fb->m_size.y
     };
 
     // Clamp to FB bounds
     sourceRegion.x = std::max(0.0, sourceRegion.x);
     sourceRegion.y = std::max(0.0, sourceRegion.y);
     sourceRegion.w = std::min(
-        sourceRegion.w, sourceImage.fb.m_size.x - sourceRegion.x
+        sourceRegion.w, sourceImage.fb->m_size.x - sourceRegion.x
     );
     sourceRegion.h = std::min(
-        sourceRegion.h, sourceImage.fb.m_size.y - sourceRegion.y
+        sourceRegion.h, sourceImage.fb->m_size.y - sourceRegion.y
     );
 
     // Allocate FB at the exact size of window in workspace preview
     Vector2D previewSize = {sourceRegion.w, sourceRegion.h};
-    if (g_dragState.dragPreviewFB.m_size != previewSize) {
-        g_dragState.dragPreviewFB.release();
-        g_dragState.dragPreviewFB.alloc(
+    if (g_dragState.dragPreviewFB->m_size != previewSize) {
+        g_dragState.dragPreviewFB->release();
+        g_dragState.dragPreviewFB->alloc(
             previewSize.x, previewSize.y,
             pMonitor->m_output->state->state().drmFormat
         );
     }
 
-    g_pHyprRenderer->makeEGLCurrent();
+    g_pHyprOpenGL->makeEGLCurrent();
 
     CRegion fakeDamage{0, 0, INT16_MAX, INT16_MAX};
     auto& fb = g_dragState.dragPreviewFB;
     g_pHyprRenderer->beginRender(
-        pMonitor.lock(), fakeDamage, RENDER_MODE_FULL_FAKE, nullptr, &fb
+        pMonitor.lock(), fakeDamage, Render::RENDER_MODE_FULL_FAKE, nullptr, fb
     );
 
-    g_pHyprOpenGL->clear(CHyprColor{0, 0, 0, 0});
+    do { glClearColor(0.0f, 0.0f, 0.0f, 0.0f); glClear(GL_COLOR_BUFFER_BIT); } while(0);
 
     // Render workspace texture with offset to show only window region
     CBox destBox = {
         -sourceRegion.x,
         -sourceRegion.y,
-        (double)sourceImage.fb.m_size.x,
-        (double)sourceImage.fb.m_size.y
+        (double)sourceImage.fb->m_size.x,
+        (double)sourceImage.fb->m_size.y
     };
 
     g_pHyprOpenGL->renderTexturePrimitive(
-        sourceImage.fb.getTexture(), destBox
+        sourceImage.fb->getTexture(), destBox
     );
 
-    g_pHyprOpenGL->m_renderData.blockScreenShader = true;
+    g_pHyprRenderer->m_renderData.blockScreenShader = true;
     g_pHyprRenderer->endRender();
 }
 
@@ -2096,7 +2099,7 @@ int64_t COverview::findFirstAvailableWorkspaceID() {
     std::vector<int64_t> allUsedIDs;
 
     // Check all existing workspaces
-    for (const auto& ws : g_pCompositor->m_workspaces) {
+    for (const auto& ws : State::workspaceState()->workspaces()) {
         if (!ws || ws->m_isSpecialWorkspace)
             continue;
         allUsedIDs.push_back(ws->m_id);
@@ -2251,15 +2254,15 @@ PHLWINDOW COverview::findWindowAtPosition(const Vector2D& pos, int workspaceInde
     // Find all windows at this position, then return the topmost one
     PHLWINDOW topmostWindow = nullptr;
 
-    for (auto& w : g_pCompositor->m_windows) {
+    for (auto& w : Desktop::windowState()->windows()) {
         if (!w->m_workspace || w->m_workspace != image.pWorkspace)
             continue;
         if (w->isHidden() || !w->m_isMapped)
             continue;
 
         // Use real position/size which works for both tiled and floating windows
-        const Vector2D wPos = w->m_realPosition->value();
-        const Vector2D wSize = w->m_realSize->value();
+        const Vector2D wPos = w->positionAnimation()->value();
+        const Vector2D wSize = w->sizeAnimation()->value();
 
         if (wsPos.x >= wPos.x && wsPos.x <= wPos.x + wSize.x &&
             wsPos.y >= wPos.y && wsPos.y <= wPos.y + wSize.y) {
@@ -2269,10 +2272,11 @@ PHLWINDOW COverview::findWindowAtPosition(const Vector2D& pos, int workspaceInde
                 topmostWindow = w;
             } else {
                 // Check if this window should be on top
-                if (w->isFullscreen() && !topmostWindow->isFullscreen()) {
+                if (Fullscreen::controller()->isFullscreen(w) &&
+                    !Fullscreen::controller()->isFullscreen(topmostWindow)) {
                     topmostWindow = w;
                 } else if (w->m_isFloating && !topmostWindow->m_isFloating &&
-                           !topmostWindow->isFullscreen()) {
+                           !Fullscreen::controller()->isFullscreen(topmostWindow)) {
                     topmostWindow = w;
                 }
             }
@@ -2285,21 +2289,21 @@ PHLWINDOW COverview::findWindowAtPosition(const Vector2D& pos, int workspaceInde
 // Helper function to convert direction enum to string for layout API
 const char* getDirectionString(int direction) {
     switch (direction) {
-        case DIRECTION_UP: return "u";
-        case DIRECTION_DOWN: return "d";
-        case DIRECTION_LEFT: return "l";
-        case DIRECTION_RIGHT: return "r";
+        case Math::DIRECTION_UP: return "u";
+        case Math::DIRECTION_DOWN: return "d";
+        case Math::DIRECTION_LEFT: return "l";
+        case Math::DIRECTION_RIGHT: return "r";
         default: return nullptr;
     }
 }
 
 int COverview::calculateDropDirection(PHLWINDOW targetWindow, const Vector2D& cursorPos) {
     if (!targetWindow)
-        return DIRECTION_DEFAULT;
+        return Math::DIRECTION_DEFAULT;
 
     // Get window's real position and size
-    const Vector2D wPos = targetWindow->m_realPosition->value();
-    const Vector2D wSize = targetWindow->m_realSize->value();
+    const Vector2D wPos = targetWindow->positionAnimation()->value();
+    const Vector2D wSize = targetWindow->sizeAnimation()->value();
 
     const bool isLandscape = wSize.x > wSize.y;
 
@@ -2308,9 +2312,9 @@ int COverview::calculateDropDirection(PHLWINDOW targetWindow, const Vector2D& cu
 
     int direction;
     if (isLandscape) {
-        direction = (relativePos.x < 0) ? DIRECTION_LEFT : DIRECTION_RIGHT;
+        direction = (relativePos.x < 0) ? Math::DIRECTION_LEFT : Math::DIRECTION_RIGHT;
     } else {
-        direction = (relativePos.y < 0) ? DIRECTION_UP : DIRECTION_DOWN;
+        direction = (relativePos.y < 0) ? Math::DIRECTION_UP : Math::DIRECTION_DOWN;
     }
 
     return direction;
@@ -2351,7 +2355,7 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
         targetImage.workspaceID = workspaceID;
 
         // Create the workspace on the overview's monitor
-        targetImage.pWorkspace = g_pCompositor->createNewWorkspace(workspaceID, monitorID);
+        targetImage.pWorkspace = State::workspaceState()->create(workspaceID, monitorID);
 
         if (!targetImage.pWorkspace) {
             HyprlandAPI::addNotification(
@@ -2422,13 +2426,13 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
     }
 
     PHLWINDOW targetWindow = findWindowAtPosition(cursorPos, targetWorkspaceIndex);
-    int dropDirection = DIRECTION_DEFAULT;
+    int dropDirection = Math::DIRECTION_DEFAULT;
 
     Vector2D workspaceCursorPos = convertPreviewToWorkspaceCoords(cursorPos, targetWorkspaceIndex);
 
     // Only calculate drop direction for tiling windows
     if (!window->m_isFloating && targetWindow && !targetWindow->m_isFloating &&
-        !targetWindow->isFullscreen()) {
+        !Fullscreen::controller()->isFullscreen(targetWindow)) {
         dropDirection = calculateDropDirection(targetWindow, workspaceCursorPos);
     }
 
@@ -2438,20 +2442,19 @@ void COverview::moveWindowToWorkspace(PHLWINDOW window, int targetWorkspaceIndex
 
     // If already in target workspace and no valid tiling target, don't move
     if (window->m_workspace == targetImage.pWorkspace &&
-        (dropDirection == DIRECTION_DEFAULT || !targetWindow)) {
+        (dropDirection == Math::DIRECTION_DEFAULT || !targetWindow)) {
         return;
     }
 
     // Always use moveWindowToWorkspaceSafe first to properly update all window state
     // (workspace, monitor, rendering layers, etc.) especially for cross-monitor moves
-    g_pCompositor->moveWindowToWorkspaceSafe(window, targetImage.pWorkspace);
+    Desktop::globalWindowController()->moveWindowToWorkspace(window, targetImage.pWorkspace);
 
     // If smart tiling is desired, reposition the window using layout manager
-    if (!window->m_isFloating && dropDirection != DIRECTION_DEFAULT && targetWindow) {
+    if (!window->m_isFloating && dropDirection != Math::DIRECTION_DEFAULT && targetWindow) {
         const char* dirStr = getDirectionString(dropDirection);
-        if (dirStr && g_pLayoutManager) {
-            if (const auto PLAYOUT = g_pLayoutManager->getCurrentLayout())
-                PLAYOUT->moveWindowTo(window, dirStr);
+        if (dirStr && g_layoutManager) {
+            g_layoutManager->moveInDirection(window->layoutTarget(), dirStr);
         }
     }
 
@@ -2527,9 +2530,8 @@ bool createTextureFromPixelData(const std::vector<uint8_t>& pixelData,
 
     try {
         auto* pixels = const_cast<uint8_t*>(pixelData.data());
-        g_pBackgroundTexture = makeShared<CTexture>(drmFormat, pixels, textureStride,
-                                                     Vector2D{(double)width, (double)height},
-                                                     true);
+        g_pBackgroundTexture = makeShared<Render::GL::CGLTexture>(
+            drmFormat, pixels, textureStride, Vector2D{(double)width, (double)height}, true);
         return true;
     } catch (const std::exception& e) {
         Log::logger->log(Log::ERR, "[workspace-overview] Failed to create texture: {}", e.what());
@@ -2596,7 +2598,7 @@ void COverview::handleSameMonitorDrop(int sourceIdx) {
 void COverview::handleCrossMonitorDrop(int sourceIdx) {
     auto mousePos = g_pInputManager->getMouseCoordsInternal();
 
-    const auto monitor = g_pCompositor->getMonitorFromVector(mousePos);
+    const auto monitor = State::monitorState()->query().vec(mousePos).run();
     if (!monitor)
         return;
 
@@ -2665,7 +2667,7 @@ void COverview::handleCrossMonitorPlaceholderDrop(COverview* targetOverview,
         return;
 
     std::vector<PHLWINDOW> sourceWindows;
-    for (auto& w : g_pCompositor->m_windows) {
+    for (auto& w : Desktop::windowState()->windows()) {
         if (w->m_workspace == sourceImage.pWorkspace && !w->isHidden() &&
             w->m_isMapped) {
             sourceWindows.push_back(w);
@@ -2677,10 +2679,10 @@ void COverview::handleCrossMonitorPlaceholderDrop(COverview* targetOverview,
     auto& targetImage = targetOverview->images[targetIdx];
     targetImage.workspaceID = workspaceID;
     targetImage.pWorkspace =
-        g_pCompositor->createNewWorkspace(workspaceID, monitorID, "");
+        State::workspaceState()->create(workspaceID, monitorID, "");
 
     for (auto& win : sourceWindows) {
-        g_pCompositor->moveWindowToWorkspaceSafe(win, targetImage.pWorkspace);
+        Desktop::globalWindowController()->moveWindowToWorkspace(win, targetImage.pWorkspace);
     }
 
     g_dragState.sourceOverview->removeWorkspaceAndShiftWindows(sourceIdx);
@@ -2778,7 +2780,7 @@ void COverview::mergeWorkspace(int sourceIdx, int targetIdx) {
 
     // Step 1: Move all windows from source workspace to target workspace
     std::vector<PHLWINDOW> sourceWindows;
-    for (auto& w : g_pCompositor->m_windows) {
+    for (auto& w : Desktop::windowState()->windows()) {
         if (w->m_workspace == images[sourceIdx].pWorkspace &&
             !w->isHidden() && w->m_isMapped) {
             sourceWindows.push_back(w);
@@ -2786,7 +2788,7 @@ void COverview::mergeWorkspace(int sourceIdx, int targetIdx) {
     }
 
     for (auto& win : sourceWindows) {
-        g_pCompositor->moveWindowToWorkspaceSafe(
+        Desktop::globalWindowController()->moveWindowToWorkspace(
             win, images[targetIdx].pWorkspace
         );
     }
@@ -2825,7 +2827,7 @@ void COverview::moveWorkspaceToPlaceholder(int sourceIdx, int placeholderIdx) {
 
     // Collect windows from source workspace
     std::vector<PHLWINDOW> sourceWindows;
-    for (auto& w : g_pCompositor->m_windows) {
+    for (auto& w : Desktop::windowState()->windows()) {
         if (w->m_workspace == images[sourceIdx].pWorkspace &&
             !w->isHidden() && w->m_isMapped) {
             sourceWindows.push_back(w);
@@ -2837,11 +2839,11 @@ void COverview::moveWorkspaceToPlaceholder(int sourceIdx, int placeholderIdx) {
     const auto monitorID = pMonitor->m_id;
     auto& targetImage = images[placeholderIdx];
     targetImage.workspaceID = workspaceID;
-    targetImage.pWorkspace = g_pCompositor->createNewWorkspace(workspaceID, monitorID, "");
+    targetImage.pWorkspace = State::workspaceState()->create(workspaceID, monitorID, "");
 
     // Move windows to new workspace
     for (auto& win : sourceWindows) {
-        g_pCompositor->moveWindowToWorkspaceSafe(win, targetImage.pWorkspace);
+        Desktop::globalWindowController()->moveWindowToWorkspace(win, targetImage.pWorkspace);
     }
 
     // Remove source workspace by shifting windows
@@ -2882,7 +2884,7 @@ void COverview::removeWorkspaceAndShiftWindows(int workspaceIdx) {
 
         // Move all windows from workspace i to workspace targetIdx
         std::vector<PHLWINDOW> windows;
-        for (auto& w : g_pCompositor->m_windows) {
+        for (auto& w : Desktop::windowState()->windows()) {
             if (w->m_workspace == images[i].pWorkspace &&
                 !w->isHidden() && w->m_isMapped) {
                 windows.push_back(w);
@@ -2890,7 +2892,7 @@ void COverview::removeWorkspaceAndShiftWindows(int workspaceIdx) {
         }
 
         for (auto& win : windows) {
-            g_pCompositor->moveWindowToWorkspaceSafe(
+            Desktop::globalWindowController()->moveWindowToWorkspace(
                 win, images[targetIdx].pWorkspace
             );
         }
@@ -2909,7 +2911,7 @@ void COverview::collectWorkspaceWindowsForReorder(
             continue;
 
         std::vector<PHLWINDOW> windows;
-        for (auto& w : g_pCompositor->m_windows) {
+        for (auto& w : Desktop::windowState()->windows()) {
             if (w->m_workspace == images[i].pWorkspace &&
                 !w->isHidden() && w->m_isMapped) {
                 windows.push_back(w);
@@ -2936,7 +2938,7 @@ void COverview::moveWindowsForReorder(
         if (targetWsIdx >= 0 && targetWsIdx < activeIndex &&
             images[targetWsIdx].pWorkspace) {
             for (auto& win : windows) {
-                g_pCompositor->moveWindowToWorkspaceSafe(
+                Desktop::globalWindowController()->moveWindowToWorkspace(
                     win, images[targetWsIdx].pWorkspace
                 );
             }
@@ -2991,7 +2993,7 @@ void COverview::moveCrossMonitorWorkspace(COverview* sourceOverview, int sourceI
 
     // Move all windows from dragged workspace to target workspace
     std::vector<PHLWINDOW> draggedWindows;
-    for (auto& w : g_pCompositor->m_windows) {
+    for (auto& w : Desktop::windowState()->windows()) {
         if (w->m_workspace == sourceImage.pWorkspace && !w->isHidden() && w->m_isMapped) {
             draggedWindows.push_back(w);
         }
@@ -3010,12 +3012,12 @@ void COverview::moveCrossMonitorWorkspace(COverview* sourceOverview, int sourceI
         const int64_t workspaceID = targetOverview->findFirstAvailableWorkspaceID();
         const auto monitorID = targetOverview->pMonitor->m_id;
         targetImage.workspaceID = workspaceID;
-        targetImage.pWorkspace = g_pCompositor->createNewWorkspace(workspaceID, monitorID, "");
+        targetImage.pWorkspace = State::workspaceState()->create(workspaceID, monitorID, "");
     }
 
     // Move dragged windows to target workspace
     for (auto& win : draggedWindows) {
-        g_pCompositor->moveWindowToWorkspaceSafe(win, targetImage.pWorkspace);
+        Desktop::globalWindowController()->moveWindowToWorkspace(win, targetImage.pWorkspace);
     }
 
     // Schedule refreshes for both monitors
@@ -3062,14 +3064,14 @@ void COverview::mergeCrossMonitorWorkspace(COverview* sourceOverview, int source
 
     // Step 1: Move all windows from source workspace to target workspace
     std::vector<PHLWINDOW> sourceWindows;
-    for (auto& w : g_pCompositor->m_windows) {
+    for (auto& w : Desktop::windowState()->windows()) {
         if (w->m_workspace == sourceImage.pWorkspace && !w->isHidden() && w->m_isMapped) {
             sourceWindows.push_back(w);
         }
     }
 
     for (auto& win : sourceWindows) {
-        g_pCompositor->moveWindowToWorkspaceSafe(win, targetImage.pWorkspace);
+        Desktop::globalWindowController()->moveWindowToWorkspace(win, targetImage.pWorkspace);
     }
 
     // Step 2: Remove the source workspace by shifting windows on source monitor
@@ -3113,7 +3115,7 @@ void COverview::moveSourceMonitorWindowsUp(COverview* sourceOverview, int source
 
         // Collect windows from current workspace
         std::vector<PHLWINDOW> windows;
-        for (auto& w : g_pCompositor->m_windows) {
+        for (auto& w : Desktop::windowState()->windows()) {
             if (w->m_workspace == currentImage.pWorkspace && !w->isHidden() && w->m_isMapped) {
                 windows.push_back(w);
             }
@@ -3124,12 +3126,12 @@ void COverview::moveSourceMonitorWindowsUp(COverview* sourceOverview, int source
             const int64_t workspaceID = sourceOverview->findFirstAvailableWorkspaceID();
             const auto monitorID = sourceOverview->pMonitor->m_id;
             targetImage.workspaceID = workspaceID;
-            targetImage.pWorkspace = g_pCompositor->createNewWorkspace(workspaceID, monitorID, "");
+            targetImage.pWorkspace = State::workspaceState()->create(workspaceID, monitorID, "");
         }
 
         // Move windows to target workspace
         for (auto& win : windows) {
-            g_pCompositor->moveWindowToWorkspaceSafe(win, targetImage.pWorkspace);
+            Desktop::globalWindowController()->moveWindowToWorkspace(win, targetImage.pWorkspace);
         }
     }
 }
@@ -3159,7 +3161,7 @@ void COverview::moveTargetMonitorWindowsDown(COverview* targetOverview, int targ
 
         // Collect windows from current workspace
         std::vector<PHLWINDOW> windows;
-        for (auto& w : g_pCompositor->m_windows) {
+        for (auto& w : Desktop::windowState()->windows()) {
             if (w->m_workspace == currentImage.pWorkspace && !w->isHidden() && w->m_isMapped) {
                 windows.push_back(w);
             }
@@ -3170,12 +3172,12 @@ void COverview::moveTargetMonitorWindowsDown(COverview* targetOverview, int targ
             const int64_t workspaceID = targetOverview->findFirstAvailableWorkspaceID();
             const auto monitorID = targetOverview->pMonitor->m_id;
             newImage.workspaceID = workspaceID;
-            newImage.pWorkspace = g_pCompositor->createNewWorkspace(workspaceID, monitorID, "");
+            newImage.pWorkspace = State::workspaceState()->create(workspaceID, monitorID, "");
         }
 
         // Move windows to new workspace
         for (auto& win : windows) {
-            g_pCompositor->moveWindowToWorkspaceSafe(win, newImage.pWorkspace);
+            Desktop::globalWindowController()->moveWindowToWorkspace(win, newImage.pWorkspace);
         }
     }
 }

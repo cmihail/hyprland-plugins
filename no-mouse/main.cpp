@@ -6,7 +6,12 @@
 #include <linux/input-event-codes.h>
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/Compositor.hpp>
-#include <hyprland/src/SharedDefs.hpp>
+#include <hyprland/src/state/MonitorState.hpp>
+#include <hyprland/src/desktop/state/ViewState.hpp>
+#include <hyprland/src/desktop/state/ViewHitTester.hpp>
+#include <hyprland/src/pointer/PointerManager.hpp>
+#include <hyprland/src/pointer/PointerController.hpp>
+#include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/managers/KeybindManager.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
@@ -14,6 +19,8 @@
 #include <hyprland/src/render/OpenGL.hpp>
 
 #include "NoMouseOverlay.hpp"
+
+using Render::GL::g_pHyprOpenGL;
 
 inline HANDLE PHANDLE = nullptr;
 
@@ -40,8 +47,8 @@ bool g_hasSubColumn = false;
 int g_subColumn = -1; // 0-17 (A-R)
 
 // Hook handles
-static SP<HOOK_CALLBACK_FN> g_renderHook;
-static SP<HOOK_CALLBACK_FN> g_keyboardHook;
+static CHyprSignalListener g_renderHook;
+static CHyprSignalListener g_keyboardHook;
 
 // Forward declarations
 static void damageAllMonitors();
@@ -94,14 +101,14 @@ static void damageAllMonitors() {
             return;
         }
 
-        for (auto& monitor : g_pCompositor->m_monitors) {
+        for (auto& monitor : State::monitorState()->monitors()) {
             if (!monitor) {
                 continue;
             }
 
             try {
                 g_pHyprRenderer->damageMonitor(monitor);
-                g_pCompositor->scheduleFrameForMonitor(monitor);
+                monitor->scheduleFrame();
             } catch (...) {
                 // Silently catch per-monitor errors
             }
@@ -114,7 +121,7 @@ static void damageAllMonitors() {
 // Function to move mouse to specific cell (optionally with sub-column refinement)
 static void moveMouseToCell(int row, int col, int subColumn = -1) {
     try {
-        auto monitor = g_pCompositor->getMonitorFromCursor();
+        auto monitor = State::monitorState()->query().vec(Pointer::mgr()->position()).run();
         if (!monitor) {
             return;
         }
@@ -150,7 +157,7 @@ static void moveMouseToCell(int row, int col, int subColumn = -1) {
         const Vector2D absolutePos = monitor->m_position + Vector2D{cellCenterX, cellCenterY};
 
         // Warp the cursor
-        g_pCompositor->warpCursorTo(absolutePos, true);
+        Pointer::pointerController()->warpTo(absolutePos, true);
 
         // Simulate mouse movement to trigger hover states in applications (e.g., Chrome)
         if (g_pInputManager) {
@@ -159,7 +166,7 @@ static void moveMouseToCell(int row, int col, int subColumn = -1) {
 
         // Focus the window under the cursor
         try {
-            const auto windowUnderCursor = g_pCompositor->vectorToWindowUnified(
+            const auto windowUnderCursor = Desktop::CViewHitTester(*Desktop::viewState()).windowAt(
                 absolutePos,
                 Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS |
                 Desktop::View::ALLOW_FLOATING);
@@ -380,7 +387,7 @@ static SDispatchResult noMouseDispatch(std::string arg) {
                 g_selectMode = enteringSelectMode;
 
                 // Capture the active workspace when turning on
-                auto monitor = g_pCompositor->getMonitorFromCursor();
+                auto monitor = State::monitorState()->query().vec(Pointer::mgr()->position()).run();
                 if (monitor) {
                     g_activeWorkspace = monitor->m_activeWorkspace;
                 }
@@ -422,10 +429,9 @@ static SDispatchResult noMouseDispatch(std::string arg) {
 // Setup render hook to display overlay
 static void setupRenderHook() {
     try {
-        g_renderHook = HyprlandAPI::registerCallbackDynamic(PHANDLE, "render", [](void*, SCallbackInfo&, std::any data) {
+        g_renderHook = Event::bus()->m_events.render.stage.listen([](eRenderStage stage) {
             try {
-                const auto PSTAGE = std::any_cast<eRenderStage>(&data);
-                if (!PSTAGE || *PSTAGE != eRenderStage::RENDER_POST_WINDOWS)
+                if (stage != eRenderStage::RENDER_POST_WINDOWS)
                     return;
 
                 // Don't render if plugin is shutting down or toggle is off
@@ -439,7 +445,7 @@ static void setupRenderHook() {
                 }
 
                 // Get the current monitor being rendered
-                auto monitor = g_pHyprOpenGL->m_renderData.pMonitor.lock();
+                auto monitor = g_pHyprRenderer->m_renderData.pMonitor.lock();
                 if (!monitor) {
                     return;
                 }
@@ -458,7 +464,7 @@ static void setupRenderHook() {
                 if (g_toggleState) {
                     try {
                         if (g_pCompositor) {
-                            g_pCompositor->scheduleFrameForMonitor(monitor);
+                            monitor->scheduleFrame();
                         }
                     } catch (...) {
                         // Silently catch scheduling errors
@@ -478,12 +484,9 @@ static void setupRenderHook() {
 // Setup keyboard hook to detect ESC key and show notifications for all key presses
 static void setupKeyboardHook() {
     try {
-        g_keyboardHook = HyprlandAPI::registerCallbackDynamic(PHANDLE, "keyPress", [](void*, SCallbackInfo& info, std::any data) {
+        g_keyboardHook = Event::bus()->m_events.input.keyboard.key.listen(
+            [](IKeyboard::SKeyEvent e, Event::SCallbackInfo& info) {
             try {
-                const auto PE = std::any_cast<IKeyboard::SKeyEvent>(&data);
-                if (!PE)
-                    return;
-                const auto& e = *PE;
                 // Only process if overlay is active
                 if (!g_toggleState) {
                     return;

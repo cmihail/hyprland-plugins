@@ -1,12 +1,20 @@
 #include "WindowActionsBar.hpp"
 
+#include <hyprland/src/render/Texture.hpp>
+#include <hyprland/src/render/gl/GLTexture.hpp>
 #include <hyprland/src/Compositor.hpp>
+#include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
+#include <hyprland/src/state/MonitorState.hpp>
+#include <hyprland/src/desktop/state/ViewState.hpp>
+#include <hyprland/src/desktop/state/ViewHitTester.hpp>
+#include <hyprland/src/pointer/PointerManager.hpp>
+#include <hyprland/src/pointer/PointerController.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/helpers/MiscFunctions.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/render/Renderer.hpp>
-#include <hyprland/src/managers/LayoutManager.hpp>
+#include <hyprland/src/layout/LayoutManager.hpp>
 #include <hyprland/src/config/ConfigManager.hpp>
 #include <hyprland/src/protocols/LayerShell.hpp>
 #include <hyprland/src/managers/KeybindManager.hpp>
@@ -16,26 +24,28 @@
 #include "globals.hpp"
 #include "WindowActionsPassElement.hpp"
 
+using Render::GL::g_pHyprOpenGL;
+
 CWindowActionsBar::CWindowActionsBar(PHLWINDOW pWindow) : IHyprWindowDecoration(pWindow) {
     m_pWindow = pWindow;
 
     const auto PMONITOR = pWindow->m_monitor.lock();
     PMONITOR->m_scheduledRecalc = true;
 
-    m_pMouseButtonCallback = HyprlandAPI::registerCallbackDynamic(
-        PHANDLE, "mouseButton", [this](void*, SCallbackInfo& info, std::any data) { if (const auto E = std::any_cast<IPointer::SButtonEvent>(&data)) onMouseButton(info, *E); });
-    m_pMouseMoveCallback = HyprlandAPI::registerCallbackDynamic(
-        PHANDLE, "mouseMove", [this](void*, SCallbackInfo& info, std::any data) { if (const auto P = std::any_cast<Vector2D>(&data)) onMouseMove(*P); });
-    m_pTouchDownCallback = HyprlandAPI::registerCallbackDynamic(
-        PHANDLE, "touchDown", [this](void*, SCallbackInfo& info, std::any data) { if (const auto E = std::any_cast<ITouch::SDownEvent>(&data)) onTouchDown(info, *E); });
-    m_pTouchUpCallback = HyprlandAPI::registerCallbackDynamic(
-        PHANDLE, "touchUp", [this](void*, SCallbackInfo& info, std::any data) { handleUpEvent(info); });
+    m_pMouseButtonCallback = Event::bus()->m_events.input.mouse.button.listen(
+        [this](IPointer::SButtonEvent e, Event::SCallbackInfo& info) { onMouseButton(info, e); });
+    m_pMouseMoveCallback = Event::bus()->m_events.input.mouse.move.listen(
+        [this](Vector2D pos, Event::SCallbackInfo& info) { onMouseMove(pos); });
+    m_pTouchDownCallback = Event::bus()->m_events.input.touch.down.listen(
+        [this](ITouch::SDownEvent e, Event::SCallbackInfo& info) { onTouchDown(info, e); });
+    m_pTouchUpCallback = Event::bus()->m_events.input.touch.up.listen(
+        [this](ITouch::SUpEvent e, Event::SCallbackInfo& info) { handleUpEvent(info); });
 
     // Initialize button textures based on config
     size_t buttonCount = g_pGlobalState->buttons.size();
     m_pButtonTextures.resize(buttonCount);
     for (size_t i = 0; i < buttonCount; i++) {
-        m_pButtonTextures[i] = makeShared<CTexture>();
+        m_pButtonTextures[i] = makeShared<Render::GL::CGLTexture>();
     }
 }
 
@@ -108,7 +118,7 @@ bool CWindowActionsBar::inputIsValid() {
         !g_pInputManager->m_exclusiveLSes.empty())
         return false;
 
-    const auto WINDOWATCURSOR = g_pCompositor->vectorToWindowUnified(
+    const auto WINDOWATCURSOR = Desktop::CViewHitTester(*Desktop::viewState()).windowAt(
         g_pInputManager->getMouseCoordsInternal(),
         Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS |
         Desktop::View::ALLOW_FLOATING);
@@ -116,20 +126,25 @@ bool CWindowActionsBar::inputIsValid() {
     if (WINDOWATCURSOR != PWINDOW)
         return false;
 
-    auto     PMONITOR     = g_pCompositor->getMonitorFromCursor();
+    auto     PMONITOR     = State::monitorState()->query().vec(Pointer::mgr()->position()).run();
     if (!PMONITOR)
         return false;
 
     PHLLS    foundSurface = nullptr;
     Vector2D surfaceCoords;
 
-    g_pCompositor->vectorToLayerSurface(g_pInputManager->getMouseCoordsInternal(), &PMONITOR->m_layerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_TOP], &surfaceCoords, &foundSurface);
+    Desktop::CViewHitTester(*Desktop::viewState()).layerSurfaceAt(
+        g_pInputManager->getMouseCoordsInternal(),
+        &PMONITOR->m_layerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_TOP], &surfaceCoords,
+        &foundSurface);
 
     if (foundSurface)
         return false;
 
-    g_pCompositor->vectorToLayerSurface(g_pInputManager->getMouseCoordsInternal(), &PMONITOR->m_layerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY], &surfaceCoords,
-                                        &foundSurface);
+    Desktop::CViewHitTester(*Desktop::viewState()).layerSurfaceAt(
+        g_pInputManager->getMouseCoordsInternal(),
+        &PMONITOR->m_layerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY], &surfaceCoords,
+        &foundSurface);
 
     if (foundSurface)
         return false;
@@ -179,9 +194,13 @@ void CWindowActionsBar::onTouchDown(SCallbackInfo& info, ITouch::SDownEvent e) {
     if (!inputIsValid())
         return;
 
-    auto PMONITOR = g_pCompositor->getMonitorFromName(!e.device->m_boundOutput.empty() ? e.device->m_boundOutput : "");
-    PMONITOR      = PMONITOR ? PMONITOR : g_pCompositor->getMonitorFromCursor();
-    g_pCompositor->warpCursorTo({PMONITOR->m_position.x + e.pos.x * PMONITOR->m_size.x, PMONITOR->m_position.y + e.pos.y * PMONITOR->m_size.y}, true);
+    const auto& OUTPUT = e.device->m_boundOutput;
+    auto PMONITOR = State::monitorState()->query().name(!OUTPUT.empty() ? OUTPUT : "").run();
+    PMONITOR      = PMONITOR ? PMONITOR
+                             : State::monitorState()->query().vec(Pointer::mgr()->position()).run();
+    Pointer::pointerController()->warpTo({PMONITOR->m_position.x + e.pos.x * PMONITOR->m_size.x,
+                                          PMONITOR->m_position.y + e.pos.y * PMONITOR->m_size.y},
+                                         true);
 
     handleDownEvent(info, e);
 }
@@ -210,7 +229,7 @@ void CWindowActionsBar::onMouseMove(Vector2D coords) {
         return;
     }
 
-    const auto COORDS = CURSOR - PWINDOW->m_realPosition->value();
+    const auto COORDS = CURSOR - PWINDOW->positionAnimation()->value();
     const int newHoveredButton = getButtonIndex(COORDS);
 
     if (newHoveredButton != m_iHoveredButton) {
@@ -224,7 +243,7 @@ Vector2D CWindowActionsBar::cursorRelativeToButton() {
     if (!PWINDOW)
         return {-1, -1};
     const auto COORDS = g_pInputManager->getMouseCoordsInternal();
-    return COORDS - PWINDOW->m_realPosition->value();
+    return COORDS - PWINDOW->positionAnimation()->value();
 }
 
 void CWindowActionsBar::handleDownEvent(SCallbackInfo& info, std::optional<ITouch::SDownEvent> touchEvent) {
@@ -245,7 +264,7 @@ void CWindowActionsBar::handleDownEvent(SCallbackInfo& info, std::optional<ITouc
 
 void CWindowActionsBar::handleUpEvent(SCallbackInfo& info) {
     // Simplified check - if window is not the one under cursor, return
-    const auto WINDOWATCURSOR = g_pCompositor->vectorToWindowUnified(
+    const auto WINDOWATCURSOR = Desktop::CViewHitTester(*Desktop::viewState()).windowAt(
         g_pInputManager->getMouseCoordsInternal(),
         Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS |
         Desktop::View::ALLOW_FLOATING);
@@ -253,7 +272,10 @@ void CWindowActionsBar::handleUpEvent(SCallbackInfo& info) {
         return;
 
     if (m_bDraggingThis) {
-        g_pKeybindManager->m_dispatchers["mouse"]("0movewindow");
+        // End the move drag. The legacy `mouse` dispatcher no longer derives
+        // press/release from the argument string (it strips the leading char and
+        // reads a separate global state), so call changeMouseBindMode directly.
+        CKeybindManager::changeMouseBindMode(MBIND_INVALID);
         m_bDraggingThis = false;
         damageEntire(); // Trigger redraw to restore inactive icon and normal opacity
     }
@@ -266,7 +288,8 @@ void CWindowActionsBar::handleUpEvent(SCallbackInfo& info) {
 }
 
 void CWindowActionsBar::handleMovement() {
-    g_pKeybindManager->m_dispatchers["mouse"]("1movewindow");
+    // Begin the move drag. See handleUpEvent for why we bypass the `mouse` dispatcher.
+    CKeybindManager::changeMouseBindMode(MBIND_MOVE);
     m_bDraggingThis = true;
     damageEntire(); // Trigger redraw to show active icon and full opacity
     Log::logger->log(Log::INFO, "[window-actions] Dragging initiated");
@@ -324,15 +347,16 @@ bool CWindowActionsBar::getWindowState(const std::string& condition) {
         return false;
 
     if (condition == "fullscreen") {
-        return PWINDOW->isFullscreen();
+        return Fullscreen::controller()->isFullscreen(PWINDOW);
     } else if (condition == "grouped") {
-        return PWINDOW->m_groupData.pNextWindow;
+        return PWINDOW->m_group != nullptr;
     } else if (condition == "floating") {
         return PWINDOW->m_isFloating;
     } else if (condition == "maximized") {
-        return PWINDOW->m_fullscreenState.internal == FSMODE_MAXIMIZED;
+        return Fullscreen::controller()->getFullscreenModes(PWINDOW).internal ==
+            Fullscreen::FSMODE_MAXIMIZED;
     } else if (condition == "focused") {
-        const auto WINDOWATCURSOR = g_pCompositor->vectorToWindowUnified(
+        const auto WINDOWATCURSOR = Desktop::CViewHitTester(*Desktop::viewState()).windowAt(
             g_pInputManager->getMouseCoordsInternal(),
             Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS |
             Desktop::View::ALLOW_FLOATING);
@@ -344,7 +368,9 @@ bool CWindowActionsBar::getWindowState(const std::string& condition) {
     return false;
 }
 
-void CWindowActionsBar::renderText(SP<CTexture> out, const std::string& text, const CHyprColor& color, const Vector2D& bufferSize, const float scale, const int fontSize) {
+void CWindowActionsBar::renderText(SP<Render::ITexture> out, const std::string& text,
+                                   const CHyprColor& color, const Vector2D& bufferSize,
+                                   const float scale, const int fontSize) {
     const auto CAIROSURFACE = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, bufferSize.x, bufferSize.y);
     const auto CAIRO        = cairo_create(CAIROSURFACE);
 
@@ -373,7 +399,7 @@ void CWindowActionsBar::renderText(SP<CTexture> out, const std::string& text, co
     pango_font_description_free(fontDesc);
 
     const auto DATA = cairo_image_surface_get_data(CAIROSURFACE);
-    out->allocate();
+    out->allocate(bufferSize, DRM_FORMAT_ARGB8888);
     glBindTexture(GL_TEXTURE_2D, out->m_texID);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -400,7 +426,7 @@ void CWindowActionsBar::renderButtonTexts(const Vector2D& bufferSize, const floa
         m_pButtonTextures.resize(g_pGlobalState->buttons.size());
         for (size_t i = 0; i < g_pGlobalState->buttons.size(); i++) {
             if (!m_pButtonTextures[i]) {
-                m_pButtonTextures[i] = makeShared<CTexture>();
+                m_pButtonTextures[i] = makeShared<Render::GL::CGLTexture>();
             }
         }
     }
@@ -421,7 +447,7 @@ void CWindowActionsBar::renderButtonTexts(const Vector2D& bufferSize, const floa
         }
 
         // Clear existing texture to force re-render (for state changes)
-        m_pButtonTextures[i]->destroyTexture();
+        m_pButtonTextures[i] = makeShared<Render::GL::CGLTexture>();
         renderText(m_pButtonTextures[i], icon, button.text_color, bufferSize, scale, getButtonSize() * 0.6);
     }
 }
@@ -464,8 +490,9 @@ void CWindowActionsBar::renderPass(PHLMONITOR pMonitor, const float& a) {
     for (size_t i = 0; i < g_pGlobalState->buttons.size() && i < m_pButtonTextures.size(); i++) {
         const auto& button = g_pGlobalState->buttons[i];
 
-        CBox buttonBox = {PWINDOW->m_realPosition->value().x - pMonitor->m_position.x + static_cast<float>(i) * (buttonSize + BUTTON_SPACING),
-                          PWINDOW->m_realPosition->value().y - pMonitor->m_position.y,
+        CBox buttonBox = {PWINDOW->positionAnimation()->value().x - pMonitor->m_position.x +
+                              static_cast<float>(i) * (buttonSize + BUTTON_SPACING),
+                          PWINDOW->positionAnimation()->value().y - pMonitor->m_position.y,
                           buttonSize, buttonSize};
 
         buttonBox.translate(PWINDOW->m_floatingOffset).translate(WORKSPACEOFFSET).scale(pMonitor->m_scale).round();
@@ -507,8 +534,8 @@ void CWindowActionsBar::damageEntire() {
     const float buttonSize = getButtonSize();
     const int buttonCount = static_cast<int>(g_pGlobalState->buttons.size());
     if (buttonCount > 0) {
-        CBox damageBox = {PWINDOW->m_realPosition->value().x,
-                          PWINDOW->m_realPosition->value().y,
+        CBox damageBox = {PWINDOW->positionAnimation()->value().x,
+                          PWINDOW->positionAnimation()->value().y,
                           buttonCount * buttonSize + (buttonCount - 1) * BUTTON_SPACING, buttonSize};
         g_pHyprRenderer->damageBox(damageBox);
     }
@@ -535,7 +562,7 @@ CBox CWindowActionsBar::assignedBoxGlobal() {
     const int buttonCount = static_cast<int>(g_pGlobalState->buttons.size());
     if (buttonCount == 0)
         return {};
-    return CBox{PWINDOW->m_realPosition->value().x,
-                PWINDOW->m_realPosition->value().y,
+    return CBox{PWINDOW->positionAnimation()->value().x,
+                PWINDOW->positionAnimation()->value().y,
                 buttonCount * buttonSize + (buttonCount - 1) * BUTTON_SPACING, buttonSize};
 }

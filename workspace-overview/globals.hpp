@@ -2,13 +2,14 @@
 
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/render/Texture.hpp>
+#include <hyprland/src/render/gl/GLTexture.hpp>
 #include <memory>
 #include <optional>
 
 inline HANDLE PHANDLE = nullptr;
 
 // Global background texture shared across all monitors
-inline SP<CTexture> g_pBackgroundTexture;
+inline SP<Render::ITexture> g_pBackgroundTexture;
 
 // Global configuration values with defaults
 inline CHyprColor g_activeWorkspaceColor = CHyprColor{0.3, 0.5, 0.7, 1.0};  // rgba(4c7fa6ff)

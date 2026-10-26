@@ -3,11 +3,13 @@
 #include <unistd.h>
 
 #include <hyprland/src/Compositor.hpp>
+#include <hyprland/src/state/MonitorState.hpp>
+#include <hyprland/src/pointer/PointerManager.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/config/ConfigManager.hpp>
 #include <hyprland/src/desktop/DesktopTypes.hpp>
 #include <hyprland/src/render/Renderer.hpp>
-#include <hyprland/src/SharedDefs.hpp>
+#include <hyprland/src/event/EventBus.hpp>
 
 #include "globals.hpp"
 #include "overview.hpp"
@@ -16,13 +18,15 @@
 inline CFunctionHook* g_pRenderWorkspaceHook = nullptr;
 inline CFunctionHook* g_pAddDamageHookA      = nullptr;
 inline CFunctionHook* g_pAddDamageHookB      = nullptr;
-typedef void (*origRenderWorkspace)(void*, PHLMONITOR, PHLWORKSPACE, timespec*, const CBox&);
+typedef void (*origRenderWorkspace)(void*, PHLMONITOR, PHLWORKSPACE, const Time::steady_tp&,
+                                    const CBox&);
 typedef void (*origAddDamageA)(void*, const CBox&);
 typedef void (*origAddDamageB)(void*, const pixman_region32_t*);
 
 static bool renderingOverview = false;
 
-static void hkRenderWorkspace(void* thisptr, PHLMONITOR pMonitor, PHLWORKSPACE pWorkspace, timespec* now, const CBox& geometry) {
+static void hkRenderWorkspace(void* thisptr, PHLMONITOR pMonitor, PHLWORKSPACE pWorkspace,
+                              const Time::steady_tp& now, const CBox& geometry) {
     auto it = g_pOverviews.find(pMonitor);
     if (it == g_pOverviews.end() || renderingOverview || it->second->blockOverviewRendering)
         ((origRenderWorkspace)(g_pRenderWorkspaceHook->m_original))(thisptr, pMonitor, pWorkspace, now, geometry);
@@ -31,7 +35,7 @@ static void hkRenderWorkspace(void* thisptr, PHLMONITOR pMonitor, PHLWORKSPACE p
 }
 
 static void hkAddDamageA(void* thisptr, const CBox& box) {
-    const auto PMONITOR = (CMonitor*)thisptr;
+    const auto PMONITOR = (Monitor::CMonitor*)thisptr;
     const auto PMONITORSHARED = PMONITOR->m_self.lock();
 
     if (!PMONITORSHARED) {
@@ -49,7 +53,7 @@ static void hkAddDamageA(void* thisptr, const CBox& box) {
 }
 
 static void hkAddDamageB(void* thisptr, const pixman_region32_t* rg) {
-    const auto PMONITOR = (CMonitor*)thisptr;
+    const auto PMONITOR = (Monitor::CMonitor*)thisptr;
     const auto PMONITORSHARED = PMONITOR->m_self.lock();
 
     if (!PMONITORSHARED) {
@@ -69,7 +73,7 @@ static void hkAddDamageB(void* thisptr, const pixman_region32_t* rg) {
 static SDispatchResult workspaceOverviewDispatch(std::string arg) {
     Log::logger->log(Log::INFO, "[workspace-overview] Overview dispatch called with arg: {}", arg);
 
-    const auto PMONITOR = g_pCompositor->getMonitorFromCursor();
+    const auto PMONITOR = State::monitorState()->query().vec(Pointer::mgr()->position()).run();
     if (!PMONITOR) {
         Log::logger->log(Log::ERR, "[workspace-overview] No monitor found");
         return {};
@@ -92,7 +96,7 @@ static SDispatchResult workspaceOverviewDispatch(std::string arg) {
         } else {
             // No overview for focused monitor, create overview on all monitors
             // Create them one at a time to avoid rendering conflicts
-            for (auto& monitor : g_pCompositor->m_monitors) {
+            for (auto& monitor : State::monitorState()->monitors()) {
                 if (!monitor || !monitor->m_activeWorkspace)
                     continue;
                 renderingOverview = true;
@@ -122,7 +126,7 @@ static SDispatchResult workspaceOverviewDispatch(std::string arg) {
         return {};
 
     // Create them one at a time to avoid rendering conflicts
-    for (auto& monitor : g_pCompositor->m_monitors) {
+    for (auto& monitor : State::monitorState()->monitors()) {
         if (!monitor || !monitor->m_activeWorkspace)
             continue;
         renderingOverview = true;
@@ -151,7 +155,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         throw std::runtime_error("[workspace-overview] Version mismatch");
     }
 
-    auto FNS = HyprlandAPI::findFunctionsByName(PHANDLE, "renderWorkspace");
+    auto FNS = HyprlandAPI::findFunctionsByName(PHANDLE,
+        "_ZN6Render13IHyprRenderer15renderWorkspaceEN9Hyprutils6Memory14CSharedPointerIN7Monitor"
+        "8CMonitorEEENS3_I10CWorkspaceEERKNSt6chrono10time_pointINS9_3_V212steady_clockENS9_8durat"
+        "ionIlSt5ratioILl1ELl1000000000EEEEEERKNS1_4Math4CBoxE");
     if (FNS.empty()) {
         failNotif("no fns for hook renderWorkspace");
         throw std::runtime_error("[workspace-overview] No fns for hook renderWorkspace");
@@ -167,10 +174,12 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
     g_pAddDamageHookB = HyprlandAPI::createFunctionHook(PHANDLE, FNS[0].address, (void*)hkAddDamageB);
 
-    FNS = HyprlandAPI::findFunctionsByName(PHANDLE, "_ZN8CMonitor9addDamageERKN9Hyprutils4Math4CBoxE");
+    FNS = HyprlandAPI::findFunctionsByName(PHANDLE,
+        "_ZN7Monitor8CMonitor9addDamageERKN9Hyprutils4Math4CBoxE");
     if (FNS.empty()) {
-        failNotif("no fns for hook _ZN8CMonitor9addDamageERKN9Hyprutils4Math4CBoxE");
-        throw std::runtime_error("[workspace-overview] No fns for hook _ZN8CMonitor9addDamageERKN9Hyprutils4Math4CBoxE");
+        failNotif("no fns for hook _ZN7Monitor8CMonitor9addDamageERKN9Hyprutils4Math4CBoxE");
+        throw std::runtime_error("[workspace-overview] No fns for hook "
+                                 "_ZN7Monitor8CMonitor9addDamageERKN9Hyprutils4Math4CBoxE");
     }
 
     g_pAddDamageHookA = HyprlandAPI::createFunctionHook(PHANDLE, FNS[0].address, (void*)hkAddDamageA);
@@ -184,7 +193,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         throw std::runtime_error("[workspace-overview] Failed initializing hooks");
     }
 
-    static auto P = HyprlandAPI::registerCallbackDynamic(PHANDLE, "preRender", [](void*, SCallbackInfo&, std::any data) {
+    static auto P = Event::bus()->m_events.render.pre.listen([](PHLMONITOR pMonitor) {
         for (auto& [monitor, overview] : g_pOverviews) {
             if (overview)
                 overview->onPreRender();
@@ -222,7 +231,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                                  Hyprlang::INT{0});
 
     // Register config change callback to reload all config values
-    static auto configCallback = HyprlandAPI::registerCallbackDynamic(PHANDLE, "configReloaded", [](void*, SCallbackInfo&, std::any) {
+    static auto configCallback = Event::bus()->m_events.config.reloaded.listen([]() {
             // Load background path
             auto* const PBACKGROUNDPATH =
                 HyprlandAPI::getConfigValue(PHANDLE,

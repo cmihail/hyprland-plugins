@@ -6,14 +6,15 @@
 #include <hyprland/src/desktop/DesktopTypes.hpp>
 #include <hyprland/src/render/Framebuffer.hpp>
 #include <hyprland/src/render/Texture.hpp>
+#include <hyprland/src/render/gl/GLFramebuffer.hpp>
+#include <hyprland/src/render/gl/GLTexture.hpp>
 #include <hyprland/src/helpers/AnimatedVariable.hpp>
-#include <hyprland/src/SharedDefs.hpp>
+#include <hyprland/src/event/EventBus.hpp>
 #include <vector>
 #include <unordered_map>
 #include <gdk-pixbuf/gdk-pixbuf.h>
 #include <cairo/cairo.h>
 
-class CMonitor;
 class COverview;
 
 // Global drag state shared across all monitor overviews
@@ -24,7 +25,7 @@ struct GlobalDragState {
     PHLWINDOW draggedWindow = nullptr;
     int sourceWorkspaceIndex = -1;
     COverview* sourceOverview = nullptr;
-    CFramebuffer dragPreviewFB;
+    SP<Render::GL::CGLFramebuffer> dragPreviewFB = makeShared<Render::GL::CGLFramebuffer>();
     Vector2D mouseDownPos = Vector2D{};
 
     void reset() {
@@ -35,8 +36,8 @@ struct GlobalDragState {
         sourceWorkspaceIndex = -1;
         sourceOverview = nullptr;
         mouseDownPos = Vector2D{};
-        if (dragPreviewFB.m_size.x > 0) {
-            dragPreviewFB.release();
+        if (dragPreviewFB && dragPreviewFB->m_size.x > 0) {
+            dragPreviewFB->release();
         }
     }
 };
@@ -94,7 +95,7 @@ class COverview {
     void setupMouseMoveHook();
     void setupMouseButtonHook();
     void handleSelectWorkspaceButton(uint32_t state,
-                                      const SP<CMonitor>& clickedMonitor);
+                                      const PHLMONITOR& clickedMonitor);
     void setupMouseAxisHook();
     void setupMonitorHooks();
     void setupWorkspaceChangeHook();
@@ -176,7 +177,7 @@ class COverview {
     bool damageDirty = false;
 
     struct SWorkspaceImage {
-        CFramebuffer fb;
+        SP<Render::GL::CGLFramebuffer> fb = makeShared<Render::GL::CGLFramebuffer>();
         int64_t      workspaceID = -1;
         PHLWORKSPACE pWorkspace;
         CBox         box;
@@ -208,15 +209,15 @@ class COverview {
     static constexpr float DRAG_PREVIEW_SCALE = 0.10f;  // Scale factor for drag preview
 
     // Event hooks
-    SP<HOOK_CALLBACK_FN> mouseButtonHook;
-    SP<HOOK_CALLBACK_FN> mouseMoveHook;
-    SP<HOOK_CALLBACK_FN> mouseAxisHook;
-    SP<HOOK_CALLBACK_FN> monitorAddedHook;
-    SP<HOOK_CALLBACK_FN> monitorRemovedHook;
-    SP<HOOK_CALLBACK_FN> workspaceChangeHook;
-    SP<HOOK_CALLBACK_FN> openWindowHook;
-    SP<HOOK_CALLBACK_FN> closeWindowHook;
-    SP<HOOK_CALLBACK_FN> moveWindowHook;
+    CHyprSignalListener mouseButtonHook;
+    CHyprSignalListener mouseMoveHook;
+    CHyprSignalListener mouseAxisHook;
+    CHyprSignalListener monitorAddedHook;
+    CHyprSignalListener monitorRemovedHook;
+    CHyprSignalListener workspaceChangeHook;
+    CHyprSignalListener openWindowHook;
+    CHyprSignalListener closeWindowHook;
+    CHyprSignalListener moveWindowHook;
 
     friend class COverviewPassElement;
     friend void removeOverview(WP<Hyprutils::Animation::CBaseAnimatedVariable>, PHLMONITOR);
