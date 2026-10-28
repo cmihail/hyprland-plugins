@@ -1,5 +1,6 @@
 #include "MouseGestureOverlay.hpp"
 #include "stroke.hpp"
+#include "config.hpp"
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/render/gl/GLTexture.hpp>
@@ -762,39 +763,19 @@ void CMouseGestureOverlay::renderText(SP<Render::ITexture> out,
 }
 
 CMouseGestureOverlay::TrailConfig CMouseGestureOverlay::getTrailConfig() {
-    static auto* const PCIRCLERADIUS = (Hyprlang::FLOAT* const*)
-        HyprlandAPI::getConfigValue(
-            PHANDLE, "plugin:mouse_gestures:drag_trail_circle_radius"
-        )->getDataStaticPtr();
-
-    static auto* const PFADEDURATION = (Hyprlang::INT* const*)
-        HyprlandAPI::getConfigValue(
-            PHANDLE, "plugin:mouse_gestures:trail_fade_duration_ms"
-        )->getDataStaticPtr();
-
-    static auto* const PTRAILCOLOR = (Hyprlang::INT* const*)
-        HyprlandAPI::getConfigValue(
-            PHANDLE, "plugin:mouse_gestures:drag_trail_color"
-        )->getDataStaticPtr();
-
-    static auto* const PTRAILENDCOLOR = (Hyprlang::INT* const*)
-        HyprlandAPI::getConfigValue(
-            PHANDLE, "plugin:mouse_gestures:drag_trail_end_color"
-        )->getDataStaticPtr();
-
-    CHyprColor startColor = (PTRAILCOLOR && *PTRAILCOLOR) ?
-        CHyprColor{(uint32_t)**PTRAILCOLOR} :
+    CHyprColor startColor = g_config.dragTrailColor ?
+        CHyprColor{(uint32_t)g_config.dragTrailColor->value()} :
         CHyprColor{0x4C7FA6FF};
 
-    CHyprColor endColor = (PTRAILENDCOLOR && *PTRAILENDCOLOR) ?
-        CHyprColor{(uint32_t)**PTRAILENDCOLOR} :
+    CHyprColor endColor = g_config.dragTrailEndColor ?
+        CHyprColor{(uint32_t)g_config.dragTrailEndColor->value()} :
         CHyprColor{0xA64C7FFF};
 
     return {
-        .circleRadius = (PCIRCLERADIUS && *PCIRCLERADIUS) ?
-                       static_cast<float>(**PCIRCLERADIUS) : 8.0f,
-        .fadeDurationMs = (PFADEDURATION && *PFADEDURATION) ?
-                         **PFADEDURATION : 300,
+        .circleRadius = g_config.dragTrailCircleRadius ?
+                       static_cast<float>(g_config.dragTrailCircleRadius->value()) : 8.0f,
+        .fadeDurationMs = g_config.trailFadeDurationMs ?
+                         static_cast<int>(g_config.trailFadeDurationMs->value()) : 300,
         .startColor = startColor,
         .endColor = endColor
     };

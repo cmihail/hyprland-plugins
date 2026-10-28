@@ -20,6 +20,11 @@
 #include "pixel_convert.hpp"
 #include <hyprland/src/plugins/PluginAPI.hpp>
 
+extern "C" {
+#include <lua.h>
+#include <lauxlib.h>
+}
+
 using Render::GL::g_pHyprOpenGL;
 
 inline HANDLE PHANDLE = nullptr;
@@ -267,6 +272,21 @@ SDispatchResult dispatchShow(std::string arg) {
     }
 }
 
+// hl.plugin.copy_indicator.dispatch(arg), same as `hyprctl dispatch copyindicator <arg>` under legacy config
+static int luaDispatch(lua_State* L) {
+    const char* arg = luaL_optstring(L, 1, "");
+    bool ok = true;
+    // lua_error longjmps, so C++ temporaries must be destroyed before it runs
+    {
+        auto result = dispatchShow(arg);
+        if (!result.success) {
+            ok = false;
+            lua_pushstring(L, result.error.c_str());
+        }
+    }
+    return ok ? 0 : lua_error(L);
+}
+
 // Plugin initialization
 APICALL EXPORT std::string PLUGIN_API_VERSION() {
     return HYPRLAND_API_VERSION;
@@ -285,6 +305,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
         // Register dispatcher
         HyprlandAPI::addDispatcherV2(PHANDLE, "copyindicator", dispatchShow);
+        HyprlandAPI::addLuaFunction(PHANDLE, "copy_indicator", "dispatch", luaDispatch);
 
         // Setup render hook
         setupRenderHook();

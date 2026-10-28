@@ -4,8 +4,8 @@ SOURCE_FILES = main.cpp WindowActionsBar.cpp WindowActionsPassElement.cpp
 
 COMPILE_FLAGS = -shared -fPIC --no-gnu-unique -g -std=c++23 -Wall -Wextra -Wno-unused-parameter -Wno-unused-value -Wno-missing-field-initializers -Wno-narrowing -Wno-pointer-arith
 COMPILE_FLAGS += -I "/usr/include/pixman-1" -I "/usr/include/libdrm" -I "$(HYPRLAND_HEADERS)" -I "$(HYPRLAND_HEADERS)/hyprland/protocols" -I "$(HYPRLAND_HEADERS)/hyprland/src"
-COMPILE_FLAGS += $(shell pkg-config --cflags pango pangocairo)
-LINK_FLAGS = $(shell pkg-config --libs pango pangocairo)
+COMPILE_FLAGS += $(shell pkg-config --cflags pango pangocairo lua5.5)
+LINK_FLAGS = $(shell pkg-config --libs pango pangocairo lua5.5)
 
 HYPRLAND_HEADERS ?= /usr/include/$(shell gcc -dumpmachine)
 

@@ -18,10 +18,12 @@
 #include <hyprland/src/config/ConfigManager.hpp>
 #include <hyprland/src/protocols/LayerShell.hpp>
 #include <hyprland/src/managers/KeybindManager.hpp>
+#include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <pango/pangocairo.h>
 #include <linux/input-event-codes.h>
 
 #include "globals.hpp"
+#include "hyprctl_dispatch.hpp"
 #include "WindowActionsPassElement.hpp"
 
 using Render::GL::g_pHyprOpenGL;
@@ -58,36 +60,15 @@ CWindowActionsBar::~CWindowActionsBar() {
 }
 
 float CWindowActionsBar::getButtonSize() const {
-    auto* const PBUTTON_SIZE_VAL = HyprlandAPI::getConfigValue(PHANDLE, "plugin:window_actions:button_size");
-    int buttonSize = 15; // default
-
-    if (PBUTTON_SIZE_VAL) {
-        buttonSize = std::any_cast<Hyprlang::INT>(PBUTTON_SIZE_VAL->getValue());
-    }
-
-    return static_cast<float>(buttonSize);
+    return g_config.buttonSize ? static_cast<float>(g_config.buttonSize->value()) : 15.0f;
 }
 
 uint32_t CWindowActionsBar::getActionButton() const {
-    auto* const PACTION_BUTTON_VAL = HyprlandAPI::getConfigValue(PHANDLE, "plugin:window_actions:action_button");
-    int actionButton = 272; // default BTN_LEFT
-
-    if (PACTION_BUTTON_VAL) {
-        actionButton = std::any_cast<Hyprlang::INT>(PACTION_BUTTON_VAL->getValue());
-    }
-
-    return static_cast<uint32_t>(actionButton);
+    return g_config.actionButton ? static_cast<uint32_t>(g_config.actionButton->value()) : BTN_LEFT;
 }
 
 float CWindowActionsBar::getUnhoveredAlpha() const {
-    auto* const PUNHOVERED_ALPHA_VAL = HyprlandAPI::getConfigValue(PHANDLE, "plugin:window_actions:unhovered_alpha");
-    float unhovered_alpha = 1.0f; // default (no transparency)
-
-    if (PUNHOVERED_ALPHA_VAL) {
-        unhovered_alpha = std::any_cast<Hyprlang::FLOAT>(PUNHOVERED_ALPHA_VAL->getValue());
-    }
-
-    return unhovered_alpha;
+    return g_config.unhoveredAlpha ? g_config.unhoveredAlpha->value() : 1.0f;
 }
 
 
@@ -328,6 +309,20 @@ void CWindowActionsBar::executeCommand(const std::string& command) {
         g_pInputManager->m_forcedFocus = PWINDOW;
         g_pInputManager->refocus();
         g_pInputManager->m_forcedFocus.reset();
+    }
+
+    if (Config::mgr() && Config::mgr()->type() == Config::CONFIG_LUA && g_pKeybindManager) {
+        if (const auto DISPATCH = parseHyprctlDispatch(command); DISPATCH && g_pKeybindManager->m_dispatchers.contains(DISPATCH->dispatcher)) {
+            // Deferred because dispatchers like killactive can destroy this decoration
+            g_pEventLoopManager->doLater([dispatch = *DISPATCH]() {
+                if (!g_pKeybindManager || !g_pKeybindManager->m_dispatchers.contains(dispatch.dispatcher))
+                    return;
+                const auto RESULT = g_pKeybindManager->m_dispatchers[dispatch.dispatcher](dispatch.args);
+                if (!RESULT.success)
+                    Log::logger->log(Log::ERR, "[window-actions] dispatcher {} failed: {}", dispatch.dispatcher, RESULT.error);
+            });
+            return;
+        }
     }
 
     // Use the exec dispatcher to execute the command

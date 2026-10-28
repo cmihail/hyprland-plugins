@@ -103,24 +103,9 @@ std::vector<UP<IPassElement>> CNoMouseOverlay::draw() {
     const auto monitorSize = m_pMonitor->m_size;
 
     // Read opacity config values
-    static auto* const POPACITY_BG = (Hyprlang::FLOAT* const*)
-        HyprlandAPI::getConfigValue(
-            PHANDLE, "plugin:no_mouse:opacity_background"
-        )->getDataStaticPtr();
-    static auto* const POPACITY_GRID = (Hyprlang::FLOAT* const*)
-        HyprlandAPI::getConfigValue(
-            PHANDLE, "plugin:no_mouse:opacity_grid_lines"
-        )->getDataStaticPtr();
-    static auto* const POPACITY_LABELS = (Hyprlang::FLOAT* const*)
-        HyprlandAPI::getConfigValue(
-            PHANDLE, "plugin:no_mouse:opacity_labels"
-        )->getDataStaticPtr();
-
-    const float bgOpacity = (POPACITY_BG && *POPACITY_BG) ? **POPACITY_BG : 0.1f;
-    const float gridOpacity = (POPACITY_GRID && *POPACITY_GRID) ?
-        **POPACITY_GRID : 0.25f;
-    const float labelOpacity = (POPACITY_LABELS && *POPACITY_LABELS) ?
-        **POPACITY_LABELS : 0.4f;
+    const float bgOpacity = g_config.opacityBackground ? g_config.opacityBackground->value() : 0.1f;
+    const float gridOpacity = g_config.opacityGridLines ? g_config.opacityGridLines->value() : 0.25f;
+    const float labelOpacity = g_config.opacityLabels ? g_config.opacityLabels->value() : 0.4f;
 
     // Draw background overlay
     const auto monitorBox = CBox{0, 0, monitorSize.x, monitorSize.y};
@@ -296,19 +281,8 @@ std::vector<UP<IPassElement>> CNoMouseOverlay::draw() {
             const int subCol = g_subColumn % SUB_GRID_COLS; // 0-5
 
             // Read highlight color config
-            static auto* const PHIGHLIGHT_COLOR = (Hyprlang::INT* const*)
-                HyprlandAPI::getConfigValue(
-                    PHANDLE, "plugin:no_mouse:highlight_color"
-                )->getDataStaticPtr();
-            static auto* const PHIGHLIGHT_OPACITY = (Hyprlang::FLOAT* const*)
-                HyprlandAPI::getConfigValue(
-                    PHANDLE, "plugin:no_mouse:highlight_opacity"
-                )->getDataStaticPtr();
-
-            const int64_t highlightColorHex = (PHIGHLIGHT_COLOR && *PHIGHLIGHT_COLOR) ?
-                **PHIGHLIGHT_COLOR : 0x4C7FA6;
-            const float highlightOpacity = (PHIGHLIGHT_OPACITY && *PHIGHLIGHT_OPACITY) ?
-                **PHIGHLIGHT_OPACITY : 0.8f;
+            const int64_t highlightColorHex = g_config.highlightColor ? g_config.highlightColor->value() : 0x4C7FA6;
+            const float highlightOpacity = g_config.highlightOpacity ? g_config.highlightOpacity->value() : 0.8f;
 
             // Convert hex color (0xRRGGBB) to RGB floats
             const float highlightR = ((highlightColorHex >> 16) & 0xFF) / 255.0f;

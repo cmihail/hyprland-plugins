@@ -4,6 +4,8 @@
 #include <functional>
 #include <cmath>
 
+// Internal linkage: other test files define their own, different Vector2D mocks
+namespace {
 // Mock Vector2D
 struct Vector2D {
     float x;
@@ -98,6 +100,7 @@ struct MockMonitor {
 using PHLMONITOR = std::shared_ptr<MockMonitor>;
 template<typename T>
 using PHLANIMVAR = std::shared_ptr<MockAnimatedVariable<T>>;
+}
 
 // Mock global state
 namespace {

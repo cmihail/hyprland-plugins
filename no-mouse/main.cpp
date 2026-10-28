@@ -19,10 +19,17 @@
 #include <hyprland/src/render/OpenGL.hpp>
 
 #include "NoMouseOverlay.hpp"
+#include "dispatch_args.hpp"
+
+extern "C" {
+#include <lua.h>
+#include <lauxlib.h>
+}
 
 using Render::GL::g_pHyprOpenGL;
 
 inline HANDLE PHANDLE = nullptr;
+SNoMouseConfig g_config;
 
 // Global state to track toggle
 static bool g_toggleState = false;
@@ -593,6 +600,24 @@ static void setupKeyboardHook() {
     }
 }
 
+// hl.plugin.no_mouse.dispatch(arg): "move", "select", ... as for `no-mouse <arg>`,
+// and "letter-<A-Z>" for the no-mouse-letter-<A-Z> dispatchers
+static int luaDispatch(lua_State* L) {
+    const char* arg = luaL_optstring(L, 1, "");
+    bool ok = true;
+    // lua_error longjmps, so C++ temporaries must be destroyed before it runs
+    {
+        const std::string ARG = arg;
+        const auto LETTER = letterFromDispatchArg(ARG);
+        auto result = LETTER ? letterDispatcher(*LETTER) : noMouseDispatch(ARG);
+        if (!result.success) {
+            ok = false;
+            lua_pushstring(L, result.error.c_str());
+        }
+    }
+    return ok ? 0 : lua_error(L);
+}
+
 APICALL EXPORT std::string PLUGIN_API_VERSION() {
     return HYPRLAND_API_VERSION;
 }
@@ -615,44 +640,24 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     }
 
     // Register config values with default values
-    HyprlandAPI::addConfigValue(
-        PHANDLE,
-        "plugin:no_mouse:opacity_background",
-        Hyprlang::FLOAT{0.1}
-    );
-    HyprlandAPI::addConfigValue(
-        PHANDLE,
-        "plugin:no_mouse:opacity_grid_lines",
-        Hyprlang::FLOAT{0.25}
-    );
-    HyprlandAPI::addConfigValue(
-        PHANDLE,
-        "plugin:no_mouse:opacity_labels",
-        Hyprlang::FLOAT{0.4}
-    );
-    HyprlandAPI::addConfigValue(
-        PHANDLE,
-        "plugin:no_mouse:border_color",
-        Hyprlang::INT{0x4C7FA6}  // Default: blue RGB(0.3, 0.5, 0.7)
-    );
-    HyprlandAPI::addConfigValue(
-        PHANDLE,
-        "plugin:no_mouse:border_opacity",
-        Hyprlang::FLOAT{0.8}
-    );
-    HyprlandAPI::addConfigValue(
-        PHANDLE,
-        "plugin:no_mouse:highlight_color",
-        Hyprlang::INT{0x4C7FA6}  // Default: blue RGB(0.3, 0.5, 0.7)
-    );
-    HyprlandAPI::addConfigValue(
-        PHANDLE,
-        "plugin:no_mouse:highlight_opacity",
-        Hyprlang::FLOAT{0.8}
-    );
+    using namespace Config::Values;
+    g_config.opacityBackground = makeShared<CFloatValue>("plugin:no_mouse:opacity_background", "background overlay opacity", 0.1f);
+    g_config.opacityGridLines = makeShared<CFloatValue>("plugin:no_mouse:opacity_grid_lines", "grid line opacity", 0.25f);
+    g_config.opacityLabels = makeShared<CFloatValue>("plugin:no_mouse:opacity_labels", "label text opacity", 0.4f);
+    g_config.borderColor = makeShared<CIntValue>("plugin:no_mouse:border_color", "border color as 0xRRGGBB", 0x4C7FA6);  // Default: blue RGB(0.3, 0.5, 0.7)
+    g_config.borderOpacity = makeShared<CFloatValue>("plugin:no_mouse:border_opacity", "border opacity", 0.8f);
+    g_config.highlightColor = makeShared<CIntValue>("plugin:no_mouse:highlight_color", "highlight color as 0xRRGGBB", 0x4C7FA6);  // Default: blue RGB(0.3, 0.5, 0.7)
+    g_config.highlightOpacity = makeShared<CFloatValue>("plugin:no_mouse:highlight_opacity", "highlight opacity", 0.8f);
+
+    for (const SP<IValue>& value : std::initializer_list<SP<IValue>>{
+             g_config.opacityBackground, g_config.opacityGridLines, g_config.opacityLabels, g_config.borderColor,
+             g_config.borderOpacity, g_config.highlightColor, g_config.highlightOpacity}) {
+        HyprlandAPI::addConfigValueV2(PHANDLE, value);
+    }
 
     // Register the dispatcher
     HyprlandAPI::addDispatcherV2(PHANDLE, "no-mouse", noMouseDispatch);
+    HyprlandAPI::addLuaFunction(PHANDLE, "no_mouse", "dispatch", luaDispatch);
 
     // Setup hooks
     setupRenderHook();
@@ -675,6 +680,8 @@ APICALL EXPORT void PLUGIN_EXIT() {
         // Unhook all event handlers
         g_renderHook.reset();
         g_keyboardHook.reset();
+
+        g_config = {};
 
     } catch (...) {
         // Silently catch any errors during cleanup

@@ -1,12 +1,12 @@
 TEST_TARGET = window-actions-tests
 
-TEST_SOURCES = test_main.cpp test_standalone.cpp
+TEST_SOURCES = test_main.cpp test_standalone.cpp test_button_config.cpp test_hyprctl_dispatch.cpp
 PLUGIN_SOURCES =
 
 COMPILE_FLAGS = -std=c++23 -Wall -Wextra -Wno-unused-parameter -Wno-unused-value -Wno-missing-field-initializers -Wno-narrowing -Wno-pointer-arith
 COMPILE_FLAGS += -I "../"
-COMPILE_FLAGS += $(shell pkg-config --cflags gtest)
-LINK_FLAGS = $(shell pkg-config --libs gtest) -pthread
+COMPILE_FLAGS += $(shell pkg-config --cflags gtest hyprutils)
+LINK_FLAGS = $(shell pkg-config --libs gtest hyprutils) -pthread
 
 HYPRLAND_HEADERS ?= /usr/include/hyprland
 

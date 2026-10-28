@@ -4,7 +4,7 @@ SOURCE_FILES = main.cpp
 
 COMPILE_FLAGS = -shared -fPIC --no-gnu-unique -g -std=c++23 -Wall -Wextra -Wno-unused-parameter -Wno-unused-value -Wno-missing-field-initializers -Wno-narrowing -Wno-pointer-arith
 COMPILE_FLAGS += -I "/usr/include/pixman-1" -I "/usr/include/libdrm" -I "/usr/include" -I "$(HYPRLAND_HEADERS)" -I "$(HYPRLAND_HEADERS)/hyprland/protocols" -I "$(HYPRLAND_HEADERS)/hyprland/src"
-COMPILE_FLAGS += $(shell pkg-config --cflags --libs pangocairo cairo)
+COMPILE_FLAGS += $(shell pkg-config --cflags --libs pangocairo cairo lua5.5)
 
 HYPRLAND_HEADERS ?= /usr/include/$(shell gcc -dumpmachine)
 

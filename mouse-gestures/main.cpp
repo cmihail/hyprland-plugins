@@ -25,6 +25,8 @@
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
+#include <hyprland/src/managers/KeybindManager.hpp>
+#include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/devices/IPointer.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
@@ -40,10 +42,20 @@
 #include "stroke.hpp"
 #include "ascii_gesture.hpp"
 #include "MouseGestureOverlay.hpp"
+#include "config.hpp"
+#include "hyprctl_dispatch.hpp"
+#include "lua_gesture_file.hpp"
+
+extern "C" {
+#include <lua.h>
+#include <lauxlib.h>
+}
 
 using Render::GL::g_pHyprOpenGL;
+using LuaGestureFile::normalizeStrokeData;
 
 inline HANDLE PHANDLE = nullptr;
+SMouseGesturesConfig g_config;
 
 // Global background texture shared across all monitors
 inline SP<Render::ITexture> g_pBackgroundTexture;
@@ -89,6 +101,7 @@ bool g_recordMode = false;
 bool g_lastRecordMode = false;
 bool g_pluginShuttingDown = false;
 std::string g_configFilePath;
+bool g_useLuaConfig = false;
 Vector2D g_lastMousePos = {0, 0};
 
 // Synchronization for config file writes
@@ -129,17 +142,11 @@ static bool hasVisibleTrailPoints() {
 
     try {
         // Get trail fade duration from config
-        static auto* const PFADEDURATION = (Hyprlang::INT* const*)
-            HyprlandAPI::getConfigValue(
-                PHANDLE,
-                "plugin:mouse_gestures:trail_fade_duration_ms"
-            )->getDataStaticPtr();
-
-        if (!PFADEDURATION || !*PFADEDURATION) {
+        if (!g_config.trailFadeDurationMs) {
             return false;
         }
 
-        const int fadeDurationMs = **PFADEDURATION;
+        const int fadeDurationMs = g_config.trailFadeDurationMs->value();
         auto now = std::chrono::steady_clock::now();
 
         // Check if any point is still visible (not fully faded)
@@ -422,6 +429,17 @@ static void executeCommand(const std::string& command) {
         return;
     }
 
+    if (g_useLuaConfig && g_pKeybindManager) {
+        if (const auto DISPATCH = parseHyprctlDispatch(command); DISPATCH && g_pKeybindManager->m_dispatchers.contains(DISPATCH->dispatcher)) {
+            // Deferred like the shell path, so the dispatcher never runs inside this input handler
+            g_pEventLoopManager->doLater([dispatch = *DISPATCH]() {
+                if (g_pKeybindManager && g_pKeybindManager->m_dispatchers.contains(dispatch.dispatcher))
+                    g_pKeybindManager->m_dispatchers[dispatch.dispatcher](dispatch.args);
+            });
+            return;
+        }
+    }
+
     try {
         std::thread([command]() {
             try {
@@ -563,21 +581,11 @@ static bool isInsideRecordSquare(const Vector2D& mousePos, PHLMONITOR monitor) {
 }
 
 // Forward declarations
-static std::string normalizeStrokeData(const std::string& stroke);
 static bool batchDeleteGesturesFromConfig(
     const std::vector<std::string>& strokesToDelete);
 static bool addGestureToConfig(const std::string& strokeData);
-
-// Normalize stroke data by replacing -0.000000 with 0.000000
-static std::string normalizeStrokeData(const std::string& stroke) {
-    std::string normalized = stroke;
-    size_t pos = 0;
-    while ((pos = normalized.find("-0.000000", pos)) != std::string::npos) {
-        normalized.replace(pos, 9, "0.000000");
-        pos += 8;
-    }
-    return normalized;
-}
+static std::string defaultCommandForConfig();
+static bool asciiArtCommentsEnabled();
 
 // Helper to find ASCII art comments before a gesture line
 static void findAsciiArtComments(const std::vector<std::string>& lines,
@@ -674,8 +682,53 @@ static void processPendingGestureChanges() {
     processPendingGestureDeletions();
 }
 
-// Helper function to batch delete multiple gestures from config file
+static std::string luaGesturesFilePath() {
+    const char* home = std::getenv("HOME");
+    if (!home) {
+        return "";
+    }
+    return std::string(home) + "/.config/hypr/config/mouse_gestures.lua";
+}
+
+static bool batchDeleteGesturesFromLuaFile(const std::vector<std::string>& strokesToDelete) {
+    const auto path = luaGesturesFilePath();
+    if (path.empty()) {
+        return false;
+    }
+    return LuaGestureFile::deleteGestures(path, strokesToDelete);
+}
+
+static bool addGestureToLuaFile(const std::string& strokeData) {
+    const auto path = luaGesturesFilePath();
+    if (path.empty()) {
+        return false;
+    }
+
+    std::vector<std::string> comments;
+    if (asciiArtCommentsEnabled()) {
+        for (const auto& artLine : AsciiGestureRenderer::render(Stroke::deserialize(strokeData))) {
+            comments.push_back(LuaGestureFile::toLuaComment(artLine));
+        }
+    }
+
+    return LuaGestureFile::appendGesture(path, defaultCommandForConfig() + "|" + strokeData, comments);
+}
+
+static bool batchDeleteGesturesFromLegacyConfig(
+    const std::vector<std::string>& strokesToDelete);
+static bool addGestureToLegacyConfig(const std::string& strokeData);
+
 static bool batchDeleteGesturesFromConfig(
+    const std::vector<std::string>& strokesToDelete) {
+    return g_useLuaConfig ? batchDeleteGesturesFromLuaFile(strokesToDelete) : batchDeleteGesturesFromLegacyConfig(strokesToDelete);
+}
+
+static bool addGestureToConfig(const std::string& strokeData) {
+    return g_useLuaConfig ? addGestureToLuaFile(strokeData) : addGestureToLegacyConfig(strokeData);
+}
+
+// Helper function to batch delete multiple gestures from config file
+static bool batchDeleteGesturesFromLegacyConfig(
     const std::vector<std::string>& strokesToDelete) {
     if (strokesToDelete.empty()) {
         return true;
@@ -798,6 +851,11 @@ static bool batchDeleteGesturesFromConfig(
 
 // Helper function to detect which config file is being used
 static void detectConfigFilePath() {
+    if (g_useLuaConfig) {
+        g_configFilePath = luaGesturesFilePath();
+        return;
+    }
+
     const char* home = std::getenv("HOME");
     if (!home) {
         return;
@@ -839,8 +897,16 @@ static void detectConfigFilePath() {
     }
 }
 
+static std::string defaultCommandForConfig() {
+    return g_config.defaultCommandForConfig ? g_config.defaultCommandForConfig->value() : "";
+}
+
+static bool asciiArtCommentsEnabled() {
+    return g_config.enableAsciiArtComments && g_config.enableAsciiArtComments->value() == "true";
+}
+
 // Helper function to add gesture to Hyprland config file
-static bool addGestureToConfig(const std::string& strokeData) {
+static bool addGestureToLegacyConfig(const std::string& strokeData) {
     const char* home = std::getenv("HOME");
     if (!home) {
         return false;
@@ -902,32 +968,8 @@ static bool addGestureToConfig(const std::string& strokeData) {
         inFile.close();
 
         if (foundMouseGestures && mouseGesturesSectionEnd > 0) {
-            // Check if ASCII art comments are enabled
-            static auto* const PENABLEASCIIART = (Hyprlang::STRING const*)
-                HyprlandAPI::getConfigValue(
-                    PHANDLE,
-                    "plugin:mouse_gestures:enable_ascii_art_comments"
-                )->getDataStaticPtr();
-
-            bool enableAsciiArt = PENABLEASCIIART && *PENABLEASCIIART &&
-                                  std::string(*PENABLEASCIIART) == "true";
-
-            // Get default command for config from config
-            static auto* const PDEFAULTCMDFORCONFIG = (Hyprlang::STRING const*)
-                HyprlandAPI::getConfigValue(
-                    PHANDLE,
-                    "plugin:mouse_gestures:default_command_for_config"
-                )->getDataStaticPtr();
-
-            std::string defaultCmd;
-            if (PDEFAULTCMDFORCONFIG && *PDEFAULTCMDFORCONFIG) {
-                // Config value is defined (even if empty string)
-                defaultCmd = std::string(*PDEFAULTCMDFORCONFIG);
-            } else {
-                // Config value is not defined (null), use fallback
-                defaultCmd = "hyprctl notify -1 2000 \"rgb(ff0000)\" "
-                    "\"modify me in config file " + configPath + "\"";
-            }
+            bool enableAsciiArt = asciiArtCommentsEnabled();
+            std::string defaultCmd = defaultCommandForConfig();
 
             std::string gestureAction = "    gesture_action = " + defaultCmd + "|" + strokeData;
 
@@ -1002,32 +1044,8 @@ static bool addGestureToConfig(const std::string& strokeData) {
         inFile.close();
 
         if (pluginSectionEnd > 0) {
-            // Check if ASCII art comments are enabled
-            static auto* const PENABLEASCIIART = (Hyprlang::STRING const*)
-                HyprlandAPI::getConfigValue(
-                    PHANDLE,
-                    "plugin:mouse_gestures:enable_ascii_art_comments"
-                )->getDataStaticPtr();
-
-            bool enableAsciiArt = PENABLEASCIIART && *PENABLEASCIIART &&
-                                  std::string(*PENABLEASCIIART) == "true";
-
-            // Get default command for config from config
-            static auto* const PDEFAULTCMDFORCONFIG = (Hyprlang::STRING const*)
-                HyprlandAPI::getConfigValue(
-                    PHANDLE,
-                    "plugin:mouse_gestures:default_command_for_config"
-                )->getDataStaticPtr();
-
-            std::string defaultCmd;
-            if (PDEFAULTCMDFORCONFIG && *PDEFAULTCMDFORCONFIG) {
-                // Config value is defined (even if empty string)
-                defaultCmd = std::string(*PDEFAULTCMDFORCONFIG);
-            } else {
-                // Config value is not defined (null), use fallback
-                defaultCmd = "hyprctl notify -1 2000 \"rgb(ff0000)\" "
-                    "\"modify me in config file " + configPath + "\"";
-            }
+            bool enableAsciiArt = asciiArtCommentsEnabled();
+            std::string defaultCmd = defaultCommandForConfig();
 
             // Add mouse_gestures section before the closing brace of plugin section
             std::vector<std::string> newSection = {
@@ -1080,32 +1098,8 @@ static bool addGestureToConfig(const std::string& strokeData) {
     std::ofstream outFile(hyprlandConf, std::ios::app);
     if (!outFile.is_open()) return false;
 
-    // Check if ASCII art comments are enabled
-    static auto* const PENABLEASCIIART = (Hyprlang::STRING const*)
-        HyprlandAPI::getConfigValue(
-            PHANDLE,
-            "plugin:mouse_gestures:enable_ascii_art_comments"
-        )->getDataStaticPtr();
-
-    bool enableAsciiArt = PENABLEASCIIART && *PENABLEASCIIART &&
-                          std::string(*PENABLEASCIIART) == "true";
-
-    // Get default command for config from config
-    static auto* const PDEFAULTCMDFORCONFIG = (Hyprlang::STRING const*)
-        HyprlandAPI::getConfigValue(
-            PHANDLE,
-            "plugin:mouse_gestures:default_command_for_config"
-        )->getDataStaticPtr();
-
-    std::string defaultCmd;
-    if (PDEFAULTCMDFORCONFIG && *PDEFAULTCMDFORCONFIG) {
-        // Config value is defined (even if empty string)
-        defaultCmd = std::string(*PDEFAULTCMDFORCONFIG);
-    } else {
-        // Config value is not defined (null), use fallback
-        defaultCmd = "hyprctl notify -1 2000 \"rgb(ff0000)\" "
-            "\"modify me in config file " + hyprlandConf + "\"";
-    }
+    bool enableAsciiArt = asciiArtCommentsEnabled();
+    std::string defaultCmd = defaultCommandForConfig();
 
     outFile << "\nplugin {\n";
     outFile << "  mouse_gestures {\n";
@@ -1144,17 +1138,11 @@ static const GestureAction* findMatchingGestureAction(const std::vector<Vector2D
 
     try {
         // Get match threshold from config
-        static auto* const PMATCHTHRESHOLD = (Hyprlang::FLOAT* const*)
-            HyprlandAPI::getConfigValue(
-                PHANDLE,
-                "plugin:mouse_gestures:match_threshold"
-            )->getDataStaticPtr();
-
-        if (!PMATCHTHRESHOLD || !*PMATCHTHRESHOLD) {
+        if (!g_config.matchThreshold) {
             return nullptr;
         }
 
-        const double matchThreshold = static_cast<double>(**PMATCHTHRESHOLD);
+        const double matchThreshold = static_cast<double>(g_config.matchThreshold->value());
 
         // Create stroke from path
         Stroke inputStroke;
@@ -1237,18 +1225,7 @@ static void handleGestureDetected() {
                 g_pendingGestureAdditions.push_back(strokeData);
 
                 // Get default command for new gestures
-                static auto* const PDEFAULTCMDFORCONFIG = (Hyprlang::STRING const*)
-                    HyprlandAPI::getConfigValue(
-                        PHANDLE,
-                        "plugin:mouse_gestures:default_command_for_config"
-                    )->getDataStaticPtr();
-
-                std::string defaultCmd;
-                if (PDEFAULTCMDFORCONFIG && *PDEFAULTCMDFORCONFIG) {
-                    defaultCmd = std::string(*PDEFAULTCMDFORCONFIG);
-                } else {
-                    defaultCmd = "";
-                }
+                std::string defaultCmd = defaultCommandForConfig();
 
                 // Add to in-memory list for immediate display
                 GestureAction newAction;
@@ -1372,17 +1349,11 @@ static bool checkDragThresholdExceeded(const Vector2D& mousePos) {
         }
 
         // Get configured drag threshold (default: 50.0)
-        static auto* const PDRAGTHRESHOLD = (Hyprlang::INT* const*)
-            HyprlandAPI::getConfigValue(
-                PHANDLE,
-                "plugin:mouse_gestures:drag_threshold"
-            )->getDataStaticPtr();
-
-        if (!PDRAGTHRESHOLD || !*PDRAGTHRESHOLD) {
+        if (!g_config.dragThreshold) {
             return false;
         }
 
-        const float dragThreshold = static_cast<float>(**PDRAGTHRESHOLD);
+        const float dragThreshold = static_cast<float>(g_config.dragThreshold->value());
 
         const float distanceX = std::abs(
             mousePos.x - g_gestureState.mouseDownPos.x
@@ -1397,25 +1368,17 @@ static bool checkDragThresholdExceeded(const Vector2D& mousePos) {
     }
 }
 
-// Config handler for gesture_action keyword
-// NEW FORMAT: gesture_action = <command>|<stroke_data>
+// Gesture action format: <command>|<stroke_data>
 // The pipe character | separates command from stroke data
 // Stroke data contains x,y;x,y;... (commas and semicolons are preserved)
-static Hyprlang::CParseResult onGestureAction(const char* COMMAND, const char* VALUE) {
-
+// Malformed values are ignored, as they were for the legacy keyword.
+static void addGestureAction(const std::string& value) {
     try {
-        if (!VALUE) {
-            return Hyprlang::CParseResult{};
-        }
-
-        std::string value(VALUE);
-
         // Find the LAST pipe delimiter (to support pipes in command)
         size_t pipePos = value.rfind('|');
         if (pipePos == std::string::npos) {
-            return Hyprlang::CParseResult{};
+            return;
         }
-
 
         // Extract command and stroke data (swapped order!)
         std::string command = value.substr(0, pipePos);
@@ -1438,10 +1401,9 @@ static Hyprlang::CParseResult onGestureAction(const char* COMMAND, const char* V
             command = "";  // All whitespace, make it empty
         }
 
-
         // Validate stroke data (command can be empty)
         if (strokeData.empty()) {
-            return Hyprlang::CParseResult{};
+            return;
         }
 
         // Create action
@@ -1451,7 +1413,7 @@ static Hyprlang::CParseResult onGestureAction(const char* COMMAND, const char* V
         action.pattern = Stroke::deserialize(strokeData);
 
         if (!action.pattern.isFinished() || action.pattern.size() < 2) {
-            return Hyprlang::CParseResult{};
+            return;
         }
 
         g_gestureActions.push_back(action);
@@ -1459,8 +1421,21 @@ static Hyprlang::CParseResult onGestureAction(const char* COMMAND, const char* V
     } catch (const std::exception& e) {
         // Silently catch errors
     }
+}
 
+// Config handler for gesture_action keyword
+static Hyprlang::CParseResult onGestureAction(const char* COMMAND, const char* VALUE) {
+    if (VALUE) {
+        addGestureAction(VALUE);
+    }
     return Hyprlang::CParseResult{};
+}
+
+// hl.plugin.mouse_gestures.add_gesture("<same value as the gesture_action keyword>")
+static int luaAddGesture(lua_State* L) {
+    const char* value = luaL_checkstring(L, 1);
+    addGestureAction(value);
+    return 0;
 }
 
 // Handler to clear gesture actions on config reload
@@ -1652,33 +1627,36 @@ static SDispatchResult mouseGesturesDispatch(std::string arg) {
     return {};
 }
 
+// hl.plugin.mouse_gestures.dispatch(arg), same arg as the legacy mouse-gestures dispatcher
+static int luaDispatch(lua_State* L) {
+    const char* arg = luaL_optstring(L, 1, "");
+    bool ok = true;
+    // lua_error longjmps, so C++ temporaries must be destroyed before it runs
+    {
+        auto result = mouseGesturesDispatch(arg);
+        if (!result.success) {
+            ok = false;
+            lua_pushstring(L, result.error.c_str());
+        }
+    }
+    return ok ? 0 : lua_error(L);
+}
+
 static void setupMouseButtonHook() {
     g_mouseButtonHook = Event::bus()->m_events.input.mouse.button.listen(
         [](IPointer::SButtonEvent e, Event::SCallbackInfo& info) {
         try {
 
             // Get configured drag button (default: BTN_RIGHT = 273)
-            static auto* const PDRAGBUTTON = (Hyprlang::INT* const*)
-                HyprlandAPI::getConfigValue(
-                    PHANDLE,
-                    "plugin:mouse_gestures:drag_button"
-                )->getDataStaticPtr();
-
-            if (!PDRAGBUTTON || !*PDRAGBUTTON) {
+            if (!g_config.dragButton) {
                 return;
             }
 
-            const uint32_t dragButton = static_cast<uint32_t>(**PDRAGBUTTON);
+            const uint32_t dragButton = static_cast<uint32_t>(g_config.dragButton->value());
 
             // Get configured delete gesture button (default: BTN_LEFT = 272)
-            static auto* const PDELETEBUTTON = (Hyprlang::INT* const*)
-                HyprlandAPI::getConfigValue(
-                    PHANDLE,
-                    "plugin:mouse_gestures:delete_gesture_button"
-                )->getDataStaticPtr();
-
-            const uint32_t deleteButton = (PDELETEBUTTON && *PDELETEBUTTON) ?
-                static_cast<uint32_t>(**PDELETEBUTTON) : 272;
+            const uint32_t deleteButton = g_config.deleteGestureButton ?
+                static_cast<uint32_t>(g_config.deleteGestureButton->value()) : 272;
 
             // Check if any monitor is closing
             bool anyMonitorClosing = false;
@@ -2007,75 +1985,38 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         throw std::runtime_error("[mouse-gestures] Version mismatch");
     }
 
-    // Register configuration values
-    HyprlandAPI::addConfigValue(
-        PHANDLE,
-        "plugin:mouse_gestures:drag_threshold",
-        Hyprlang::INT{50}
-    );
-    HyprlandAPI::addConfigValue(
-        PHANDLE,
-        "plugin:mouse_gestures:drag_button",
-        Hyprlang::INT{273}
-    ); // BTN_RIGHT
-    HyprlandAPI::addConfigValue(
-        PHANDLE,
-        "plugin:mouse_gestures:match_threshold",
-        Hyprlang::FLOAT{0.15}
-    );
-    HyprlandAPI::addConfigValue(
-        PHANDLE,
-        "plugin:mouse_gestures:default_command_for_config",
-        Hyprlang::STRING{""}
-    );
-    HyprlandAPI::addConfigValue(
-        PHANDLE,
-        "plugin:mouse_gestures:dim_opacity",
-        Hyprlang::FLOAT{0.2}
-    );
-    HyprlandAPI::addConfigValue(
-        PHANDLE,
-        "plugin:mouse_gestures:drag_trail_circle_radius",
-        Hyprlang::FLOAT{8.0}
-    );
-    HyprlandAPI::addConfigValue(
-        PHANDLE,
-        "plugin:mouse_gestures:trail_fade_duration_ms",
-        Hyprlang::INT{500}
-    );
-    HyprlandAPI::addConfigValue(
-        PHANDLE,
-        "plugin:mouse_gestures:drag_trail_color",
-        Hyprlang::INT{0x4C7FA6FF}
-    );
-    HyprlandAPI::addConfigValue(
-        PHANDLE,
-        "plugin:mouse_gestures:drag_trail_end_color",
-        Hyprlang::INT{0xA64C7FFF}
-    );
-    HyprlandAPI::addConfigValue(
-        PHANDLE,
-        "plugin:mouse_gestures:enable_ascii_art_comments",
-        Hyprlang::STRING{""}
-    );
-    HyprlandAPI::addConfigValue(
-        PHANDLE,
-        "plugin:mouse_gestures:background_path",
-        Hyprlang::STRING{""}
-    );
-    HyprlandAPI::addConfigValue(
-        PHANDLE,
-        "plugin:mouse_gestures:delete_gesture_button",
-        Hyprlang::INT{272}
-    ); // BTN_LEFT
+    g_useLuaConfig = Config::mgr() && Config::mgr()->type() == Config::CONFIG_LUA;
 
-    // Register config keyword for gesture_action
+    // Register configuration values
+    using namespace Config::Values;
+    g_config.dragThreshold = makeShared<CIntValue>("plugin:mouse_gestures:drag_threshold", "drag distance in pixels before a gesture starts", 50);
+    g_config.dragButton = makeShared<CIntValue>("plugin:mouse_gestures:drag_button", "mouse button that draws gestures", 273);  // BTN_RIGHT
+    g_config.matchThreshold = makeShared<CFloatValue>("plugin:mouse_gestures:match_threshold", "maximum distance for a gesture match", 0.15f);
+    g_config.defaultCommandForConfig = makeShared<CStringValue>("plugin:mouse_gestures:default_command_for_config", "command written for newly recorded gestures", "");
+    g_config.dimOpacity = makeShared<CFloatValue>("plugin:mouse_gestures:dim_opacity", "record mode dim opacity", 0.2f);
+    g_config.dragTrailCircleRadius = makeShared<CFloatValue>("plugin:mouse_gestures:drag_trail_circle_radius", "trail circle radius", 8.0f);
+    g_config.trailFadeDurationMs = makeShared<CIntValue>("plugin:mouse_gestures:trail_fade_duration_ms", "trail fade duration in ms", 500);
+    g_config.dragTrailColor = makeShared<CColorValue>("plugin:mouse_gestures:drag_trail_color", "trail start color", 0x4C7FA6FF);
+    g_config.dragTrailEndColor = makeShared<CColorValue>("plugin:mouse_gestures:drag_trail_end_color", "trail end color", 0xA64C7FFF);
+    g_config.enableAsciiArtComments = makeShared<CStringValue>("plugin:mouse_gestures:enable_ascii_art_comments", "\"true\" to write ASCII art above recorded gestures", "");
+    g_config.backgroundPath = makeShared<CStringValue>("plugin:mouse_gestures:background_path", "record mode background image path", "");
+    g_config.deleteGestureButton = makeShared<CIntValue>("plugin:mouse_gestures:delete_gesture_button", "mouse button that deletes a gesture in record mode", 272);  // BTN_LEFT
+
+    for (const SP<IValue>& value : std::initializer_list<SP<IValue>>{
+             g_config.dragThreshold, g_config.dragButton, g_config.matchThreshold, g_config.defaultCommandForConfig,
+             g_config.dimOpacity, g_config.dragTrailCircleRadius, g_config.trailFadeDurationMs, g_config.dragTrailColor,
+             g_config.dragTrailEndColor, g_config.enableAsciiArtComments, g_config.backgroundPath, g_config.deleteGestureButton}) {
+        HyprlandAPI::addConfigValueV2(PHANDLE, value);
+    }
+
+    // The keyword only registers under the legacy config manager, the Lua function only under the Lua one
     HyprlandAPI::addConfigKeyword(
         PHANDLE,
         "plugin:mouse_gestures:gesture_action",
         onGestureAction,
         Hyprlang::SHandlerOptions{}
     );
+    HyprlandAPI::addLuaFunction(PHANDLE, "mouse_gestures", "add_gesture", luaAddGesture);
 
     // Register preConfigReload handler
     static auto preConfigReloadHook = Event::bus()->m_events.config.preReload.listen(
@@ -2089,16 +2030,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             detectConfigFilePath();
 
             // Load background image
-            auto* const PBACKGROUNDPATH =
-                HyprlandAPI::getConfigValue(PHANDLE, "plugin:mouse_gestures:background_path");
-            if (PBACKGROUNDPATH) {
-                try {
-                    auto pathValue = PBACKGROUNDPATH->getValue();
-                    std::string pathStr = std::any_cast<Hyprlang::STRING>(pathValue);
-                    loadBackgroundImage(pathStr);
-                } catch (const std::exception&) {
-                    // Failed to read background_path
-                }
+            if (g_config.backgroundPath) {
+                loadBackgroundImage(g_config.backgroundPath->value());
             }
         }
     );
@@ -2107,6 +2040,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::reloadConfig();
 
     HyprlandAPI::addDispatcherV2(PHANDLE, "mouse-gestures", mouseGesturesDispatch);
+    HyprlandAPI::addLuaFunction(PHANDLE, "mouse_gestures", "dispatch", luaDispatch);
 
     // Setup mouse event hooks
     setupMouseButtonHook();
@@ -2164,6 +2098,8 @@ APICALL EXPORT void PLUGIN_EXIT() {
 
         // Clear background texture
         g_pBackgroundTexture.reset();
+
+        g_config = {};
     } catch (...) {
         // Silently catch any errors during cleanup
     }

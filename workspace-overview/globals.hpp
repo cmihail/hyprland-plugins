@@ -3,6 +3,10 @@
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/render/Texture.hpp>
 #include <hyprland/src/render/gl/GLTexture.hpp>
+#include <hyprland/src/config/values/types/ColorValue.hpp>
+#include <hyprland/src/config/values/types/FloatValue.hpp>
+#include <hyprland/src/config/values/types/IntValue.hpp>
+#include <hyprland/src/config/values/types/StringValue.hpp>
 #include <memory>
 #include <optional>
 
@@ -24,3 +28,21 @@ inline uint32_t g_dragWindowActionButton = 272;  // BTN_LEFT
 inline uint32_t g_dragWorkspaceActionButton = 274;  // BTN_MIDDLE
 inline uint32_t g_selectWorkspaceActionButton = 272;  // BTN_LEFT
 inline std::optional<uint32_t> g_killWindowActionButton = std::nullopt;  // No default
+
+struct SConfig {
+    SP<Config::Values::CStringValue> backgroundPath;
+    SP<Config::Values::CColorValue>  activeWorkspaceColor;
+    SP<Config::Values::CFloatValue>  borderSize;
+    SP<Config::Values::CColorValue>  placeholderPlusColor;
+    SP<Config::Values::CFloatValue>  placeholderPlusSize;
+    SP<Config::Values::CColorValue>  dropWindowColor;
+    SP<Config::Values::CColorValue>  dropWorkspaceColor;
+    SP<Config::Values::CIntValue>    placeholdersNum;
+    SP<Config::Values::CFloatValue>  dragThreshold;
+    SP<Config::Values::CIntValue>    dragWindowActionButton;
+    SP<Config::Values::CIntValue>    dragWorkspaceActionButton;
+    SP<Config::Values::CIntValue>    selectWorkspaceActionButton;
+    SP<Config::Values::CIntValue>    killWindowActionButton;
+};
+
+inline SConfig g_config;

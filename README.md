@@ -150,3 +150,6 @@ When updating Hyprland:
 - Always rebuild plugins after Hyprland updates
 - Use this migration guide when Hyprland API changes occur
 - Check `/home/cmihail/configs/hypr/LOCAL_BUILD.md` for Hyprland build details
+- Hyprland 0.56 Lua config (`hyprland.lua`): `addConfigValue`/`getConfigValue`/`addConfigKeyword` do nothing there, so settings use `addConfigValueV2` (works for both managers) and are set with `hl.config({ plugin = { window_actions = { button_size = 18 } } })`; colors take strings such as `"rgba(33ccffee)"`.
+- Under Lua each plugin exposes `hl.plugin.<ns>.dispatch(arg)` with the legacy dispatcher argument (`workspace_overview`, `mouse_gestures`, `no_mouse`, `copy_indicator`; no-mouse also takes `"letter-A"`..`"letter-Z"`), plus `hl.plugin.window_actions.add_button(str)` and `hl.plugin.mouse_gestures.add_gesture(str)` taking the old `window_actions_button`/`gesture_action` values. Load with `hl.plugin.load(path)` and guard with `if hl.plugin.<ns> then ... end`.
+- Under Lua, mouse-gestures records into `~/.config/hypr/config/mouse_gestures.lua` (`return { "cmd|points", ... }`), and window-actions/mouse-gestures run plain `hyprctl dispatch <name> <args>` commands in-process because `hyprctl dispatch` evaluates Lua there.

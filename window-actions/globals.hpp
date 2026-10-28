@@ -3,6 +3,8 @@
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/render/Texture.hpp>
 #include <hyprland/src/event/EventBus.hpp>
+#include <hyprland/src/config/values/types/IntValue.hpp>
+#include <hyprland/src/config/values/types/FloatValue.hpp>
 using Event::SCallbackInfo;
 
 inline HANDLE PHANDLE = nullptr;
@@ -25,3 +27,11 @@ struct SGlobalState {
 };
 
 inline UP<SGlobalState> g_pGlobalState;
+
+struct SConfig {
+    SP<Config::Values::CIntValue>   buttonSize;
+    SP<Config::Values::CIntValue>   actionButton;
+    SP<Config::Values::CFloatValue> unhoveredAlpha;
+};
+
+inline SConfig g_config;

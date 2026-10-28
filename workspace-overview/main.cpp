@@ -14,6 +14,11 @@
 #include "globals.hpp"
 #include "overview.hpp"
 
+extern "C" {
+#include <lua.h>
+#include <lauxlib.h>
+}
+
 // Function hooks
 inline CFunctionHook* g_pRenderWorkspaceHook = nullptr;
 inline CFunctionHook* g_pAddDamageHookA      = nullptr;
@@ -136,6 +141,43 @@ static SDispatchResult workspaceOverviewDispatch(std::string arg) {
     return {};
 }
 
+static void loadConfig() {
+    if (!g_config.backgroundPath)
+        return;
+
+    loadBackgroundImage(g_config.backgroundPath->value());
+
+    g_activeWorkspaceColor = CHyprColor{(uint32_t)g_config.activeWorkspaceColor->value()};
+    g_activeBorderSize = g_config.borderSize->value();
+    g_placeholderPlusColor = CHyprColor{(uint32_t)g_config.placeholderPlusColor->value()};
+    g_placeholderPlusSize = g_config.placeholderPlusSize->value();
+    g_dropWindowColor = CHyprColor{(uint32_t)g_config.dropWindowColor->value()};
+    g_dropWorkspaceColor = CHyprColor{(uint32_t)g_config.dropWorkspaceColor->value()};
+    g_placeholdersNum = (int)g_config.placeholdersNum->value();
+    g_dragThreshold = g_config.dragThreshold->value();
+    g_dragWindowActionButton = (uint32_t)g_config.dragWindowActionButton->value();
+    g_dragWorkspaceActionButton = (uint32_t)g_config.dragWorkspaceActionButton->value();
+    g_selectWorkspaceActionButton = (uint32_t)g_config.selectWorkspaceActionButton->value();
+
+    const auto killButton = g_config.killWindowActionButton->value();
+    g_killWindowActionButton = killButton == 0 ? std::nullopt : std::optional<uint32_t>{(uint32_t)killButton};
+}
+
+// hl.plugin.workspace_overview.dispatch(arg), same arg as the legacy workspace-overview dispatcher
+static int luaDispatch(lua_State* L) {
+    const char* arg = luaL_optstring(L, 1, "");
+    bool ok = true;
+    // lua_error longjmps, so C++ temporaries must be destroyed before it runs
+    {
+        auto result = workspaceOverviewDispatch(arg);
+        if (!result.success) {
+            ok = false;
+            lua_pushstring(L, result.error.c_str());
+        }
+    }
+    return ok ? 0 : lua_error(L);
+}
+
 static void failNotif(const std::string& reason) {
     Log::logger->log(Log::ERR, "[workspace-overview] Failure in initialization: {}", reason);
 }
@@ -201,419 +243,34 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     });
 
     HyprlandAPI::addDispatcherV2(PHANDLE, "workspace-overview", workspaceOverviewDispatch);
+    HyprlandAPI::addLuaFunction(PHANDLE, "workspace_overview", "dispatch", luaDispatch);
 
-    // Register config options
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:background_path",
-                                 Hyprlang::STRING{""});
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:active_workspace_color",
-                                 Hyprlang::INT{0x4c7fa6ff});
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:border_size",
-                                 Hyprlang::FLOAT{4.0f});
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:placeholder_plus_color",
-                                 Hyprlang::INT{0xffffffcc});
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:placeholder_plus_size",
-                                 Hyprlang::FLOAT{8.0f});
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:drop_window_color",
-                                 Hyprlang::INT{0xffffffcc});
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:drop_workspace_color",
-                                 Hyprlang::INT{0xffffffcc});
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:placeholders_num",
-                                 Hyprlang::INT{5});
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:drag_threshold",
-                                 Hyprlang::FLOAT{50.0f});
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:drag_window_action_button",
-                                 Hyprlang::INT{272});
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:drag_workspace_action_button",
-                                 Hyprlang::INT{274});
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:select_workspace_action_button",
-                                 Hyprlang::INT{272});
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:workspace_overview:kill_window_action_button",
-                                 Hyprlang::INT{0});
+    // Register config options (Lua: plugin.workspace_overview.<name>)
+    using namespace Config::Values;
+    g_config.backgroundPath = makeShared<CStringValue>("plugin:workspace_overview:background_path", "background image path", "");
+    g_config.activeWorkspaceColor = makeShared<CColorValue>("plugin:workspace_overview:active_workspace_color", "active workspace border color", 0x4c7fa6ff);
+    g_config.borderSize = makeShared<CFloatValue>("plugin:workspace_overview:border_size", "active workspace border size", 4.0f);
+    g_config.placeholderPlusColor = makeShared<CColorValue>("plugin:workspace_overview:placeholder_plus_color", "placeholder plus sign color", 0xffffffcc);
+    g_config.placeholderPlusSize = makeShared<CFloatValue>("plugin:workspace_overview:placeholder_plus_size", "placeholder plus sign size", 8.0f);
+    g_config.dropWindowColor = makeShared<CColorValue>("plugin:workspace_overview:drop_window_color", "window drop target color", 0xffffffcc);
+    g_config.dropWorkspaceColor = makeShared<CColorValue>("plugin:workspace_overview:drop_workspace_color", "workspace drop target color", 0xffffffcc);
+    g_config.placeholdersNum = makeShared<CIntValue>("plugin:workspace_overview:placeholders_num", "number of placeholder workspaces", 5);
+    g_config.dragThreshold = makeShared<CFloatValue>("plugin:workspace_overview:drag_threshold", "drag threshold in pixels", 50.0f);
+    g_config.dragWindowActionButton = makeShared<CIntValue>("plugin:workspace_overview:drag_window_action_button", "mouse button that drags windows", 272);
+    g_config.dragWorkspaceActionButton = makeShared<CIntValue>("plugin:workspace_overview:drag_workspace_action_button", "mouse button that drags workspaces", 274);
+    g_config.selectWorkspaceActionButton = makeShared<CIntValue>("plugin:workspace_overview:select_workspace_action_button", "mouse button that selects a workspace", 272);
+    g_config.killWindowActionButton = makeShared<CIntValue>("plugin:workspace_overview:kill_window_action_button", "mouse button that kills a window, 0 to disable", 0);
 
-    // Register config change callback to reload all config values
-    static auto configCallback = Event::bus()->m_events.config.reloaded.listen([]() {
-            // Load background path
-            auto* const PBACKGROUNDPATH =
-                HyprlandAPI::getConfigValue(PHANDLE,
-                                            "plugin:workspace_overview:background_path");
-            if (PBACKGROUNDPATH) {
-                try {
-                    auto pathValue = PBACKGROUNDPATH->getValue();
-                    std::string pathStr = std::any_cast<Hyprlang::STRING>(pathValue);
-                    loadBackgroundImage(pathStr);
-                } catch (const std::bad_any_cast& e) {
-                    Log::logger->log(Log::ERR,
-                               "[workspace-overview] Failed to read background_path: {}",
-                               e.what());
-                }
-            }
-
-            // Load active workspace color
-            auto* const PACTIVEWORKSPACECOLOR =
-                HyprlandAPI::getConfigValue(PHANDLE,
-                                            "plugin:workspace_overview:active_workspace_color");
-            if (PACTIVEWORKSPACECOLOR) {
-                try {
-                    auto colorValue = PACTIVEWORKSPACECOLOR->getValue();
-                    int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
-                    g_activeWorkspaceColor = CHyprColor{(uint32_t)colorInt};
-                } catch (const std::bad_any_cast& e) {
-                    Log::logger->log(Log::ERR,
-                               "[workspace-overview] Failed to read active_workspace_color: {}",
-                               e.what());
-                }
-            }
-
-            // Load border size
-            auto* const PBORDERSIZE =
-                HyprlandAPI::getConfigValue(PHANDLE,
-                                            "plugin:workspace_overview:border_size");
-            if (PBORDERSIZE) {
-                try {
-                    auto sizeValue = PBORDERSIZE->getValue();
-                    g_activeBorderSize = std::any_cast<Hyprlang::FLOAT>(sizeValue);
-                } catch (const std::bad_any_cast& e) {
-                    Log::logger->log(Log::ERR,
-                               "[workspace-overview] Failed to read border_size: {}",
-                               e.what());
-                }
-            }
-
-            // Load placeholder plus color
-            auto* const PPLACEHOLDERPLUSCOLOR =
-                HyprlandAPI::getConfigValue(PHANDLE,
-                                            "plugin:workspace_overview:placeholder_plus_color");
-            if (PPLACEHOLDERPLUSCOLOR) {
-                try {
-                    auto colorValue = PPLACEHOLDERPLUSCOLOR->getValue();
-                    int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
-                    g_placeholderPlusColor = CHyprColor{(uint32_t)colorInt};
-                } catch (const std::bad_any_cast& e) {
-                    Log::logger->log(Log::ERR,
-                               "[workspace-overview] Failed to read placeholder_plus_color: {}",
-                               e.what());
-                }
-            }
-
-            // Load placeholder plus size
-            auto* const PPLACEHOLDERPLUSSIZE =
-                HyprlandAPI::getConfigValue(PHANDLE,
-                                            "plugin:workspace_overview:placeholder_plus_size");
-            if (PPLACEHOLDERPLUSSIZE) {
-                try {
-                    auto sizeValue = PPLACEHOLDERPLUSSIZE->getValue();
-                    g_placeholderPlusSize = std::any_cast<Hyprlang::FLOAT>(sizeValue);
-                } catch (const std::bad_any_cast& e) {
-                    Log::logger->log(Log::ERR,
-                               "[workspace-overview] Failed to read placeholder_plus_size: {}",
-                               e.what());
-                }
-            }
-
-            // Load drop window color
-            auto* const PDROPWINDOWCOLOR =
-                HyprlandAPI::getConfigValue(PHANDLE,
-                                            "plugin:workspace_overview:drop_window_color");
-            if (PDROPWINDOWCOLOR) {
-                try {
-                    auto colorValue = PDROPWINDOWCOLOR->getValue();
-                    int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
-                    g_dropWindowColor = CHyprColor{(uint32_t)colorInt};
-                } catch (const std::bad_any_cast& e) {
-                    Log::logger->log(Log::ERR,
-                               "[workspace-overview] Failed to read drop_window_color: {}",
-                               e.what());
-                }
-            }
-
-            // Load drop workspace color
-            auto* const PDROPWORKSPACECOLOR =
-                HyprlandAPI::getConfigValue(PHANDLE,
-                                            "plugin:workspace_overview:drop_workspace_color");
-            if (PDROPWORKSPACECOLOR) {
-                try {
-                    auto colorValue = PDROPWORKSPACECOLOR->getValue();
-                    int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
-                    g_dropWorkspaceColor = CHyprColor{(uint32_t)colorInt};
-                } catch (const std::bad_any_cast& e) {
-                    Log::logger->log(Log::ERR,
-                               "[workspace-overview] Failed to read drop_workspace_color: {}",
-                               e.what());
-                }
-            }
-
-            // Load placeholders num
-            auto* const PPLACEHOLDERSNUM =
-                HyprlandAPI::getConfigValue(PHANDLE,
-                                            "plugin:workspace_overview:placeholders_num");
-            if (PPLACEHOLDERSNUM) {
-                try {
-                    auto numValue = PPLACEHOLDERSNUM->getValue();
-                    int64_t numInt = std::any_cast<Hyprlang::INT>(numValue);
-                    g_placeholdersNum = (int)numInt;
-                } catch (const std::bad_any_cast& e) {
-                    Log::logger->log(Log::ERR,
-                               "[workspace-overview] Failed to read placeholders_num: {}",
-                               e.what());
-                }
-            }
-
-            // Load drag threshold
-            auto* const PDRAGTHRESHOLD =
-                HyprlandAPI::getConfigValue(PHANDLE,
-                                            "plugin:workspace_overview:drag_threshold");
-            if (PDRAGTHRESHOLD) {
-                try {
-                    auto thresholdValue = PDRAGTHRESHOLD->getValue();
-                    g_dragThreshold = std::any_cast<Hyprlang::FLOAT>(thresholdValue);
-                } catch (const std::bad_any_cast& e) {
-                    Log::logger->log(Log::ERR,
-                               "[workspace-overview] Failed to read drag_threshold: {}",
-                               e.what());
-                }
-            }
-
-            // Load drag window action button
-            auto* const PDRAGWINDOWBUTTON =
-                HyprlandAPI::getConfigValue(PHANDLE,
-                                            "plugin:workspace_overview:drag_window_action_button");
-            if (PDRAGWINDOWBUTTON) {
-                try {
-                    auto buttonValue = PDRAGWINDOWBUTTON->getValue();
-                    int64_t buttonInt = std::any_cast<Hyprlang::INT>(buttonValue);
-                    g_dragWindowActionButton = (uint32_t)buttonInt;
-                } catch (const std::bad_any_cast& e) {
-                    Log::logger->log(Log::ERR,
-                               "[workspace-overview] Failed to read drag_window_action_button: {}",
-                               e.what());
-                }
-            }
-
-            // Load drag workspace action button
-            auto* const PDRAGWORKSPACEBUTTON =
-                HyprlandAPI::getConfigValue(PHANDLE,
-                                            "plugin:workspace_overview:drag_workspace_action_button");
-            if (PDRAGWORKSPACEBUTTON) {
-                try {
-                    auto buttonValue = PDRAGWORKSPACEBUTTON->getValue();
-                    int64_t buttonInt = std::any_cast<Hyprlang::INT>(buttonValue);
-                    g_dragWorkspaceActionButton = (uint32_t)buttonInt;
-                } catch (const std::bad_any_cast& e) {
-                    Log::logger->log(Log::ERR,
-                               "[workspace-overview] Failed to read drag_workspace_action_button: {}",
-                               e.what());
-                }
-            }
-
-            // Load select workspace action button
-            auto* const PSELECTWORKSPACEBUTTON =
-                HyprlandAPI::getConfigValue(PHANDLE,
-                                            "plugin:workspace_overview:select_workspace_action_button");
-            if (PSELECTWORKSPACEBUTTON) {
-                try {
-                    auto buttonValue = PSELECTWORKSPACEBUTTON->getValue();
-                    int64_t buttonInt = std::any_cast<Hyprlang::INT>(buttonValue);
-                    g_selectWorkspaceActionButton = (uint32_t)buttonInt;
-                } catch (const std::bad_any_cast& e) {
-                    Log::logger->log(Log::ERR,
-                               "[workspace-overview] Failed to read select_workspace_action_button: {}",
-                               e.what());
-                }
-            }
-
-            // Load kill window action button
-            auto* const PKILLWINDOWBUTTON =
-                HyprlandAPI::getConfigValue(PHANDLE,
-                                            "plugin:workspace_overview:kill_window_action_button");
-            if (PKILLWINDOWBUTTON) {
-                try {
-                    auto buttonValue = PKILLWINDOWBUTTON->getValue();
-                    int64_t buttonInt = std::any_cast<Hyprlang::INT>(buttonValue);
-                    if (buttonInt == 0) {
-                        g_killWindowActionButton = std::nullopt;
-                    } else {
-                        g_killWindowActionButton = (uint32_t)buttonInt;
-                    }
-                } catch (const std::bad_any_cast& e) {
-                    Log::logger->log(Log::ERR,
-                               "[workspace-overview] Failed to read kill_window_action_button: {}",
-                               e.what());
-                }
-            }
-        });
-
-    // Load all config values on startup
-    auto* const PBACKGROUNDPATH =
-        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:background_path");
-    if (PBACKGROUNDPATH) {
-        try {
-            auto pathValue = PBACKGROUNDPATH->getValue();
-            std::string pathStr = std::any_cast<Hyprlang::STRING>(pathValue);
-            if (!pathStr.empty()) {
-                loadBackgroundImage(pathStr);
-            }
-        } catch (const std::bad_any_cast& e) {
-            Log::logger->log(Log::ERR, "[workspace-overview] Failed to read background_path: {}",
-                       e.what());
-        }
+    for (const SP<IValue>& value : std::initializer_list<SP<IValue>>{
+             g_config.backgroundPath, g_config.activeWorkspaceColor, g_config.borderSize, g_config.placeholderPlusColor, g_config.placeholderPlusSize,
+             g_config.dropWindowColor, g_config.dropWorkspaceColor, g_config.placeholdersNum, g_config.dragThreshold, g_config.dragWindowActionButton,
+             g_config.dragWorkspaceActionButton, g_config.selectWorkspaceActionButton, g_config.killWindowActionButton}) {
+        HyprlandAPI::addConfigValueV2(PHANDLE, value);
     }
 
-    auto* const PACTIVEWORKSPACECOLOR =
-        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:active_workspace_color");
-    if (PACTIVEWORKSPACECOLOR) {
-        try {
-            auto colorValue = PACTIVEWORKSPACECOLOR->getValue();
-            int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
-            g_activeWorkspaceColor = CHyprColor{(uint32_t)colorInt};
-        } catch (const std::bad_any_cast& e) {
-            Log::logger->log(Log::ERR, "[workspace-overview] Failed to read active_workspace_color: {}",
-                       e.what());
-        }
-    }
+    static auto configCallback = Event::bus()->m_events.config.reloaded.listen([]() { loadConfig(); });
 
-    auto* const PBORDERSIZE =
-        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:border_size");
-    if (PBORDERSIZE) {
-        try {
-            auto sizeValue = PBORDERSIZE->getValue();
-            g_activeBorderSize = std::any_cast<Hyprlang::FLOAT>(sizeValue);
-        } catch (const std::bad_any_cast& e) {
-            Log::logger->log(Log::ERR, "[workspace-overview] Failed to read border_size: {}",
-                       e.what());
-        }
-    }
-
-    auto* const PPLACEHOLDERPLUSCOLOR =
-        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:placeholder_plus_color");
-    if (PPLACEHOLDERPLUSCOLOR) {
-        try {
-            auto colorValue = PPLACEHOLDERPLUSCOLOR->getValue();
-            int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
-            g_placeholderPlusColor = CHyprColor{(uint32_t)colorInt};
-        } catch (const std::bad_any_cast& e) {
-            Log::logger->log(Log::ERR, "[workspace-overview] Failed to read placeholder_plus_color: {}",
-                       e.what());
-        }
-    }
-
-    auto* const PPLACEHOLDERPLUSSIZE =
-        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:placeholder_plus_size");
-    if (PPLACEHOLDERPLUSSIZE) {
-        try {
-            auto sizeValue = PPLACEHOLDERPLUSSIZE->getValue();
-            g_placeholderPlusSize = std::any_cast<Hyprlang::FLOAT>(sizeValue);
-        } catch (const std::bad_any_cast& e) {
-            Log::logger->log(Log::ERR, "[workspace-overview] Failed to read placeholder_plus_size: {}",
-                       e.what());
-        }
-    }
-
-    auto* const PDROPWINDOWCOLOR =
-        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:drop_window_color");
-    if (PDROPWINDOWCOLOR) {
-        try {
-            auto colorValue = PDROPWINDOWCOLOR->getValue();
-            int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
-            g_dropWindowColor = CHyprColor{(uint32_t)colorInt};
-        } catch (const std::bad_any_cast& e) {
-            Log::logger->log(Log::ERR, "[workspace-overview] Failed to read drop_window_color: {}",
-                       e.what());
-        }
-    }
-
-    auto* const PDROPWORKSPACECOLOR =
-        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:drop_workspace_color");
-    if (PDROPWORKSPACECOLOR) {
-        try {
-            auto colorValue = PDROPWORKSPACECOLOR->getValue();
-            int64_t colorInt = std::any_cast<Hyprlang::INT>(colorValue);
-            g_dropWorkspaceColor = CHyprColor{(uint32_t)colorInt};
-        } catch (const std::bad_any_cast& e) {
-            Log::logger->log(Log::ERR, "[workspace-overview] Failed to read drop_workspace_color: {}",
-                       e.what());
-        }
-    }
-
-    auto* const PPLACEHOLDERSNUM =
-        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:placeholders_num");
-    if (PPLACEHOLDERSNUM) {
-        try {
-            auto numValue = PPLACEHOLDERSNUM->getValue();
-            int64_t numInt = std::any_cast<Hyprlang::INT>(numValue);
-            g_placeholdersNum = (int)numInt;
-        } catch (const std::bad_any_cast& e) {
-            Log::logger->log(Log::ERR, "[workspace-overview] Failed to read placeholders_num: {}",
-                       e.what());
-        }
-    }
-
-    auto* const PDRAGTHRESHOLD =
-        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:drag_threshold");
-    if (PDRAGTHRESHOLD) {
-        try {
-            auto thresholdValue = PDRAGTHRESHOLD->getValue();
-            g_dragThreshold = std::any_cast<Hyprlang::FLOAT>(thresholdValue);
-        } catch (const std::bad_any_cast& e) {
-            Log::logger->log(Log::ERR, "[workspace-overview] Failed to read drag_threshold: {}",
-                       e.what());
-        }
-    }
-
-    auto* const PDRAGWINDOWBUTTON =
-        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:drag_window_action_button");
-    if (PDRAGWINDOWBUTTON) {
-        try {
-            auto buttonValue = PDRAGWINDOWBUTTON->getValue();
-            int64_t buttonInt = std::any_cast<Hyprlang::INT>(buttonValue);
-            g_dragWindowActionButton = (uint32_t)buttonInt;
-        } catch (const std::bad_any_cast& e) {
-            Log::logger->log(Log::ERR, "[workspace-overview] Failed to read drag_window_action_button: {}",
-                       e.what());
-        }
-    }
-
-    auto* const PDRAGWORKSPACEBUTTON =
-        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:drag_workspace_action_button");
-    if (PDRAGWORKSPACEBUTTON) {
-        try {
-            auto buttonValue = PDRAGWORKSPACEBUTTON->getValue();
-            int64_t buttonInt = std::any_cast<Hyprlang::INT>(buttonValue);
-            g_dragWorkspaceActionButton = (uint32_t)buttonInt;
-        } catch (const std::bad_any_cast& e) {
-            Log::logger->log(Log::ERR, "[workspace-overview] Failed to read drag_workspace_action_button: {}",
-                       e.what());
-        }
-    }
-
-    auto* const PSELECTWORKSPACEBUTTON =
-        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:select_workspace_action_button");
-    if (PSELECTWORKSPACEBUTTON) {
-        try {
-            auto buttonValue = PSELECTWORKSPACEBUTTON->getValue();
-            int64_t buttonInt = std::any_cast<Hyprlang::INT>(buttonValue);
-            g_selectWorkspaceActionButton = (uint32_t)buttonInt;
-        } catch (const std::bad_any_cast& e) {
-            Log::logger->log(Log::ERR, "[workspace-overview] Failed to read select_workspace_action_button: {}",
-                       e.what());
-        }
-    }
-
-    auto* const PKILLWINDOWBUTTON =
-        HyprlandAPI::getConfigValue(PHANDLE, "plugin:workspace_overview:kill_window_action_button");
-    if (PKILLWINDOWBUTTON) {
-        try {
-            auto buttonValue = PKILLWINDOWBUTTON->getValue();
-            int64_t buttonInt = std::any_cast<Hyprlang::INT>(buttonValue);
-            if (buttonInt == 0) {
-                g_killWindowActionButton = std::nullopt;
-            } else {
-                g_killWindowActionButton = (uint32_t)buttonInt;
-            }
-        } catch (const std::bad_any_cast& e) {
-            Log::logger->log(Log::ERR, "[workspace-overview] Failed to read kill_window_action_button: {}",
-                       e.what());
-        }
-    }
+    loadConfig();
 
     Log::logger->log(Log::INFO, "[workspace-overview] Plugin initialized successfully");
 
@@ -624,4 +281,5 @@ APICALL EXPORT void PLUGIN_EXIT() {
     Log::logger->log(Log::INFO, "[workspace-overview] Plugin exiting");
     g_pHyprRenderer->m_renderPass.removeAllOfType("COverviewPassElement");
     g_pBackgroundTexture.reset();
+    g_config = {};
 }

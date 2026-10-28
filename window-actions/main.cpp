@@ -17,33 +17,27 @@ using Hyprutils::String::CVarList;
 
 #include <algorithm>
 
+#include "ButtonConfig.hpp"
 #include "WindowActionsBar.hpp"
 #include "globals.hpp"
 
-static Hyprlang::CParseResult onNewButton(const char* COMMAND, const char* VALUE) {
-    std::string value(VALUE);
-    CVarList vars(value, 0, ',', true);
+extern "C" {
+#include <lua.h>
+#include <lauxlib.h>
+}
 
-    // Expected format: text_color, bg_color, icon_inactive, icon_active, command, [condition]
-    // Or with empty colors: , , icon_inactive, icon_active, command, [condition]
-
-    if (vars.size() < 5) {
-        Hyprlang::CParseResult result;
-        result.setError("Invalid button config (need at least 5 args: text_color, bg_color, icon_inactive, icon_active, command)");
-        return result;
-    }
+static std::expected<void, std::string> addButton(const std::string& value) {
+    auto fields = splitButtonConfig(value);
+    if (!fields)
+        return std::unexpected(fields.error());
 
     SWindowActionButton button;
 
     // Parse text color (first arg)
-    std::string textColorStr = vars[0];
-    if (!textColorStr.empty()) {
-        auto rgba_result = Config::ParserUtils::parseColor(textColorStr);
-        if (!rgba_result.has_value()) {
-            Hyprlang::CParseResult result;
-            result.setError("Invalid text color in button config");
-            return result;
-        }
+    if (!fields->textColor.empty()) {
+        auto rgba_result = Config::ParserUtils::parseColor(fields->textColor);
+        if (!rgba_result.has_value())
+            return std::unexpected("Invalid text color in button config");
         button.text_color = CHyprColor(rgba_result.value());
     } else {
         // Default text color: rgba(e6e6e6ff)
@@ -51,29 +45,20 @@ static Hyprlang::CParseResult onNewButton(const char* COMMAND, const char* VALUE
     }
 
     // Parse background color (second arg)
-    std::string bgColorStr = vars[1];
-    if (!bgColorStr.empty()) {
-        auto rgba_result = Config::ParserUtils::parseColor(bgColorStr);
-        if (!rgba_result.has_value()) {
-            Hyprlang::CParseResult result;
-            result.setError("Invalid background color in button config");
-            return result;
-        }
+    if (!fields->bgColor.empty()) {
+        auto rgba_result = Config::ParserUtils::parseColor(fields->bgColor);
+        if (!rgba_result.has_value())
+            return std::unexpected("Invalid background color in button config");
         button.bg_color = CHyprColor(rgba_result.value());
     } else {
         // Default background color: rgba(333333dd)
         button.bg_color = CHyprColor(0x333333dd);
     }
 
-    // Parse icons and command
-    button.icon_inactive = vars[2];
-    button.icon_active = vars[3];
-    button.command = vars[4];
-
-    // Parse optional condition (6th arg)
-    if (vars.size() >= 6) {
-        button.condition = vars[5];
-    }
+    button.icon_inactive = fields->iconInactive;
+    button.icon_active = fields->iconActive;
+    button.command = fields->command;
+    button.condition = fields->condition;
 
     g_pGlobalState->buttons.push_back(button);
 
@@ -81,10 +66,32 @@ static Hyprlang::CParseResult onNewButton(const char* COMMAND, const char* VALUE
     Log::logger->log(Log::INFO,
         "[window-actions] Added button: text_color={}, bg_color={}, "
         "inactive={}, active={}, cmd={}, condition={}",
-        textColorStr, bgColorStr, button.icon_inactive, button.icon_active,
+        fields->textColor, fields->bgColor, button.icon_inactive, button.icon_active,
         button.command, button.condition);
 
-    return Hyprlang::CParseResult{};
+    return {};
+}
+
+static Hyprlang::CParseResult onNewButton(const char* COMMAND, const char* VALUE) {
+    Hyprlang::CParseResult result;
+    if (auto added = addButton(VALUE); !added)
+        result.setError(added.error().c_str());
+    return result;
+}
+
+// hl.plugin.window_actions.add_button("<same value as the window_actions_button keyword>")
+static int luaAddButton(lua_State* L) {
+    const char* value = luaL_checkstring(L, 1);
+    bool ok = true;
+    // lua_error longjmps, so C++ temporaries must be destroyed before it runs
+    {
+        auto added = addButton(value);
+        if (!added) {
+            ok = false;
+            lua_pushstring(L, added.error().c_str());
+        }
+    }
+    return ok ? 0 : lua_error(L);
 }
 
 static void onPreConfigReload() {
@@ -136,13 +143,17 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
     g_pGlobalState = makeUnique<SGlobalState>();
 
-    // Register configuration values
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:window_actions:button_size", Hyprlang::INT{15});
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:window_actions:action_button", Hyprlang::INT{272}); // BTN_LEFT
-    HyprlandAPI::addConfigValue(PHANDLE, "plugin:window_actions:unhovered_alpha", Hyprlang::FLOAT{1.0f});
+    // Register configuration values (Lua: plugin.window_actions.<name>)
+    g_config.buttonSize = makeShared<Config::Values::CIntValue>("plugin:window_actions:button_size", "button size in pixels", 15);
+    g_config.actionButton = makeShared<Config::Values::CIntValue>("plugin:window_actions:action_button", "mouse button that triggers actions", 272); // BTN_LEFT
+    g_config.unhoveredAlpha = makeShared<Config::Values::CFloatValue>("plugin:window_actions:unhovered_alpha", "button alpha when not hovered", 1.0f);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_config.buttonSize);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_config.actionButton);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_config.unhoveredAlpha);
 
-    // Register config keyword for window_actions_button
+    // The keyword only registers under the legacy config manager, the Lua function only under the Lua one
     HyprlandAPI::addConfigKeyword(PHANDLE, "window_actions_button", onNewButton, Hyprlang::SHandlerOptions{});
+    HyprlandAPI::addLuaFunction(PHANDLE, "window_actions", "add_button", luaAddButton);
 
     // Register preConfigReload handler
     static auto P3 = Event::bus()->m_events.config.preReload.listen([]() { onPreConfigReload(); });
@@ -170,4 +181,6 @@ APICALL EXPORT void PLUGIN_EXIT() {
         m->m_scheduledRecalc = true;
 
     g_pHyprRenderer->m_renderPass.removeAllOfType("CWindowActionsPassElement");
+
+    g_config = {};
 }
